@@ -41,6 +41,7 @@ const presets = Object.freeze({
     1080: 'bv*[height<=1080]+ba/b[height<=1080]',
     audio: 'ba/b',
 });
+const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
 const formatDuration = seconds => {
     if (!seconds && seconds !== 0) return '-';
     const mins = Math.floor(seconds / 60);
@@ -142,7 +143,7 @@ const syncConfig = async () => {
     try {
         state.config = await invoke('get_config');
         els.outputDir.value = state.config.default_output_dir || '';
-        els.ytDlpPath.value = state.config.yt_dlp_path || '';
+        els.ytDlpPath.value = state.config.yt_dlp_path || defaultYtDlpPath;
     } catch (err) {
         appendLog(`[config] ${err}`, true);
     }

@@ -1,0 +1,623 @@
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use std::{
+  collections::VecDeque,
+  fs,
+  io::{BufRead, BufReader},
+  path::{Path, PathBuf},
+  process::{Child, Command, Stdio},
+  sync::{Arc, Mutex},
+  thread,
+};
+use tauri::{AppHandle, Manager, State};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct AppConfig {
+  yt_dlp_path: Option<String>,
+  default_output_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DownloadRequest {
+  url: String,
+  format: String,
+  output_dir: Option<String>,
+  extract_audio: bool,
+  audio_format: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DownloadJob {
+  id: String,
+  url: String,
+  format: String,
+  output_dir: String,
+  extract_audio: bool,
+  audio_format: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DownloadProgress {
+  id: String,
+  percent: Option<f32>,
+  speed: Option<String>,
+  eta: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DownloadStateEvent {
+  id: String,
+  state: String,
+  exit_code: Option<i32>,
+  error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LogEvent {
+  id: String,
+  line: String,
+  is_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InfoFormat {
+  format_id: Option<String>,
+  ext: Option<String>,
+  vcodec: Option<String>,
+  acodec: Option<String>,
+  height: Option<i64>,
+  width: Option<i64>,
+  fps: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InfoResponse {
+  title: Option<String>,
+  uploader: Option<String>,
+  duration: Option<i64>,
+  thumbnail: Option<String>,
+  formats: Option<Vec<InfoFormat>>,
+}
+
+struct AppState {
+  config: Mutex<AppConfig>,
+  queue: Mutex<VecDeque<DownloadJob>>,
+  worker_running: Mutex<bool>,
+  current_job_id: Mutex<Option<String>>,
+  current_child: Mutex<Option<Arc<Mutex<Child>>>>,
+  cancel_requested: Mutex<Option<String>>,
+}
+
+impl AppState {
+  fn new(config: AppConfig) -> Self {
+    Self {
+      config: Mutex::new(config),
+      queue: Mutex::new(VecDeque::new()),
+      worker_running: Mutex::new(false),
+      current_job_id: Mutex::new(None),
+      current_child: Mutex::new(None),
+      cancel_requested: Mutex::new(None),
+    }
+  }
+}
+
+#[tauri::command]
+fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
+  let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+  Ok(cfg.clone())
+}
+
+#[tauri::command]
+fn set_config(app: AppHandle, state: State<AppState>, config: AppConfig) -> Result<(), String> {
+  {
+    let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+    *cfg = config.clone();
+  }
+  save_config(&app, &config)
+}
+
+#[tauri::command]
+async fn pick_output_dir() -> Result<Option<String>, String> {
+  let (tx, rx) = std::sync::mpsc::channel();
+  tauri::api::dialog::FileDialogBuilder::new().pick_folder(move |path| {
+    let _ = tx.send(path.map(|p| p.to_string_lossy().to_string()));
+  });
+  tauri::async_runtime::spawn_blocking(move || rx.recv())
+    .await
+    .map_err(|_| "Dialog task failed".to_string())?
+    .map_err(|_| "Dialog closed".to_string())
+}
+
+#[tauri::command]
+fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
+  tauri::api::shell::open(&app.shell_scope(), path, None)
+    .map_err(|e| format!("Open folder failed: {e}"))
+}
+
+#[tauri::command]
+fn load_info(app: AppHandle, state: State<AppState>, url: String) -> Result<InfoResponse, String> {
+  if !is_valid_url(&url) {
+    return Err("URL must start with http:// or https://".to_string());
+  }
+  let yt_dlp = resolve_yt_dlp(&app, &state)?;
+  let output = Command::new(yt_dlp)
+    .args(["--dump-json", "--no-playlist", "--no-warnings", &url])
+    .output()
+    .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
+
+  if !output.status.success() {
+    let code = output.status.code().unwrap_or(-1);
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    return Err(format!("yt-dlp exited {code}: {stderr}"));
+  }
+
+  let raw = String::from_utf8_lossy(&output.stdout).to_string();
+  let value: serde_json::Value = serde_json::from_str(&raw)
+    .map_err(|e| format!("Invalid JSON from yt-dlp: {e}"))?;
+
+  let formats = value
+    .get("formats")
+    .and_then(|v| v.as_array())
+    .map(|arr| {
+      arr
+        .iter()
+        .map(|f| InfoFormat {
+          format_id: f.get("format_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+          ext: f.get("ext").and_then(|v| v.as_str()).map(|s| s.to_string()),
+          vcodec: f.get("vcodec").and_then(|v| v.as_str()).map(|s| s.to_string()),
+          acodec: f.get("acodec").and_then(|v| v.as_str()).map(|s| s.to_string()),
+          height: f.get("height").and_then(|v| v.as_i64()),
+          width: f.get("width").and_then(|v| v.as_i64()),
+          fps: f.get("fps").and_then(|v| v.as_f64()),
+        })
+        .collect::<Vec<_>>()
+    });
+
+  Ok(InfoResponse {
+    title: value.get("title").and_then(|v| v.as_str()).map(|s| s.to_string()),
+    uploader: value
+      .get("uploader")
+      .or_else(|| value.get("uploader_id"))
+      .and_then(|v| v.as_str())
+      .map(|s| s.to_string()),
+    duration: value.get("duration").and_then(|v| v.as_i64()),
+    thumbnail: value
+      .get("thumbnail")
+      .and_then(|v| v.as_str())
+      .map(|s| s.to_string()),
+    formats,
+  })
+}
+
+#[tauri::command]
+fn enqueue_download(
+  app: AppHandle,
+  state: State<AppState>,
+  request: DownloadRequest,
+) -> Result<String, String> {
+  if !is_valid_url(&request.url) {
+    return Err("URL must start with http:// or https://".to_string());
+  }
+
+  let output_dir = resolve_output_dir(&state, request.output_dir.clone())?;
+  let id = Uuid::new_v4().to_string();
+  let job = DownloadJob {
+    id: id.clone(),
+    url: request.url,
+    format: request.format,
+    output_dir,
+    extract_audio: request.extract_audio,
+    audio_format: request.audio_format,
+  };
+
+  {
+    let mut queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
+    queue.push_back(job);
+  }
+
+  emit_queue(&app, &state)?;
+  ensure_worker(app, state)?;
+  Ok(id)
+}
+
+#[tauri::command]
+fn cancel_download(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
+  let removed = {
+    let mut queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
+    let before = queue.len();
+    queue.retain(|job| job.id != id);
+    before != queue.len()
+  };
+
+  if removed {
+    emit_queue(&app, &state)?;
+    emit_state(
+      &app,
+      DownloadStateEvent {
+        id,
+        state: "cancelled".to_string(),
+        exit_code: None,
+        error: None,
+      },
+    );
+    return Ok(());
+  }
+
+  let is_current = {
+    let current = state
+      .current_job_id
+      .lock()
+      .map_err(|_| "Current job lock poisoned")?;
+    current.as_deref() == Some(&id)
+  };
+
+  if !is_current {
+    return Err("Job not found in queue".to_string());
+  }
+
+  {
+    let mut cancel = state
+      .cancel_requested
+      .lock()
+      .map_err(|_| "Cancel lock poisoned")?;
+    *cancel = Some(id.clone());
+  }
+
+  let mut child_guard = state
+    .current_child
+    .lock()
+    .map_err(|_| "Child lock poisoned")?;
+  if let Some(child) = child_guard.as_mut() {
+    if let Ok(mut guard) = child.lock() {
+      let _ = guard.kill();
+    }
+  }
+
+  emit_state(
+    &app,
+    DownloadStateEvent {
+      id,
+      state: "cancelling".to_string(),
+      exit_code: None,
+      error: None,
+    },
+  );
+  Ok(())
+}
+
+fn ensure_worker(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+  let mut running = state
+    .worker_running
+    .lock()
+    .map_err(|_| "Worker lock poisoned")?;
+  if *running {
+    return Ok(());
+  }
+  *running = true;
+
+  let app_handle = app.clone();
+
+  thread::spawn(move || {
+    loop {
+      let state_handle = app_handle.state::<AppState>();
+      let job_opt = {
+        let mut queue = match state_handle.queue.lock() {
+          Ok(queue) => queue,
+          Err(_) => break,
+        };
+        queue.pop_front()
+      };
+
+      let job = match job_opt {
+        Some(job) => job,
+        None => {
+          if let Ok(mut running) = state_handle.worker_running.lock() {
+            *running = false;
+          }
+          let _ = emit_queue(&app_handle, &state_handle);
+          break;
+        }
+      };
+
+      if let Ok(mut current) = state_handle.current_job_id.lock() {
+        *current = Some(job.id.clone());
+      }
+
+      emit_state(
+        &app_handle,
+        DownloadStateEvent {
+          id: job.id.clone(),
+          state: "downloading".to_string(),
+          exit_code: None,
+          error: None,
+        },
+      );
+
+      let result = run_download_job(&app_handle, &state_handle, &job);
+
+      if let Ok(mut current) = state_handle.current_job_id.lock() {
+        *current = None;
+      }
+
+      match result {
+        Ok(code) => {
+          let cancelled = if let Ok(mut cancel) = state_handle.cancel_requested.lock() {
+            if cancel.as_deref() == Some(job.id.as_str()) {
+              *cancel = None;
+              true
+            } else {
+              false
+            }
+          } else {
+            false
+          };
+
+          let state_name = if cancelled {
+            "cancelled"
+          } else if code == 0 {
+            "success"
+          } else {
+            "error"
+          };
+
+          emit_state(
+            &app_handle,
+            DownloadStateEvent {
+              id: job.id.clone(),
+              state: state_name.to_string(),
+              exit_code: Some(code),
+              error: if code == 0 || cancelled {
+                None
+              } else {
+                Some("yt-dlp exited with error".to_string())
+              },
+            },
+          );
+        }
+        Err(err) => {
+          emit_state(
+            &app_handle,
+            DownloadStateEvent {
+              id: job.id.clone(),
+              state: "error".to_string(),
+              exit_code: None,
+              error: Some(err),
+            },
+          );
+        }
+      }
+
+      let _ = emit_queue(&app_handle, &state_handle);
+    }
+  });
+
+  Ok(())
+}
+
+fn run_download_job(app: &AppHandle, state: &AppState, job: &DownloadJob) -> Result<i32, String> {
+  let yt_dlp = resolve_yt_dlp(app, state)?;
+  let output_template = build_output_template(&job.output_dir);
+
+  let mut args = vec![
+    "--no-playlist".to_string(),
+    "--newline".to_string(),
+    "--progress".to_string(),
+    "--no-color".to_string(),
+    "-f".to_string(),
+    job.format.clone(),
+    "-o".to_string(),
+    output_template,
+    job.url.clone(),
+  ];
+
+  if job.extract_audio {
+    args.push("--extract-audio".to_string());
+    if let Some(fmt) = job.audio_format.as_ref() {
+      args.push("--audio-format".to_string());
+      args.push(fmt.to_string());
+    }
+  }
+
+  let mut command = Command::new(yt_dlp);
+  command.args(args);
+  command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+  let child = command.spawn().map_err(|e| format!("Spawn failed: {e}"))?;
+  let child = Arc::new(Mutex::new(child));
+
+  {
+    let mut child_guard = state
+      .current_child
+      .lock()
+      .map_err(|_| "Child lock poisoned")?;
+    *child_guard = Some(child.clone());
+  }
+
+  let (stdout, stderr) = {
+    let mut guard = child.lock().map_err(|_| "Child lock poisoned")?;
+    (guard.stdout.take(), guard.stderr.take())
+  };
+
+  let progress_re = Regex::new(r"\[download\]\s+([\d\.]+)%.*?at\s+([^\s]+).*?ETA\s+([^\s]+)")
+    .map_err(|e| format!("Regex error: {e}"))?;
+
+  let app_stdout = app.clone();
+  let id_stdout = job.id.clone();
+  let handle_out = thread::spawn(move || {
+    if let Some(out) = stdout {
+      let reader = BufReader::new(out);
+      for line in reader.lines().flatten() {
+        emit_log(&app_stdout, LogEvent {
+          id: id_stdout.clone(),
+          line: line.clone(),
+          is_error: false,
+        });
+
+        if let Some(caps) = progress_re.captures(&line) {
+          let percent = caps.get(1).and_then(|m| m.as_str().parse::<f32>().ok());
+          let speed = caps.get(2).map(|m| m.as_str().to_string());
+          let eta = caps.get(3).map(|m| m.as_str().to_string());
+          emit_progress(
+            &app_stdout,
+            DownloadProgress {
+              id: id_stdout.clone(),
+              percent,
+              speed,
+              eta,
+            },
+          );
+        }
+      }
+    }
+  });
+
+  let app_stderr = app.clone();
+  let id_stderr = job.id.clone();
+  let handle_err = thread::spawn(move || {
+    if let Some(err) = stderr {
+      let reader = BufReader::new(err);
+      for line in reader.lines().flatten() {
+        emit_log(&app_stderr, LogEvent {
+          id: id_stderr.clone(),
+          line,
+          is_error: true,
+        });
+      }
+    }
+  });
+
+  let status = {
+    let mut guard = child.lock().map_err(|_| "Child lock poisoned")?;
+    guard.wait().map_err(|e| format!("Wait failed: {e}"))?
+  };
+  {
+    let mut child_guard = state
+      .current_child
+      .lock()
+      .map_err(|_| "Child lock poisoned")?;
+    *child_guard = None;
+  }
+  let _ = handle_out.join();
+  let _ = handle_err.join();
+
+  Ok(status.code().unwrap_or(-1))
+}
+
+fn build_output_template(output_dir: &str) -> String {
+  let mut path = PathBuf::from(output_dir);
+  path.push("%(title)s.%(ext)s");
+  path.to_string_lossy().to_string()
+}
+
+fn emit_queue(app: &AppHandle, state: &AppState) -> Result<(), String> {
+  let queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
+  app
+    .emit_all("queue:update", queue.clone())
+    .map_err(|e| format!("Emit queue failed: {e}"))
+}
+
+fn emit_progress(app: &AppHandle, progress: DownloadProgress) {
+  let _ = app.emit_all("download:progress", progress);
+}
+
+fn emit_state(app: &AppHandle, state: DownloadStateEvent) {
+  let _ = app.emit_all("download:state", state);
+}
+
+fn emit_log(app: &AppHandle, log: LogEvent) {
+  let _ = app.emit_all("download:log", log);
+}
+
+fn is_valid_url(url: &str) -> bool {
+  url.starts_with("http://") || url.starts_with("https://")
+}
+
+fn resolve_output_dir(state: &AppState, requested: Option<String>) -> Result<String, String> {
+  if let Some(dir) = requested {
+    if dir.trim().is_empty() {
+      return Err("Output directory is empty".to_string());
+    }
+    return Ok(dir);
+  }
+  let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+  cfg
+    .default_output_dir
+    .clone()
+    .ok_or_else(|| "Default output directory not set".to_string())
+}
+
+fn resolve_yt_dlp(_app: &AppHandle, state: &AppState) -> Result<String, String> {
+  let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+  if let Some(path) = cfg.yt_dlp_path.as_ref() {
+    if Path::new(path).exists() {
+      return Ok(path.clone());
+    }
+  }
+
+  if let Some(path) = find_in_path("yt-dlp") {
+    return Ok(path);
+  }
+
+  Err("yt-dlp not found. Set its path in Settings.".to_string())
+}
+
+fn find_in_path(binary: &str) -> Option<String> {
+  let paths = std::env::var_os("PATH")?;
+  let splitter = if cfg!(windows) { ';' } else { ':' };
+  for path in paths.to_string_lossy().split(splitter) {
+    let candidate = Path::new(path).join(if cfg!(windows) {
+      format!("{binary}.exe")
+    } else {
+      binary.to_string()
+    });
+    if candidate.exists() {
+      return Some(candidate.to_string_lossy().to_string());
+    }
+  }
+  None
+}
+
+fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
+  let dir = tauri::api::path::app_config_dir(&app.config())
+    .ok_or("Config directory unavailable")?;
+  fs::create_dir_all(&dir).map_err(|e| format!("Config dir create failed: {e}"))?;
+  Ok(dir.join("config.json"))
+}
+
+fn load_config(app: &AppHandle) -> AppConfig {
+  if let Ok(path) = config_path(app) {
+    if let Ok(raw) = fs::read_to_string(path) {
+      if let Ok(cfg) = serde_json::from_str::<AppConfig>(&raw) {
+        return cfg;
+      }
+    }
+  }
+  AppConfig::default()
+}
+
+fn save_config(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
+  let path = config_path(app)?;
+  let data = serde_json::to_string_pretty(config).map_err(|e| format!("Config serialize failed: {e}"))?;
+  fs::write(path, data).map_err(|e| format!("Config write failed: {e}"))
+}
+
+fn main() {
+  tauri::Builder::default()
+    .setup(|app| {
+      let config = load_config(&app.handle());
+      app.manage(AppState::new(config));
+      Ok(())
+    })
+    .invoke_handler(tauri::generate_handler![
+      get_config,
+      set_config,
+      pick_output_dir,
+      open_folder,
+      load_info,
+      enqueue_download,
+      cancel_download
+    ])
+    .run(tauri::generate_context!())
+    .expect("error while running tauri application");
+}

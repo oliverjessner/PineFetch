@@ -1,0 +1,12 @@
+{
+    "name": "pinefetch",
+    "version": "0.0.1",
+    "private": true,
+    "scripts": {
+        "dev": "tauri dev",
+        "build": "tauri build"
+    },
+    "devDependencies": {
+        "@tauri-apps/cli": "^1.5.0"
+    }
+}

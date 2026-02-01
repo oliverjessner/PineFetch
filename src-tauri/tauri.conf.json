@@ -1,0 +1,40 @@
+{
+    "build": {
+        "beforeBuildCommand": "",
+        "beforeDevCommand": "node scripts/dev-server.mjs",
+        "devPath": "http://localhost:1420",
+        "distDir": "../src",
+        "withGlobalTauri": true
+    },
+    "package": {
+        "productName": "PineFetch",
+        "version": "0.1.0"
+    },
+  "tauri": {
+    "allowlist": {
+      "all": true
+    },
+    "bundle": {
+      "identifier": "com.pinefetch.app",
+      "active": true,
+      "targets": ["dmg"],
+      "icon": [
+        "icons/icon.png",
+        "icons/icon.icns"
+      ]
+    },
+    "windows": [
+      {
+                "title": "PineFetch",
+                "width": 1400,
+                "height": 960,
+                "minWidth": 1000,
+                "minHeight": 960,
+                "resizable": true
+            }
+        ],
+        "security": {
+            "csp": null
+        }
+    }
+}

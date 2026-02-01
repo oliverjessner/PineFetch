@@ -1,0 +1,126 @@
+<!doctype html>
+    <html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PineFetch</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="top-bar">
+        <div class="brand">
+          <img class="brand-logo" src="images/logo.png" alt="PineFetch logo" />
+          <div>
+            <h1>PineFetch</h1>
+          </div>
+        </div>
+        <div class="status-pill" id="globalStatus"></div>
+      </header>
+
+      <main class="split">
+        <section class="panel left">
+          <div class="panel-header">
+            <h2>Input / Settings</h2>
+            <span class="badge" id="infoBadge">Idle</span>
+          </div>
+
+          <div class="field">
+            <label for="urlInput">URL</label>
+            <input id="urlInput" type="text" placeholder="https://..." />
+          </div>
+
+          <div class="field-row">
+            <button id="loadInfoBtn" class="btn primary"><span class="btn-label">Load info</span></button>
+            <button id="startDownloadBtn" class="btn">Start download</button>
+          </div>
+
+          <div class="info-card" id="infoCard">
+            <div class="info-meta">
+              <div>
+                <p class="label">Title</p>
+                <p id="infoTitle">-</p>
+              </div>
+              <div>
+                <p class="label">Uploader</p>
+                <p id="infoUploader">-</p>
+              </div>
+              <div>
+                <p class="label">Duration</p>
+                <p id="infoDuration">-</p>
+              </div>
+            </div>
+            <div class="info-thumb" id="infoThumb"></div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="field">
+            <label for="presetSelect">Preset format</label>
+            <select id="presetSelect">
+              <option value="best">Best (bv*+ba/b)</option>
+              <option value="1080">Max 1080p</option>
+              <option value="audio">Audio only</option>
+            </select>
+          </div>
+
+          <div class="field-row audio-row">
+            <label class="checkbox">
+              <input id="extractAudio" type="checkbox" />
+              <span class="checkbox-label">Extract audio</span>
+            </label>
+            <select id="audioFormat" class="mini-select">
+              <option value="mp3">mp3</option>
+              <option value="opus">opus</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="outputDir">Output folder</label>
+            <div class="field-row">
+              <input id="outputDir" type="text" placeholder="/Users/..." />
+              <button id="pickDirBtn" class="btn ghost">Choose</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="ytDlpPath">yt-dlp path</label>
+            <input id="ytDlpPath" type="text" placeholder="/usr/local/bin/yt-dlp" />
+          </div>
+
+          <div class="field-row">
+            <button id="saveSettingsBtn" class="btn">Save settings</button>
+            <button id="openFolderBtn" class="btn ghost">Open folder</button>
+            <button id="cancelBtn" class="btn danger">Cancel</button>
+          </div>
+
+          <p class="hint">Please only download content you have the rights or permission to access.</p>
+        </section>
+
+        <section class="panel right">
+          <div class="panel-header">
+            <h2>Queue / Progress</h2>
+            <div class="badge" id="queueBadge">0 queued</div>
+          </div>
+
+          <div id="queueList" class="queue-list"></div>
+          <section class="log-panel" id="logPanel">
+            <div class="log-header">
+              <div>
+                <h3>Terminal Log</h3>
+                <p id="logHint">stdout / stderr</p>
+              </div>
+              <div class="log-actions">
+                <button id="copyLogsBtn" class="btn ghost">Copy</button>
+                <button id="toggleLogsBtn" class="btn ghost">Hide</button>
+              </div>
+            </div>
+            <div id="logBody" class="log-body"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="main.js"></script>
+  </body>
+</html>

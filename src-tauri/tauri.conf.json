@@ -17,7 +17,7 @@
     "bundle": {
       "identifier": "com.pinefetch.app",
       "active": true,
-      "targets": ["dmg"],
+      "targets": "all",
       "icon": [
         "icons/icon.png",
         "icons/icon.icns"

@@ -5,6 +5,7 @@ const listen = tauriGlobal?.event?.listen;
 const state = Object.seal({
     jobs: new Map(),
     queueIds: [],
+    suppressedJobIds: new Set(),
     selectedId: null,
     logs: [],
     info: null,
@@ -30,6 +31,7 @@ const els = Object.seal({
     infoThumb: document.getElementById('infoThumb'),
     queueList: document.getElementById('queueList'),
     queueBadge: document.getElementById('queueBadge'),
+    clearQueueBtn: document.getElementById('clearQueueBtn'),
     infoBadge: document.getElementById('infoBadge'),
     logBody: document.getElementById('logBody'),
     copyLogsBtn: document.getElementById('copyLogsBtn'),
@@ -78,6 +80,7 @@ const presets = Object.freeze({
     },
 });
 const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
+let urlShakeTimer = null;
 const formatDuration = seconds => {
     if (!seconds && seconds !== 0) return '-';
     const mins = Math.floor(seconds / 60);
@@ -85,6 +88,85 @@ const formatDuration = seconds => {
     const hrs = Math.floor(mins / 60);
     if (hrs > 0) return `${hrs}h ${String(mins % 60).padStart(2, '0')}m`;
     return `${mins}m ${String(secs).padStart(2, '0')}s`;
+};
+
+const detectPlatform = url => {
+    try {
+        const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+        if (host === 'youtu.be' || host.endsWith('youtube.com')) return 'youtube';
+        if (host.endsWith('facebook.com') || host === 'fb.watch') return 'facebook';
+        if (host.endsWith('twitch.tv')) return 'twitch';
+        if (host === 'x.com' || host.endsWith('.x.com') || host.endsWith('twitter.com')) return 'x';
+        if (host.endsWith('tiktok.com')) return 'tiktok';
+        if (host.endsWith('instagram.com') || host.endsWith('instagr.am')) return 'instagram';
+    } catch {
+        return null;
+    }
+    return null;
+};
+
+const getPlatformIconSvg = platform => {
+    switch (platform) {
+    case 'youtube':
+        return `
+<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <path d="M22 12c0 2.7-.3 4.4-.6 5.3-.3.8-.9 1.4-1.7 1.7-.9.3-2.6.6-7.7.6s-6.8-.3-7.7-.6c-.8-.3-1.4-.9-1.7-1.7C2.3 16.4 2 14.7 2 12s.3-4.4.6-5.3c.3-.8.9-1.4 1.7-1.7C5.2 4.7 6.9 4.4 12 4.4s6.8.3 7.7.6c.8.3 1.4.9 1.7 1.7.3.9.6 2.6.6 5.3Z" fill="currentColor"/>
+  <path d="M10 8.8 15.5 12 10 15.2V8.8Z" fill="#fff"/>
+</svg>`;
+    case 'facebook':
+        return `
+<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <path d="M13.6 8.6h2.3V5.4h-2.7c-2.6 0-4 1.5-4 4v1.9H7v3.1h2.2v5.2h3.3v-5.2h2.7l.4-3.1h-3.1V9.8c0-.8.3-1.2.8-1.2Z" fill="currentColor"/>
+</svg>`;
+    case 'twitch':
+        return `
+<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <path d="M4 3h16v11.2l-4 4H12l-2.8 2.8V18.2H4V3Zm2 2v11.2h3.2v1.6l1.6-1.6H15l3-3V5H6Zm4.2 2.4h1.8v4.2h-1.8V7.4Zm4 0H16v4.2h-1.8V7.4Z" fill="currentColor"/>
+</svg>`;
+    case 'x':
+        return `
+<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <path d="M4 4h3.8l4.7 6.4L17.8 4H20l-6.4 7.3L20.5 20h-3.8l-5-6.8L5.9 20H3.7l6.7-7.6L4 4Z" fill="currentColor"/>
+</svg>`;
+    case 'tiktok':
+        return `
+<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <path d="M14.5 4c1.1 1.6 2.3 2.4 4 2.5V9c-1.5 0-2.8-.4-4-1.2v6.6a4.8 4.8 0 1 1-3.8-4.7v2.6a2.2 2.2 0 1 0 1.3 2V4h2.5Z" fill="currentColor"/>
+</svg>`;
+    case 'instagram':
+        return `
+<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <rect x="3.5" y="3.5" width="17" height="17" rx="5" fill="none" stroke="currentColor" stroke-width="2"/>
+  <circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/>
+  <circle cx="17.2" cy="6.8" r="1.2" fill="currentColor"/>
+</svg>`;
+    default:
+        return '';
+    }
+};
+
+const isValidHttpUrl = value => {
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+        return false;
+    }
+};
+
+const shakeUrlInput = () => {
+    if (urlShakeTimer) {
+        clearTimeout(urlShakeTimer);
+        urlShakeTimer = null;
+    }
+    els.urlInput.classList.remove('invalid-shake');
+    void els.urlInput.offsetWidth;
+    els.urlInput.classList.add('invalid-shake');
+    els.urlInput.focus();
+    urlShakeTimer = setTimeout(() => {
+        els.urlInput.classList.remove('invalid-shake');
+        urlShakeTimer = null;
+    }, 420);
 };
 
 const extractYouTubeVideoId = url => {
@@ -232,7 +314,17 @@ const renderQueue = () => {
 
         const title = document.createElement('div');
         title.className = 'queue-title';
-        title.textContent = job.label || job.url;
+        const platform = detectPlatform(job.url || '');
+        if (platform) {
+            const platformIcon = document.createElement('span');
+            platformIcon.className = `queue-platform-icon ${platform}`;
+            platformIcon.innerHTML = getPlatformIconSvg(platform);
+            title.appendChild(platformIcon);
+        }
+        const titleText = document.createElement('span');
+        titleText.className = 'queue-title-text';
+        titleText.textContent = job.label || job.url;
+        title.appendChild(titleText);
 
         const badge = document.createElement('div');
         badge.className = 'queue-badge';
@@ -293,6 +385,36 @@ const updateJob = (id, patch) => {
     renderQueue();
 };
 
+const maybeHydrateQueueThumbnail = id => {
+    if (!invoke) return;
+    const job = state.jobs.get(id);
+    if (!job || !job.url) return;
+    if (job.thumbnail || job.previewResolved || job.previewLoading) return;
+
+    updateJob(id, { previewLoading: true });
+    void (async () => {
+        try {
+            const info = await invoke('load_info', { url: job.url });
+            const current = state.jobs.get(id);
+            if (!current) return;
+
+            const patch = {
+                previewLoading: false,
+                previewResolved: true,
+            };
+            if (info?.thumbnail) patch.thumbnail = info.thumbnail;
+            if (info?.title && (!current.label || current.label === current.url)) {
+                patch.label = info.title;
+            }
+            updateJob(id, patch);
+        } catch {
+            if (state.jobs.has(id)) {
+                updateJob(id, { previewLoading: false, previewResolved: true });
+            }
+        }
+    })();
+};
+
 const syncConfig = async () => {
     try {
         state.config = await invoke('get_config');
@@ -307,6 +429,10 @@ const syncConfig = async () => {
 const loadInfo = async () => {
     const url = els.urlInput.value.trim();
     if (!url) return;
+    if (!isValidHttpUrl(url)) {
+        shakeUrlInput();
+        return;
+    }
     els.loadInfoBtn.classList.add('loading');
     els.loadInfoBtn.disabled = true;
     setInfoBadge('Loading...');
@@ -317,6 +443,9 @@ const loadInfo = async () => {
         renderInfo();
         setInfoBadge('Ready');
     } catch (err) {
+        if (`${err || ''}`.includes('URL must start with')) {
+            shakeUrlInput();
+        }
         state.info = null;
         state.infoUrl = null;
         renderInfo();
@@ -331,6 +460,10 @@ const loadInfo = async () => {
 const enqueueDownload = async () => {
     const url = els.urlInput.value.trim();
     if (!url) return;
+    if (!isValidHttpUrl(url)) {
+        shakeUrlInput();
+        return;
+    }
 
     const presetKey = els.presetSelect.value;
     const preset = presets[presetKey] || presets.best;
@@ -355,17 +488,24 @@ const enqueueDownload = async () => {
             thumbnail: hasLoadedInfo ? state.info?.thumbnail || null : resolveYouTubeThumbnail(url),
             state: 'queued',
             outputPath: null,
+            previewResolved: Boolean(hasLoadedInfo || resolveYouTubeThumbnail(url)),
+            previewLoading: false,
             percent: 0,
             speed: '-',
             eta: '-',
             formatLabel: preset.label,
         });
+        maybeHydrateQueueThumbnail(id);
 
         els.urlInput.value = '';
         state.info = null;
         state.infoUrl = null;
         renderInfo();
+        els.urlInput.focus();
     } catch (err) {
+        if (`${err || ''}`.includes('URL must start with')) {
+            shakeUrlInput();
+        }
         appendLog(`[queue] ${err}`, true);
     }
 };
@@ -404,12 +544,59 @@ const openFolder = async () => {
     }
 };
 
+const clearQueue = async () => {
+    const idsToCancel = new Set(state.queueIds);
+    state.jobs.forEach(job => {
+        if (job.state === 'queued' || job.state === 'downloading' || job.state === 'transcribing' || job.state === 'cancelling') {
+            idsToCancel.add(job.id);
+        }
+    });
+
+    idsToCancel.forEach(id => state.suppressedJobIds.add(id));
+
+    if (invoke && idsToCancel.size > 0) {
+        const results = await Promise.allSettled(
+            Array.from(idsToCancel).map(id => invoke('cancel_download', { id })),
+        );
+        results.forEach(result => {
+            if (result.status === 'rejected') {
+                const message = `${result.reason || ''}`.toLowerCase();
+                if (!message.includes('job not found')) {
+                    appendLog(`[clear] ${result.reason}`, true);
+                }
+            }
+        });
+    }
+
+    state.jobs.clear();
+    state.queueIds = [];
+    state.selectedId = null;
+    renderQueue();
+};
+
 const bindEvents = () => {
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
+    els.urlInput.addEventListener('keydown', event => {
+        const key = event.key.toLowerCase();
+        if (event.metaKey && !event.ctrlKey && !event.altKey && key === 'i') {
+            if (!els.urlInput.value.trim()) return;
+            event.preventDefault();
+            void loadInfo();
+            return;
+        }
+        if (key === 'enter' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+            if (!els.urlInput.value.trim()) return;
+            event.preventDefault();
+            void enqueueDownload();
+        }
+    });
     els.saveSettingsBtn.addEventListener('click', saveSettings);
     els.pickDirBtn.addEventListener('click', pickDir);
     els.openFolderBtn.addEventListener('click', openFolder);
+    els.clearQueueBtn.addEventListener('click', () => {
+        void clearQueue();
+    });
     els.ytDlpPath.addEventListener('change', () => {
         if (state.activeView === 'settings') void refreshYtDlpVersions();
     });
@@ -427,8 +614,11 @@ const bindEvents = () => {
 
 const bindBackendEvents = async () => {
     await listen('queue:update', event => {
-        state.queueIds = event.payload.map(job => job.id);
+        state.queueIds = event.payload
+            .map(job => job.id)
+            .filter(id => !state.suppressedJobIds.has(id));
         event.payload.forEach(job => {
+            if (state.suppressedJobIds.has(job.id)) return;
             const existing = state.jobs.get(job.id);
             updateJob(job.id, {
                 url: job.url,
@@ -436,13 +626,17 @@ const bindBackendEvents = async () => {
                 thumbnail: existing?.thumbnail || resolveYouTubeThumbnail(job.url),
                 state: 'queued',
                 outputPath: existing?.outputPath || null,
+                previewResolved: existing?.previewResolved || Boolean(resolveYouTubeThumbnail(job.url)),
+                previewLoading: existing?.previewLoading || false,
                 formatLabel: existing?.formatLabel || job.format,
             });
+            maybeHydrateQueueThumbnail(job.id);
         });
     });
 
     await listen('download:state', event => {
         const { id, state: status, output_path, exit_code, error } = event.payload;
+        if (state.suppressedJobIds.has(id)) return;
         const patch = { state: status };
         if (output_path) patch.outputPath = output_path;
         updateJob(id, patch);
@@ -451,6 +645,7 @@ const bindBackendEvents = async () => {
 
     await listen('download:progress', event => {
         const { id, percent, speed, eta } = event.payload;
+        if (state.suppressedJobIds.has(id)) return;
         updateJob(id, {
             percent: percent ?? 0,
             speed: speed || '-',
@@ -460,6 +655,7 @@ const bindBackendEvents = async () => {
 
     await listen('download:log', event => {
         const { id, line, is_error } = event.payload;
+        if (state.suppressedJobIds.has(id)) return;
         appendLog(`[${id}] ${line}`, is_error);
     });
 };
@@ -467,6 +663,9 @@ const bindBackendEvents = async () => {
 const init = async () => {
     bindEvents();
     setActiveView('download');
+    requestAnimationFrame(() => {
+        els.urlInput.focus();
+    });
     if (!invoke || !listen) {
         appendLog('[tauri] API not available. Start the app with `npm run dev` (Tauri), not in a browser.', true);
         return;

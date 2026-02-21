@@ -155,7 +155,7 @@ body {
 
 .panel.right {
     display: grid;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto 1fr auto;
     gap: 16px;
 }
 
@@ -250,6 +250,14 @@ select:focus {
     box-shadow:
         0 0 0 1px var(--accent),
         0 0 18px var(--accent-dim);
+}
+
+#urlInput.invalid-shake {
+    border-color: rgba(255, 93, 108, 0.7);
+    box-shadow:
+        0 0 0 1px rgba(255, 93, 108, 0.7),
+        0 0 18px rgba(255, 93, 108, 0.25);
+    animation: input-shake 0.38s ease;
 }
 
 .btn {
@@ -349,6 +357,11 @@ select:focus {
     overflow-y: auto;
 }
 
+.queue-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
 .queue-item {
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -389,9 +402,54 @@ select:focus {
 .queue-title {
     font-size: 0.9rem;
     min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.queue-title-text {
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.queue-platform-icon {
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.queue-platform-icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+.queue-platform-icon.youtube {
+    color: #ff3b30;
+}
+
+.queue-platform-icon.facebook {
+    color: #1877f2;
+}
+
+.queue-platform-icon.twitch {
+    color: #9146ff;
+}
+
+.queue-platform-icon.x {
+    color: #e8edf7;
+}
+
+.queue-platform-icon.tiktok {
+    color: #25f4ee;
+}
+
+.queue-platform-icon.instagram {
+    color: #f77737;
 }
 
 .queue-badge {
@@ -559,5 +617,26 @@ select:focus {
 @keyframes spin {
     to {
         transform: rotate(360deg);
+    }
+}
+
+@keyframes input-shake {
+    0% {
+        transform: translateX(0);
+    }
+    20% {
+        transform: translateX(-8px);
+    }
+    40% {
+        transform: translateX(8px);
+    }
+    60% {
+        transform: translateX(-6px);
+    }
+    80% {
+        transform: translateX(6px);
+    }
+    100% {
+        transform: translateX(0);
     }
 }

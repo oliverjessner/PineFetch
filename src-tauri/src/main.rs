@@ -25,6 +25,7 @@ struct DownloadRequest {
   output_dir: Option<String>,
   extract_audio: bool,
   audio_format: Option<String>,
+  transcribe_text: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +36,7 @@ struct DownloadJob {
   output_dir: String,
   extract_audio: bool,
   audio_format: Option<String>,
+  transcribe_text: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +53,7 @@ struct DownloadStateEvent {
   state: String,
   exit_code: Option<i32>,
   error: Option<String>,
+  output_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +82,47 @@ struct InfoResponse {
   thumbnail: Option<String>,
   formats: Option<Vec<InfoFormat>>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InstalledYtDlpVersion {
+  version: String,
+  path: String,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadRunResult {
+  exit_code: i32,
+  output_path: Option<String>,
+}
+
+const FASTER_WHISPER_TRANSCRIBE_SNIPPET: &str = r#"
+import sys
+from pathlib import Path
+
+try:
+    from faster_whisper import WhisperModel
+except Exception as exc:
+    print(f"Failed to import faster_whisper: {exc}", file=sys.stderr)
+    raise
+
+audio_path = sys.argv[1]
+output_path = Path(sys.argv[2])
+model_name = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else "base"
+
+model = WhisperModel(model_name, compute_type="int8")
+segments, _ = model.transcribe(audio_path, beam_size=5)
+lines = []
+for segment in segments:
+    text = segment.text.strip()
+    if text:
+        lines.append(text)
+
+content = "\n".join(lines).strip()
+if content:
+    content += "\n"
+output_path.write_text(content, encoding="utf-8")
+print(str(output_path))
+"#;
 
 struct AppState {
   config: Mutex<AppConfig>,
@@ -191,6 +235,46 @@ fn load_info(app: AppHandle, state: State<AppState>, url: String) -> Result<Info
 }
 
 #[tauri::command]
+fn get_yt_dlp_installed_version(
+  app: AppHandle,
+  state: State<AppState>,
+  path: Option<String>,
+) -> Result<InstalledYtDlpVersion, String> {
+  let yt_dlp = resolve_yt_dlp_for_version(&app, &state, path)?;
+  let output = Command::new(&yt_dlp)
+    .arg("--version")
+    .output()
+    .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
+
+  if !output.status.success() {
+    let code = output.status.code().unwrap_or(-1);
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let details = if stderr.is_empty() {
+      "no stderr".to_string()
+    } else {
+      stderr
+    };
+    return Err(format!("yt-dlp exited {code}: {details}"));
+  }
+
+  let version = String::from_utf8_lossy(&output.stdout)
+    .lines()
+    .next()
+    .map(str::trim)
+    .unwrap_or("")
+    .to_string();
+
+  if version.is_empty() {
+    return Err("yt-dlp returned an empty version".to_string());
+  }
+
+  Ok(InstalledYtDlpVersion {
+    version,
+    path: yt_dlp,
+  })
+}
+
+#[tauri::command]
 fn enqueue_download(
   app: AppHandle,
   state: State<AppState>,
@@ -209,6 +293,7 @@ fn enqueue_download(
     output_dir,
     extract_audio: request.extract_audio,
     audio_format: request.audio_format,
+    transcribe_text: request.transcribe_text,
   };
 
   {
@@ -239,6 +324,7 @@ fn cancel_download(app: AppHandle, state: State<AppState>, id: String) -> Result
         state: "cancelled".to_string(),
         exit_code: None,
         error: None,
+        output_path: None,
       },
     );
     return Ok(());
@@ -281,6 +367,7 @@ fn cancel_download(app: AppHandle, state: State<AppState>, id: String) -> Result
       state: "cancelling".to_string(),
       exit_code: None,
       error: None,
+      output_path: None,
     },
   );
   Ok(())
@@ -331,6 +418,7 @@ fn ensure_worker(app: AppHandle, state: State<AppState>) -> Result<(), String> {
           state: "downloading".to_string(),
           exit_code: None,
           error: None,
+          output_path: None,
         },
       );
 
@@ -341,7 +429,7 @@ fn ensure_worker(app: AppHandle, state: State<AppState>) -> Result<(), String> {
       }
 
       match result {
-        Ok(code) => {
+        Ok(run_result) => {
           let cancelled = if let Ok(mut cancel) = state_handle.cancel_requested.lock() {
             if cancel.as_deref() == Some(job.id.as_str()) {
               *cancel = None;
@@ -353,27 +441,86 @@ fn ensure_worker(app: AppHandle, state: State<AppState>) -> Result<(), String> {
             false
           };
 
-          let state_name = if cancelled {
-            "cancelled"
-          } else if code == 0 {
-            "success"
-          } else {
-            "error"
-          };
-
-          emit_state(
-            &app_handle,
-            DownloadStateEvent {
-              id: job.id.clone(),
-              state: state_name.to_string(),
-              exit_code: Some(code),
-              error: if code == 0 || cancelled {
-                None
-              } else {
-                Some("yt-dlp exited with error".to_string())
+          if cancelled {
+            emit_state(
+              &app_handle,
+              DownloadStateEvent {
+                id: job.id.clone(),
+                state: "cancelled".to_string(),
+                exit_code: Some(run_result.exit_code),
+                error: None,
+                output_path: None,
               },
-            },
-          );
+            );
+          } else if run_result.exit_code != 0 {
+            emit_state(
+              &app_handle,
+              DownloadStateEvent {
+                id: job.id.clone(),
+                state: "error".to_string(),
+                exit_code: Some(run_result.exit_code),
+                error: Some("yt-dlp exited with error".to_string()),
+                output_path: None,
+              },
+            );
+          } else if job.transcribe_text {
+            emit_state(
+              &app_handle,
+              DownloadStateEvent {
+                id: job.id.clone(),
+                state: "transcribing".to_string(),
+                exit_code: Some(run_result.exit_code),
+                error: None,
+                output_path: None,
+              },
+            );
+
+            match run_faster_whisper_transcription(&app_handle, &job, run_result.output_path.as_deref()) {
+              Ok(transcript_path) => {
+                emit_log(
+                  &app_handle,
+                  LogEvent {
+                    id: job.id.clone(),
+                    line: format!("[transcript] saved: {transcript_path}"),
+                    is_error: false,
+                  },
+                );
+                emit_state(
+                  &app_handle,
+                  DownloadStateEvent {
+                    id: job.id.clone(),
+                    state: "success".to_string(),
+                    exit_code: Some(run_result.exit_code),
+                    error: None,
+                    output_path: Some(transcript_path.clone()),
+                  },
+                );
+              }
+              Err(err) => {
+                emit_state(
+                  &app_handle,
+                  DownloadStateEvent {
+                    id: job.id.clone(),
+                    state: "error".to_string(),
+                    exit_code: Some(run_result.exit_code),
+                    error: Some(err),
+                    output_path: None,
+                  },
+                );
+              }
+            }
+          } else {
+            emit_state(
+              &app_handle,
+              DownloadStateEvent {
+                id: job.id.clone(),
+                state: "success".to_string(),
+                exit_code: Some(run_result.exit_code),
+                error: None,
+                output_path: run_result.output_path.clone(),
+              },
+            );
+          }
         }
         Err(err) => {
           emit_state(
@@ -383,6 +530,7 @@ fn ensure_worker(app: AppHandle, state: State<AppState>) -> Result<(), String> {
               state: "error".to_string(),
               exit_code: None,
               error: Some(err),
+              output_path: None,
             },
           );
         }
@@ -395,7 +543,11 @@ fn ensure_worker(app: AppHandle, state: State<AppState>) -> Result<(), String> {
   Ok(())
 }
 
-fn run_download_job(app: &AppHandle, state: &AppState, job: &DownloadJob) -> Result<i32, String> {
+fn run_download_job(
+  app: &AppHandle,
+  state: &AppState,
+  job: &DownloadJob,
+) -> Result<DownloadRunResult, String> {
   let yt_dlp = resolve_yt_dlp(app, state)?;
   let output_template = build_output_template(&job.output_dir);
 
@@ -404,6 +556,8 @@ fn run_download_job(app: &AppHandle, state: &AppState, job: &DownloadJob) -> Res
     "--newline".to_string(),
     "--progress".to_string(),
     "--no-color".to_string(),
+    "--print".to_string(),
+    "after_move:filepath".to_string(),
     "-f".to_string(),
     job.format.clone(),
     "-o".to_string(),
@@ -441,9 +595,11 @@ fn run_download_job(app: &AppHandle, state: &AppState, job: &DownloadJob) -> Res
 
   let progress_re = Regex::new(r"\[download\]\s+([\d\.]+)%.*?at\s+([^\s]+).*?ETA\s+([^\s]+)")
     .map_err(|e| format!("Regex error: {e}"))?;
+  let output_path_capture: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
   let app_stdout = app.clone();
   let id_stdout = job.id.clone();
+  let output_path_for_stdout = output_path_capture.clone();
   let handle_out = thread::spawn(move || {
     if let Some(out) = stdout {
       let reader = BufReader::new(out);
@@ -467,6 +623,12 @@ fn run_download_job(app: &AppHandle, state: &AppState, job: &DownloadJob) -> Res
               eta,
             },
           );
+        }
+
+        if let Some(path_line) = parse_after_move_filepath(&line) {
+          if let Ok(mut slot) = output_path_for_stdout.lock() {
+            *slot = Some(path_line);
+          }
         }
       }
     }
@@ -501,7 +663,169 @@ fn run_download_job(app: &AppHandle, state: &AppState, job: &DownloadJob) -> Res
   let _ = handle_out.join();
   let _ = handle_err.join();
 
-  Ok(status.code().unwrap_or(-1))
+  let output_path = output_path_capture
+    .lock()
+    .ok()
+    .and_then(|guard| guard.clone())
+    .filter(|candidate| Path::new(candidate).exists());
+
+  Ok(DownloadRunResult {
+    exit_code: status.code().unwrap_or(-1),
+    output_path,
+  })
+}
+
+fn parse_after_move_filepath(line: &str) -> Option<String> {
+  let trimmed = line.trim();
+  if trimmed.is_empty() || trimmed.starts_with('[') {
+    return None;
+  }
+  if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+    return None;
+  }
+  Some(trimmed.to_string())
+}
+
+fn resolve_bundled_python(app: &AppHandle) -> Option<String> {
+  #[cfg(target_os = "windows")]
+  let candidates = vec![
+    "whisper-runtime/Scripts/python.exe",
+  ];
+
+  #[cfg(not(target_os = "windows"))]
+  let candidates = vec![
+    "whisper-runtime/bin/python3.12",
+    "whisper-runtime/bin/python3.11",
+    "whisper-runtime/bin/python3.10",
+    "whisper-runtime/bin/python3",
+    "whisper-runtime/bin/python",
+  ];
+
+  for relative in candidates {
+    if let Some(path) = app.path_resolver().resolve_resource(relative) {
+      if path.exists() {
+        return Some(path.to_string_lossy().to_string());
+      }
+    }
+  }
+
+  None
+}
+
+fn resolve_python_executable(app: &AppHandle) -> Option<String> {
+  if let Ok(raw) = std::env::var("PINEFETCH_FASTER_WHISPER_PYTHON") {
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() && Path::new(trimmed).exists() {
+      return Some(trimmed.to_string());
+    }
+  }
+
+  if let Some(path) = resolve_bundled_python(app) {
+    return Some(path);
+  }
+
+  for candidate in ["python3.12", "python3.11", "python3.10", "python3", "python"] {
+    if let Some(path) = find_in_path(candidate) {
+      return Some(path);
+    }
+  }
+
+  None
+}
+
+fn run_faster_whisper_transcription(
+  app: &AppHandle,
+  job: &DownloadJob,
+  output_path: Option<&str>,
+) -> Result<String, String> {
+  let audio_path = output_path
+    .ok_or_else(|| "Could not determine downloaded file path for transcription".to_string())?;
+  if !Path::new(audio_path).exists() {
+    return Err(format!("Downloaded file not found for transcription: {audio_path}"));
+  }
+
+  let python = resolve_python_executable(app).ok_or_else(|| {
+    "No Python runtime found for faster-whisper (bundled runtime missing and no compatible Python in PATH)"
+      .to_string()
+  })?;
+
+  let transcript_path = Path::new(audio_path).with_extension("txt");
+  let transcript_path_str = transcript_path.to_string_lossy().to_string();
+  let model_name = std::env::var("PINEFETCH_FASTER_WHISPER_MODEL")
+    .ok()
+    .filter(|value| !value.trim().is_empty())
+    .unwrap_or_else(|| "base".to_string());
+
+  let mut command = Command::new(python);
+  command
+    .arg("-c")
+    .arg(FASTER_WHISPER_TRANSCRIBE_SNIPPET)
+    .arg(audio_path)
+    .arg(&transcript_path_str)
+    .arg(&model_name)
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+  let mut child = command
+    .spawn()
+    .map_err(|e| format!("Failed to start faster-whisper transcription: {e}"))?;
+
+  let stdout = child.stdout.take();
+  let stderr = child.stderr.take();
+  let app_stdout = app.clone();
+  let job_id_stdout = job.id.clone();
+  let handle_out = thread::spawn(move || {
+    if let Some(out) = stdout {
+      let reader = BufReader::new(out);
+      for line in reader.lines().flatten() {
+        emit_log(
+          &app_stdout,
+          LogEvent {
+            id: job_id_stdout.clone(),
+            line: format!("[faster-whisper] {line}"),
+            is_error: false,
+          },
+        );
+      }
+    }
+  });
+
+  let app_stderr = app.clone();
+  let job_id_stderr = job.id.clone();
+  let handle_err = thread::spawn(move || {
+    if let Some(err) = stderr {
+      let reader = BufReader::new(err);
+      for line in reader.lines().flatten() {
+        emit_log(
+          &app_stderr,
+          LogEvent {
+            id: job_id_stderr.clone(),
+            line: format!("[faster-whisper] {line}"),
+            is_error: true,
+          },
+        );
+      }
+    }
+  });
+
+  let status = child
+    .wait()
+    .map_err(|e| format!("Failed while waiting for faster-whisper: {e}"))?;
+  let _ = handle_out.join();
+  let _ = handle_err.join();
+
+  if !status.success() {
+    let code = status.code().unwrap_or(-1);
+    return Err(format!(
+      "faster-whisper failed (exit code {code}). Ensure Python deps are installed (`pip install faster-whisper`)."
+    ));
+  }
+
+  if !transcript_path.exists() {
+    return Err("faster-whisper finished but no transcript file was created".to_string());
+  }
+
+  Ok(transcript_path_str)
 }
 
 fn build_output_template(output_dir: &str) -> String {
@@ -562,6 +886,23 @@ fn resolve_yt_dlp(_app: &AppHandle, state: &AppState) -> Result<String, String> 
   Err("yt-dlp not found. Set its path in Settings.".to_string())
 }
 
+fn resolve_yt_dlp_for_version(
+  app: &AppHandle,
+  state: &AppState,
+  path: Option<String>,
+) -> Result<String, String> {
+  if let Some(raw) = path {
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() {
+      if Path::new(trimmed).exists() {
+        return Ok(trimmed.to_string());
+      }
+      return Err(format!("yt-dlp path not found: {trimmed}"));
+    }
+  }
+  resolve_yt_dlp(app, state)
+}
+
 fn find_in_path(binary: &str) -> Option<String> {
   let paths = std::env::var_os("PATH")?;
   let splitter = if cfg!(windows) { ';' } else { ':' };
@@ -615,6 +956,7 @@ fn main() {
       pick_output_dir,
       open_folder,
       load_info,
+      get_yt_dlp_installed_version,
       enqueue_download,
       cancel_download
     ])

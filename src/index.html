@@ -15,86 +15,108 @@
             <h1>PineFetch</h1>
           </div>
         </div>
-        <div class="status-pill" id="globalStatus"></div>
+        <div class="top-actions">
+          <div class="view-toggle" role="tablist" aria-label="Main view">
+            <button id="viewDownloadBtn" class="view-toggle-btn active" type="button" aria-pressed="true">Download</button>
+            <button id="viewSettingsBtn" class="view-toggle-btn" type="button" aria-pressed="false">Settings</button>
+          </div>
+        </div>
       </header>
 
       <main class="split">
         <section class="panel left">
           <div class="panel-header">
-            <h2>Input / Settings</h2>
+            <h2 id="leftPanelTitle">Download</h2>
             <span class="badge" id="infoBadge">Idle</span>
           </div>
 
-          <div class="field">
-            <label for="urlInput">URL</label>
-            <input id="urlInput" type="text" placeholder="https://..." />
-          </div>
-
-          <div class="field-row">
-            <button id="loadInfoBtn" class="btn primary"><span class="btn-label">Load info</span></button>
-            <button id="startDownloadBtn" class="btn">Start download</button>
-          </div>
-
-          <div class="info-card" id="infoCard">
-            <div class="info-meta">
-              <div>
-                <p class="label">Title</p>
-                <p id="infoTitle">-</p>
-              </div>
-              <div>
-                <p class="label">Uploader</p>
-                <p id="infoUploader">-</p>
-              </div>
-              <div>
-                <p class="label">Duration</p>
-                <p id="infoDuration">-</p>
-              </div>
+          <div id="downloadView" class="panel-view active">
+            <div class="field">
+              <label for="urlInput">URL</label>
+              <input id="urlInput" type="text" placeholder="https://..." />
             </div>
-            <div class="info-thumb" id="infoThumb"></div>
-          </div>
 
-          <div class="divider"></div>
+            <div class="field">
+              <label for="presetSelect">Preset format</label>
+              <select id="presetSelect">
+                <option value="best">Best (bv*+ba/b)</option>
+                <option value="1080">Max 1080p</option>
+                <option value="audio_mp3">Audio only (mp3)</option>
+                <option value="audio_opus">Audio only (opus)</option>
+                <option value="text">Text (fast-whisper)</option>
+              </select>
+            </div>
 
-          <div class="field">
-            <label for="presetSelect">Preset format</label>
-            <select id="presetSelect">
-              <option value="best">Best (bv*+ba/b)</option>
-              <option value="1080">Max 1080p</option>
-              <option value="audio">Audio only</option>
-            </select>
-          </div>
-
-          <div class="field-row audio-row">
-            <label class="checkbox">
-              <input id="extractAudio" type="checkbox" />
-              <span class="checkbox-label">Extract audio</span>
-            </label>
-            <select id="audioFormat" class="mini-select">
-              <option value="mp3">mp3</option>
-              <option value="opus">opus</option>
-            </select>
-          </div>
-
-          <div class="field">
-            <label for="outputDir">Output folder</label>
             <div class="field-row">
-              <input id="outputDir" type="text" placeholder="/Users/..." />
-              <button id="pickDirBtn" class="btn ghost">Choose</button>
+              <button id="startDownloadBtn" class="btn primary">Queue</button>
+              <button id="loadInfoBtn" class="btn"><span class="btn-label">Load info</span></button>
             </div>
+
+            <div class="info-card" id="infoCard">
+              <div class="info-meta">
+                <div>
+                  <p class="label">Title</p>
+                  <p id="infoTitle">-</p>
+                </div>
+                <div>
+                  <p class="label">Uploader</p>
+                  <p id="infoUploader">-</p>
+                </div>
+                <div>
+                  <p class="label">Duration</p>
+                  <p id="infoDuration">-</p>
+                </div>
+              </div>
+              <div class="info-thumb" id="infoThumb"></div>
+            </div>
+
+            <div class="divider"></div>
+
+            <p class="hint">Please only download content you have the rights or permission to access.</p>
           </div>
 
-          <div class="field">
-            <label for="ytDlpPath">yt-dlp path</label>
-            <input id="ytDlpPath" type="text" placeholder="/opt/homebrew/bin/yt-dlp" />
-          </div>
+          <div id="settingsView" class="panel-view" hidden>
+            <div class="field">
+              <label for="outputDir">Output folder</label>
+              <div class="field-row">
+                <input id="outputDir" type="text" placeholder="/Users/..." />
+                <button id="pickDirBtn" class="btn ghost">Choose</button>
+              </div>
+            </div>
 
-          <div class="field-row">
-            <button id="saveSettingsBtn" class="btn">Save settings</button>
-            <button id="openFolderBtn" class="btn ghost">Open folder</button>
-            <button id="cancelBtn" class="btn danger">Cancel</button>
-          </div>
+            <div class="field">
+              <label for="ytDlpPath">yt-dlp path</label>
+              <input id="ytDlpPath" type="text" placeholder="/opt/homebrew/bin/yt-dlp" />
+            </div>
 
-          <p class="hint">Please only download content you have the rights or permission to access.</p>
+            <div class="field">
+              <label>yt-dlp versions</label>
+              <div class="version-info">
+                <p id="ytDlpInstalledVersion">Installed: -</p>
+                <p id="ytDlpLatestVersion">Latest: -</p>
+              </div>
+            </div>
+
+            <div class="field-row">
+              <button id="saveSettingsBtn" class="btn">Save settings</button>
+              <button id="openFolderBtn" class="btn ghost">Open folder</button>
+            </div>
+
+            <section class="log-panel" id="logPanel">
+              <div class="log-header">
+                <div>
+                  <h3>Terminal Log</h3>
+                  <p id="logHint">stdout / stderr</p>
+                </div>
+                <div class="log-actions">
+                  <button id="copyLogsBtn" class="btn ghost">Copy</button>
+                </div>
+              </div>
+              <div id="logBody" class="log-body"></div>
+            </section>
+
+            <p class="hint">These settings are used for all new downloads.</p>
+          </div>
         </section>
 
         <section class="panel right">
@@ -104,19 +126,6 @@
           </div>
 
           <div id="queueList" class="queue-list"></div>
-          <section class="log-panel" id="logPanel">
-            <div class="log-header">
-              <div>
-                <h3>Terminal Log</h3>
-                <p id="logHint">stdout / stderr</p>
-              </div>
-              <div class="log-actions">
-                <button id="copyLogsBtn" class="btn ghost">Copy</button>
-                <button id="toggleLogsBtn" class="btn ghost">Hide</button>
-              </div>
-            </div>
-            <div id="logBody" class="log-body"></div>
-          </section>
         </section>
       </main>
     </div>

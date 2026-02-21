@@ -8,7 +8,9 @@ const state = Object.seal({
     selectedId: null,
     logs: [],
     info: null,
+    infoUrl: null,
     config: null,
+    activeView: 'download',
 });
 const els = Object.seal({
     urlInput: document.getElementById('urlInput'),
@@ -16,13 +18,12 @@ const els = Object.seal({
     startDownloadBtn: document.getElementById('startDownloadBtn'),
     pickDirBtn: document.getElementById('pickDirBtn'),
     saveSettingsBtn: document.getElementById('saveSettingsBtn'),
-    cancelBtn: document.getElementById('cancelBtn'),
     openFolderBtn: document.getElementById('openFolderBtn'),
     outputDir: document.getElementById('outputDir'),
     ytDlpPath: document.getElementById('ytDlpPath'),
+    ytDlpInstalledVersion: document.getElementById('ytDlpInstalledVersion'),
+    ytDlpLatestVersion: document.getElementById('ytDlpLatestVersion'),
     presetSelect: document.getElementById('presetSelect'),
-    extractAudio: document.getElementById('extractAudio'),
-    audioFormat: document.getElementById('audioFormat'),
     infoTitle: document.getElementById('infoTitle'),
     infoUploader: document.getElementById('infoUploader'),
     infoDuration: document.getElementById('infoDuration'),
@@ -30,16 +31,51 @@ const els = Object.seal({
     queueList: document.getElementById('queueList'),
     queueBadge: document.getElementById('queueBadge'),
     infoBadge: document.getElementById('infoBadge'),
-    globalStatus: document.getElementById('globalStatus'),
     logBody: document.getElementById('logBody'),
-    logPanel: document.getElementById('logPanel'),
-    toggleLogsBtn: document.getElementById('toggleLogsBtn'),
     copyLogsBtn: document.getElementById('copyLogsBtn'),
+    leftPanelTitle: document.getElementById('leftPanelTitle'),
+    downloadView: document.getElementById('downloadView'),
+    settingsView: document.getElementById('settingsView'),
+    viewDownloadBtn: document.getElementById('viewDownloadBtn'),
+    viewSettingsBtn: document.getElementById('viewSettingsBtn'),
 });
+const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
 const presets = Object.freeze({
-    best: 'bv*+ba/b',
-    1080: 'bv*[height<=1080]+ba/b[height<=1080]',
-    audio: 'ba/b',
+    best: {
+        label: 'Best',
+        format: 'bv*+ba/b',
+        extractAudio: false,
+        audioFormat: null,
+        transcribeText: false,
+    },
+    1080: {
+        label: 'Max 1080p',
+        format: 'bv*[height<=1080]+ba/b[height<=1080]',
+        extractAudio: false,
+        audioFormat: null,
+        transcribeText: false,
+    },
+    audio_mp3: {
+        label: 'Audio only (mp3)',
+        format: 'ba/b',
+        extractAudio: true,
+        audioFormat: 'mp3',
+        transcribeText: false,
+    },
+    audio_opus: {
+        label: 'Audio only (opus)',
+        format: 'ba/b',
+        extractAudio: true,
+        audioFormat: 'opus',
+        transcribeText: false,
+    },
+    text: {
+        label: 'Text (fast-whisper)',
+        format: 'ba/b',
+        extractAudio: true,
+        audioFormat: 'mp3',
+        transcribeText: true,
+    },
 });
 const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
 const formatDuration = seconds => {
@@ -51,13 +87,107 @@ const formatDuration = seconds => {
     return `${mins}m ${String(secs).padStart(2, '0')}s`;
 };
 
+const extractYouTubeVideoId = url => {
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+        if (host === 'youtu.be') {
+            return parsed.pathname.split('/').filter(Boolean)[0] || null;
+        }
+        if (host.endsWith('youtube.com')) {
+            if (parsed.pathname === '/watch') {
+                return parsed.searchParams.get('v');
+            }
+            if (parsed.pathname.startsWith('/shorts/') || parsed.pathname.startsWith('/embed/')) {
+                return parsed.pathname.split('/').filter(Boolean)[1] || null;
+            }
+        }
+    } catch {
+        return null;
+    }
+    return null;
+};
+
+const resolveYouTubeThumbnail = url => {
+    const videoId = extractYouTubeVideoId(url);
+    return videoId ? `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` : null;
+};
+
 const setInfoBadge = text => {
     els.infoBadge.textContent = text;
 };
 
-const setGlobalStatus = text => {
-    els.globalStatus.textContent = text || '';
-    els.globalStatus.style.display = text ? 'inline-flex' : 'none';
+const parseLatestYtDlpVersion = payload => {
+    if (!payload || typeof payload.tag_name !== 'string') return null;
+    const value = payload.tag_name.trim();
+    if (!value) return null;
+    return value.startsWith('v') ? value.slice(1) : value;
+};
+
+const fetchLatestYtDlpVersion = async () => {
+    const response = await fetch(ytDlpLatestReleaseUrl, {
+        headers: {
+            Accept: 'application/vnd.github+json',
+        },
+    });
+    if (!response.ok) {
+        throw new Error(`latest version request failed (${response.status})`);
+    }
+    const payload = await response.json();
+    const latest = parseLatestYtDlpVersion(payload);
+    if (!latest) {
+        throw new Error('latest version missing from response');
+    }
+    return latest;
+};
+
+const refreshYtDlpVersions = async () => {
+    if (!invoke) return;
+    const path = els.ytDlpPath.value.trim() || null;
+    els.ytDlpInstalledVersion.textContent = 'Installed: checking...';
+    els.ytDlpInstalledVersion.removeAttribute('title');
+    els.ytDlpLatestVersion.textContent = 'Latest: checking...';
+
+    const [installedResult, latestResult] = await Promise.allSettled([
+        invoke('get_yt_dlp_installed_version', { path }),
+        fetchLatestYtDlpVersion(),
+    ]);
+
+    if (installedResult.status === 'fulfilled') {
+        const installed = installedResult.value;
+        els.ytDlpInstalledVersion.textContent = `Installed: ${installed.version}`;
+        els.ytDlpInstalledVersion.title = installed.path;
+    } else {
+        els.ytDlpInstalledVersion.textContent = 'Installed: unavailable';
+        const reason = `${installedResult.reason || ''}`.trim();
+        if (reason) els.ytDlpInstalledVersion.title = reason;
+    }
+
+    if (latestResult.status === 'fulfilled') {
+        els.ytDlpLatestVersion.textContent = `Latest: ${latestResult.value}`;
+    } else {
+        els.ytDlpLatestVersion.textContent = 'Latest: unavailable';
+    }
+};
+
+const setActiveView = view => {
+    const nextView = view === 'settings' ? 'settings' : 'download';
+    const isSettings = nextView === 'settings';
+    state.activeView = nextView;
+
+    els.downloadView.hidden = isSettings;
+    els.settingsView.hidden = !isSettings;
+    els.downloadView.classList.toggle('active', !isSettings);
+    els.settingsView.classList.toggle('active', isSettings);
+
+    els.viewDownloadBtn.classList.toggle('active', !isSettings);
+    els.viewDownloadBtn.setAttribute('aria-pressed', String(!isSettings));
+    els.viewSettingsBtn.classList.toggle('active', isSettings);
+    els.viewSettingsBtn.setAttribute('aria-pressed', String(isSettings));
+
+    els.leftPanelTitle.textContent = isSettings ? 'Settings' : 'Download';
+    els.infoBadge.style.display = isSettings ? 'none' : 'inline-flex';
+    if (isSettings) void refreshYtDlpVersions();
 };
 
 const renderInfo = () => {
@@ -85,9 +215,16 @@ const renderQueue = () => {
     items.forEach(job => {
         const item = document.createElement('div');
         item.className = `queue-item ${job.id === state.selectedId ? 'active' : ''}`;
-        item.onclick = () => {
+        item.onclick = async () => {
             state.selectedId = job.id;
             renderQueue();
+            if (job.state === 'success' && job.outputPath && invoke) {
+                try {
+                    await invoke('open_folder', { path: job.outputPath });
+                } catch (err) {
+                    appendLog(`[open] ${err}`, true);
+                }
+            }
         };
 
         const header = document.createElement('div');
@@ -116,8 +253,25 @@ const renderQueue = () => {
       <span>${job.eta || '-'}</span>
       <span>${job.formatLabel || ''}</span>
     `;
+        const main = document.createElement('div');
+        main.className = 'queue-main';
 
-        item.append(header, progress, meta);
+        const content = document.createElement('div');
+        content.className = 'queue-content';
+        content.append(header, progress, meta);
+        main.appendChild(content);
+
+        const thumbUrl = job.thumbnail || resolveYouTubeThumbnail(job.url);
+        if (thumbUrl) {
+            const thumb = document.createElement('div');
+            thumb.className = 'queue-thumb';
+            thumb.style.backgroundImage = `url('${thumbUrl}')`;
+            main.appendChild(thumb);
+        } else {
+            main.classList.add('no-thumb');
+        }
+
+        item.append(main);
         els.queueList.appendChild(item);
     });
 
@@ -144,6 +298,7 @@ const syncConfig = async () => {
         state.config = await invoke('get_config');
         els.outputDir.value = state.config.default_output_dir || '';
         els.ytDlpPath.value = state.config.yt_dlp_path || defaultYtDlpPath;
+        void refreshYtDlpVersions();
     } catch (err) {
         appendLog(`[config] ${err}`, true);
     }
@@ -158,10 +313,12 @@ const loadInfo = async () => {
     try {
         const info = await invoke('load_info', { url });
         state.info = info;
+        state.infoUrl = url;
         renderInfo();
         setInfoBadge('Ready');
     } catch (err) {
         state.info = null;
+        state.infoUrl = null;
         renderInfo();
         setInfoBadge('Error');
         appendLog(`[info] ${err}`, true);
@@ -176,37 +333,38 @@ const enqueueDownload = async () => {
     if (!url) return;
 
     const presetKey = els.presetSelect.value;
-    const format = presets[presetKey] || presets.best;
-    const extractAudio = els.extractAudio.checked;
-    const audioFormat = els.audioFormat.value;
+    const preset = presets[presetKey] || presets.best;
     const output_dir = els.outputDir.value.trim() || null;
+    const hasLoadedInfo = state.info && state.infoUrl === url;
 
     try {
         const id = await invoke('enqueue_download', {
             request: {
                 url,
-                format,
+                format: preset.format,
                 output_dir,
-                extract_audio: extractAudio,
-                audio_format: extractAudio ? audioFormat : null,
+                extract_audio: preset.extractAudio,
+                audio_format: preset.audioFormat,
+                transcribe_text: preset.transcribeText,
             },
         });
 
         updateJob(id, {
             url,
-            label: state.info?.title || url,
+            label: hasLoadedInfo ? state.info?.title || url : url,
+            thumbnail: hasLoadedInfo ? state.info?.thumbnail || null : resolveYouTubeThumbnail(url),
             state: 'queued',
+            outputPath: null,
             percent: 0,
             speed: '-',
             eta: '-',
-            formatLabel: presetKey,
+            formatLabel: preset.label,
         });
 
         els.urlInput.value = '';
         state.info = null;
+        state.infoUrl = null;
         renderInfo();
-
-        setGlobalStatus('Queued');
     } catch (err) {
         appendLog(`[queue] ${err}`, true);
     }
@@ -221,6 +379,7 @@ const saveSettings = async () => {
             },
         });
         appendLog('[config] saved', false);
+        void refreshYtDlpVersions();
     } catch (err) {
         appendLog(`[config] ${err}`, true);
     }
@@ -245,33 +404,17 @@ const openFolder = async () => {
     }
 };
 
-const cancelSelected = async () => {
-    if (!state.selectedId) return;
-    try {
-        await invoke('cancel_download', { id: state.selectedId });
-    } catch (err) {
-        appendLog(`[cancel] ${err}`, true);
-    }
-};
-
 const bindEvents = () => {
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
     els.saveSettingsBtn.addEventListener('click', saveSettings);
     els.pickDirBtn.addEventListener('click', pickDir);
     els.openFolderBtn.addEventListener('click', openFolder);
-    els.cancelBtn.addEventListener('click', cancelSelected);
-
-    els.presetSelect.addEventListener('change', () => {
-        if (els.presetSelect.value === 'audio') {
-            els.extractAudio.checked = true;
-        }
+    els.ytDlpPath.addEventListener('change', () => {
+        if (state.activeView === 'settings') void refreshYtDlpVersions();
     });
-
-    els.toggleLogsBtn.addEventListener('click', () => {
-        els.logPanel.classList.toggle('collapsed');
-        els.toggleLogsBtn.textContent = els.logPanel.classList.contains('collapsed') ? 'Show' : 'Hide';
-    });
+    els.viewDownloadBtn.addEventListener('click', () => setActiveView('download'));
+    els.viewSettingsBtn.addEventListener('click', () => setActiveView('settings'));
 
     els.copyLogsBtn.addEventListener('click', async () => {
         try {
@@ -286,22 +429,23 @@ const bindBackendEvents = async () => {
     await listen('queue:update', event => {
         state.queueIds = event.payload.map(job => job.id);
         event.payload.forEach(job => {
+            const existing = state.jobs.get(job.id);
             updateJob(job.id, {
                 url: job.url,
-                label: job.url,
+                label: existing?.label || job.url,
+                thumbnail: existing?.thumbnail || resolveYouTubeThumbnail(job.url),
                 state: 'queued',
-                formatLabel: job.format,
+                outputPath: existing?.outputPath || null,
+                formatLabel: existing?.formatLabel || job.format,
             });
         });
     });
 
     await listen('download:state', event => {
-        const { id, state: status, exit_code, error } = event.payload;
-        updateJob(id, { state: status });
-        if (status === 'downloading') setGlobalStatus('Downloading');
-        if (status === 'success') setGlobalStatus('Success');
-        if (status === 'error') setGlobalStatus('Error');
-        if (status === 'cancelled') setGlobalStatus('Cancelled');
+        const { id, state: status, output_path, exit_code, error } = event.payload;
+        const patch = { state: status };
+        if (output_path) patch.outputPath = output_path;
+        updateJob(id, patch);
         if (error) appendLog(`[${id}] ${error} (${exit_code ?? '?'})`, true);
     });
 
@@ -322,10 +466,9 @@ const bindBackendEvents = async () => {
 
 const init = async () => {
     bindEvents();
-    setGlobalStatus('');
+    setActiveView('download');
     if (!invoke || !listen) {
         appendLog('[tauri] API not available. Start the app with `npm run dev` (Tauri), not in a browser.', true);
-        setGlobalStatus('No Tauri');
         return;
     }
     await syncConfig();

@@ -18,6 +18,9 @@
       "identifier": "com.pinefetch.app",
       "active": true,
       "targets": "all",
+      "resources": [
+        "resources/whisper-runtime"
+      ],
       "icon": [
         "icons/icon.png",
         "icons/icon.icns"

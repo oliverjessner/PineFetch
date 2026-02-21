@@ -23,6 +23,7 @@ Local Tauri desktop UI for `yt-dlp` with a minimal terminal-inspired interface. 
 - Node.js
 - Tauri CLI
 - `yt-dlp` installed and available in PATH, or set a custom path in the app
+- Optional for local dev of text preset: Python 3 + `faster-whisper` (`pip install faster-whisper`)
 
 ### Install
 
@@ -41,6 +42,9 @@ npm run dev
 ```bash
 npm run build
 ```
+
+`npm run build` now prepares and bundles a local `fast-whisper` runtime under
+`src-tauri/resources/whisper-runtime` before creating the app bundle.
 
 ## yt-dlp location
 

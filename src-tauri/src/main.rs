@@ -185,8 +185,15 @@ fn load_info(app: AppHandle, state: State<AppState>, url: String) -> Result<Info
     return Err("URL must start with http:// or https://".to_string());
   }
   let yt_dlp = resolve_yt_dlp(&app, &state)?;
-  let output = Command::new(yt_dlp)
-    .args(["--dump-json", "--no-playlist", "--no-warnings", &url])
+  let mut command = Command::new(yt_dlp);
+  command.args(["--dump-json", "--no-playlist", "--no-warnings"]);
+  if let Some(deno) = resolve_deno_executable(&app) {
+    command.arg("--js-runtimes");
+    command.arg(format!("deno:{deno}"));
+  }
+
+  let output = command
+    .arg(&url)
     .output()
     .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
 
@@ -549,6 +556,8 @@ fn run_download_job(
   job: &DownloadJob,
 ) -> Result<DownloadRunResult, String> {
   let yt_dlp = resolve_yt_dlp(app, state)?;
+  let ffmpeg_location = resolve_ffmpeg_location(app, &yt_dlp);
+  let deno_path = resolve_deno_executable(app);
   let output_template = build_output_template(&job.output_dir);
 
   let mut args = vec![
@@ -564,6 +573,21 @@ fn run_download_job(
     output_template,
     job.url.clone(),
   ];
+
+  if let Some(location) = ffmpeg_location.as_ref() {
+    args.push("--ffmpeg-location".to_string());
+    args.push(location.clone());
+  } else if job.extract_audio || job.transcribe_text || job.format.contains('+') {
+    return Err(
+      "ffmpeg and ffprobe not found. Install ffmpeg (or make sure it is in the same directory as yt-dlp) and try again."
+        .to_string(),
+    );
+  }
+
+  if let Some(deno) = deno_path.as_ref() {
+    args.push("--js-runtimes".to_string());
+    args.push(format!("deno:{deno}"));
+  }
 
   if job.extract_audio {
     args.push("--extract-audio".to_string());
@@ -686,10 +710,97 @@ fn parse_after_move_filepath(line: &str) -> Option<String> {
   Some(trimmed.to_string())
 }
 
+fn ffmpeg_tool_name() -> &'static str {
+  if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" }
+}
+
+fn ffprobe_tool_name() -> &'static str {
+  if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" }
+}
+
+fn has_ffmpeg_tools_in_dir(dir: &Path) -> bool {
+  dir.join(ffmpeg_tool_name()).exists() && dir.join(ffprobe_tool_name()).exists()
+}
+
+fn normalize_ffmpeg_location(path: &Path) -> Option<String> {
+  if path.is_dir() {
+    if has_ffmpeg_tools_in_dir(path) {
+      return Some(path.to_string_lossy().to_string());
+    }
+    return None;
+  }
+
+  if path.is_file() {
+    if let Some(parent) = path.parent() {
+      if has_ffmpeg_tools_in_dir(parent) {
+        return Some(parent.to_string_lossy().to_string());
+      }
+    }
+  }
+
+  None
+}
+
+fn resolve_bundled_ffmpeg_location(app: &AppHandle) -> Option<String> {
+  for relative in [
+    "ffmpeg-runtime/bin",
+    "ffmpeg-runtime",
+    "resources/ffmpeg-runtime/bin",
+    "resources/ffmpeg-runtime",
+  ] {
+    if let Some(path) = app.path_resolver().resolve_resource(relative) {
+      if let Some(location) = normalize_ffmpeg_location(&path) {
+        return Some(location);
+      }
+    }
+  }
+  None
+}
+
+fn resolve_ffmpeg_location(app: &AppHandle, yt_dlp_path: &str) -> Option<String> {
+  if let Ok(raw) = std::env::var("PINEFETCH_FFMPEG_LOCATION") {
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() {
+      if let Some(location) = normalize_ffmpeg_location(Path::new(trimmed)) {
+        return Some(location);
+      }
+    }
+  }
+
+  if let Some(location) = resolve_bundled_ffmpeg_location(app) {
+    return Some(location);
+  }
+
+  if let Some(location) = normalize_ffmpeg_location(Path::new(yt_dlp_path)) {
+    return Some(location);
+  }
+
+  for candidate in ["/opt/homebrew/bin", "/usr/local/bin"] {
+    if let Some(location) = normalize_ffmpeg_location(Path::new(candidate)) {
+      return Some(location);
+    }
+  }
+
+  if let Some(ffmpeg_path) = find_in_path("ffmpeg") {
+    if let Some(location) = normalize_ffmpeg_location(Path::new(&ffmpeg_path)) {
+      return Some(location);
+    }
+  }
+
+  if let Some(ffprobe_path) = find_in_path("ffprobe") {
+    if let Some(location) = normalize_ffmpeg_location(Path::new(&ffprobe_path)) {
+      return Some(location);
+    }
+  }
+
+  None
+}
+
 fn resolve_bundled_python(app: &AppHandle) -> Option<String> {
   #[cfg(target_os = "windows")]
   let candidates = vec![
     "whisper-runtime/Scripts/python.exe",
+    "resources/whisper-runtime/Scripts/python.exe",
   ];
 
   #[cfg(not(target_os = "windows"))]
@@ -699,6 +810,11 @@ fn resolve_bundled_python(app: &AppHandle) -> Option<String> {
     "whisper-runtime/bin/python3.10",
     "whisper-runtime/bin/python3",
     "whisper-runtime/bin/python",
+    "resources/whisper-runtime/bin/python3.12",
+    "resources/whisper-runtime/bin/python3.11",
+    "resources/whisper-runtime/bin/python3.10",
+    "resources/whisper-runtime/bin/python3",
+    "resources/whisper-runtime/bin/python",
   ];
 
   for relative in candidates {
@@ -710,6 +826,45 @@ fn resolve_bundled_python(app: &AppHandle) -> Option<String> {
   }
 
   None
+}
+
+fn resolve_bundled_deno(app: &AppHandle) -> Option<String> {
+  #[cfg(target_os = "windows")]
+  let candidates = vec![
+    "deno-runtime/bin/deno.exe",
+    "resources/deno-runtime/bin/deno.exe",
+  ];
+
+  #[cfg(not(target_os = "windows"))]
+  let candidates = vec![
+    "deno-runtime/bin/deno",
+    "resources/deno-runtime/bin/deno",
+  ];
+
+  for relative in candidates {
+    if let Some(path) = app.path_resolver().resolve_resource(relative) {
+      if path.exists() {
+        return Some(path.to_string_lossy().to_string());
+      }
+    }
+  }
+
+  None
+}
+
+fn resolve_deno_executable(app: &AppHandle) -> Option<String> {
+  if let Ok(raw) = std::env::var("PINEFETCH_DENO_PATH") {
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() && Path::new(trimmed).exists() {
+      return Some(trimmed.to_string());
+    }
+  }
+
+  if let Some(path) = resolve_bundled_deno(app) {
+    return Some(path);
+  }
+
+  find_in_path("deno")
 }
 
 fn resolve_python_executable(app: &AppHandle) -> Option<String> {
@@ -748,6 +903,14 @@ fn run_faster_whisper_transcription(
     "No Python runtime found for faster-whisper (bundled runtime missing and no compatible Python in PATH)"
       .to_string()
   })?;
+  emit_log(
+    app,
+    LogEvent {
+      id: job.id.clone(),
+      line: format!("[faster-whisper] using python: {python}"),
+      is_error: false,
+    },
+  );
 
   let transcript_path = Path::new(audio_path).with_extension("txt");
   let transcript_path_str = transcript_path.to_string_lossy().to_string();

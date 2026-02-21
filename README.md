@@ -23,6 +23,8 @@ Local Tauri desktop UI for `yt-dlp` with a minimal terminal-inspired interface. 
 - Node.js
 - Tauri CLI
 - `yt-dlp` installed and available in PATH, or set a custom path in the app
+- `ffmpeg` + `ffprobe` (required for merging streams, audio extraction, and text preset)
+- `deno` (recommended for reliable YouTube extraction in recent `yt-dlp` versions)
 - Optional for local dev of text preset: Python 3 + `faster-whisper` (`pip install faster-whisper`)
 
 ### Install
@@ -44,12 +46,15 @@ npm run build
 ```
 
 `npm run build` now prepares and bundles a local `fast-whisper` runtime under
-`src-tauri/resources/whisper-runtime` before creating the app bundle.
+`src-tauri/resources/whisper-runtime` and a local `ffmpeg` runtime under
+`src-tauri/resources/ffmpeg-runtime`, plus a local `deno` runtime under
+`src-tauri/resources/deno-runtime`, before creating the app bundle.
 
 ## yt-dlp location
 
 - If `yt-dlp` is in your PATH, the app will find it automatically.
 - Otherwise, set the full path in **Settings → yt-dlp Pfad**.
+- PineFetch automatically tries to use `ffmpeg`/`ffprobe` from the same directory as `yt-dlp`.
 
 ## Legal/Use-Case Notes
 

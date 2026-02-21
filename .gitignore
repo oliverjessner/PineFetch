@@ -4,3 +4,9 @@ src-tauri/target
 src-tauri/resources/whisper-runtime/*
 !src-tauri/resources/whisper-runtime/.keep
 !src-tauri/resources/whisper-runtime/PLACEHOLDER
+src-tauri/resources/ffmpeg-runtime/*
+!src-tauri/resources/ffmpeg-runtime/.keep
+!src-tauri/resources/ffmpeg-runtime/PLACEHOLDER
+src-tauri/resources/deno-runtime/*
+!src-tauri/resources/deno-runtime/.keep
+!src-tauri/resources/deno-runtime/PLACEHOLDER

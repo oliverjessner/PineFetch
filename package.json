@@ -5,7 +5,9 @@
     "scripts": {
         "dev": "tauri dev",
         "prepare:whisper-runtime": "bash scripts/prepare-whisper-runtime.sh",
-        "build": "npm run prepare:whisper-runtime && tauri build",
+        "prepare:ffmpeg-runtime": "bash scripts/prepare-ffmpeg-runtime.sh",
+        "prepare:deno-runtime": "bash scripts/prepare-deno-runtime.sh",
+        "build": "npm run prepare:whisper-runtime && npm run prepare:ffmpeg-runtime && npm run prepare:deno-runtime && tauri build",
         "build:adhoc-dmg": "bash -lc 'set -euo pipefail; npm run build -- --bundles app; APP=\"src-tauri/target/release/bundle/macos/PineFetch.app\"; if [ ! -d \"$APP\" ]; then echo \"App not found at $APP\"; exit 1; fi; codesign --force --deep --sign - \"$APP\"; codesign --verify --deep --strict --verbose=2 \"$APP\"; mkdir -p src-tauri/target/release/bundle/dmg; VERSION=$(node -p \"require(\\\"./src-tauri/tauri.conf.json\\\").package.version\"); OUT=\"src-tauri/target/release/bundle/dmg/PineFetch_${VERSION}_aarch64_adhoc.dmg\"; hdiutil create -volname \"PineFetch\" -srcfolder \"$APP\" -ov -format UDZO \"$OUT\"; echo \"Created $OUT\";'"
     },
     "devDependencies": {

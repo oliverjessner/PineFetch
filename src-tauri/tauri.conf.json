@@ -19,7 +19,9 @@
       "active": true,
       "targets": "all",
       "resources": [
-        "resources/whisper-runtime"
+        "resources/whisper-runtime",
+        "resources/ffmpeg-runtime",
+        "resources/deno-runtime"
       ],
       "icon": [
         "icons/icon.png",

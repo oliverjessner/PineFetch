@@ -4,7 +4,7 @@ Local Tauri desktop UI for `yt-dlp` with a minimal terminal-inspired interface. 
 
 **Note:** Please only download content you have the rights or permission to access.
 
-![screenshot of the app](/src/images/pinefetch.webp)
+![screenshot of the app](/src/images/download.png)
 
 ## Features
 

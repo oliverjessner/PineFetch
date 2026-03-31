@@ -1,3 +1,14 @@
+# 0.2.0
+
+## Highlights
+
+- context menu with items to redownload and cancel
+- magic import, pinefetch checks if you clipboard has an url, if so it automatically insert to the URL input field
+
+## Improvements
+
+- scroll fixes
+
 # 0.1.0
 
 ## Highlights

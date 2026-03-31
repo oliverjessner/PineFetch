@@ -9,7 +9,13 @@
   <body>
     <div class="app-shell">
       <header class="top-bar">
-        <div class="brand">
+        <div
+          id="magicImportTrigger"
+          class="brand"
+          role="button"
+          tabindex="0"
+          aria-label="Magic import from clipboard"
+        >
           <img class="brand-logo" src="images/logo.png" alt="PineFetch logo" />
           <div>
             <h1>PineFetch</h1>
@@ -38,13 +44,7 @@
 
             <div class="field">
               <label for="presetSelect">Preset format</label>
-              <select id="presetSelect">
-                <option value="best">Best (bv*+ba/b)</option>
-                <option value="1080">Max 1080p</option>
-                <option value="audio_mp3">Audio only (mp3)</option>
-                <option value="audio_opus">Audio only (opus)</option>
-                <option value="text">Text (fast-whisper)</option>
-              </select>
+              <select id="presetSelect"></select>
             </div>
 
             <div class="field-row">
@@ -97,6 +97,16 @@
               </div>
             </div>
 
+            <div class="field">
+              <label class="toggle-field" for="magicImportEnabled">
+                <span class="toggle-copy">
+                  <span class="toggle-title">Magic import</span>
+                  <span class="toggle-hint">Click PineFetch with an empty URL field to import a URL from the clipboard.</span>
+                </span>
+                <input id="magicImportEnabled" type="checkbox" checked />
+              </label>
+            </div>
+
             <div class="field-row">
               <button id="saveSettingsBtn" class="btn">Save settings</button>
               <button id="openFolderBtn" class="btn ghost">Open folder</button>
@@ -131,6 +141,30 @@
           </div>
         </section>
       </main>
+
+      <div id="queueContextMenu" class="queue-context-menu" hidden>
+        <button class="queue-context-menu-btn" type="button" data-action="copy-link">Copy link</button>
+        <div class="queue-context-divider" role="separator" aria-hidden="true"></div>
+        <div id="queueContextDownloads" class="queue-context-downloads"></div>
+        <button
+          id="queueContextCancelBtn"
+          class="queue-context-menu-btn queue-context-menu-btn-danger"
+          type="button"
+          data-action="cancel"
+          hidden
+        >
+          Cancel download
+        </button>
+        <button
+          id="queueContextRemoveBtn"
+          class="queue-context-menu-btn"
+          type="button"
+          data-action="remove"
+          hidden
+        >
+          Remove from queue
+        </button>
+      </div>
     </div>
 
     <script src="main.js"></script>

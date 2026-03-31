@@ -8,14 +8,34 @@ use std::{
   process::{Child, Command, Stdio},
   sync::{Arc, Mutex},
   thread,
+  time::Duration,
 };
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, ClipboardManager, Manager, State};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+fn default_magic_import_enabled() -> bool {
+  true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppConfig {
   yt_dlp_path: Option<String>,
   default_output_dir: Option<String>,
+  #[serde(default = "default_magic_import_enabled")]
+  magic_import_enabled: bool,
+  #[serde(default)]
+  last_download_url: Option<String>,
+}
+
+impl Default for AppConfig {
+  fn default() -> Self {
+    Self {
+      yt_dlp_path: None,
+      default_output_dir: None,
+      magic_import_enabled: default_magic_import_enabled(),
+      last_download_url: None,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +182,22 @@ fn set_config(app: AppHandle, state: State<AppState>, config: AppConfig) -> Resu
 }
 
 #[tauri::command]
+fn cache_last_download_url(app: AppHandle, state: State<AppState>, url: String) -> Result<(), String> {
+  let trimmed = url.trim();
+  if trimmed.is_empty() {
+    return Ok(());
+  }
+
+  let next_config = {
+    let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+    cfg.last_download_url = Some(trimmed.to_string());
+    cfg.clone()
+  };
+
+  save_config(&app, &next_config)
+}
+
+#[tauri::command]
 async fn pick_output_dir() -> Result<Option<String>, String> {
   let (tx, rx) = std::sync::mpsc::channel();
   tauri::api::dialog::FileDialogBuilder::new().pick_folder(move |path| {
@@ -177,6 +213,14 @@ async fn pick_output_dir() -> Result<Option<String>, String> {
 fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
   tauri::api::shell::open(&app.shell_scope(), path, None)
     .map_err(|e| format!("Open folder failed: {e}"))
+}
+
+#[tauri::command]
+fn read_clipboard_text(app: AppHandle) -> Result<Option<String>, String> {
+  app
+    .clipboard_manager()
+    .read_text()
+    .map_err(|e| format!("Clipboard read failed: {e}"))
 }
 
 #[tauri::command]
@@ -357,11 +401,15 @@ fn cancel_download(app: AppHandle, state: State<AppState>, id: String) -> Result
     *cancel = Some(id.clone());
   }
 
-  let mut child_guard = state
-    .current_child
-    .lock()
-    .map_err(|_| "Child lock poisoned")?;
-  if let Some(child) = child_guard.as_mut() {
+  let child = {
+    let child_guard = state
+      .current_child
+      .lock()
+      .map_err(|_| "Child lock poisoned")?;
+    child_guard.clone()
+  };
+
+  if let Some(child) = child {
     if let Ok(mut guard) = child.lock() {
       let _ = guard.kill();
     }
@@ -673,9 +721,17 @@ fn run_download_job(
     }
   });
 
-  let status = {
-    let mut guard = child.lock().map_err(|_| "Child lock poisoned")?;
-    guard.wait().map_err(|e| format!("Wait failed: {e}"))?
+  let status = loop {
+    let maybe_status = {
+      let mut guard = child.lock().map_err(|_| "Child lock poisoned")?;
+      guard.try_wait().map_err(|e| format!("Wait failed: {e}"))?
+    };
+
+    if let Some(status) = maybe_status {
+      break status;
+    }
+
+    thread::sleep(Duration::from_millis(100));
   };
   {
     let mut child_guard = state
@@ -1116,8 +1172,10 @@ fn main() {
     .invoke_handler(tauri::generate_handler![
       get_config,
       set_config,
+      cache_last_download_url,
       pick_output_dir,
       open_folder,
+      read_clipboard_text,
       load_info,
       get_yt_dlp_installed_version,
       enqueue_download,

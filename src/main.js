@@ -7,6 +7,7 @@ const state = Object.seal({
     queueIds: [],
     suppressedJobIds: new Set(),
     selectedId: null,
+    contextMenuJobId: null,
     logs: [],
     info: null,
     infoUrl: null,
@@ -14,6 +15,8 @@ const state = Object.seal({
     activeView: 'download',
 });
 const els = Object.seal({
+    magicImportTrigger: document.getElementById('magicImportTrigger'),
+    magicImportEnabled: document.getElementById('magicImportEnabled'),
     urlInput: document.getElementById('urlInput'),
     loadInfoBtn: document.getElementById('loadInfoBtn'),
     startDownloadBtn: document.getElementById('startDownloadBtn'),
@@ -40,47 +43,72 @@ const els = Object.seal({
     settingsView: document.getElementById('settingsView'),
     viewDownloadBtn: document.getElementById('viewDownloadBtn'),
     viewSettingsBtn: document.getElementById('viewSettingsBtn'),
+    queueContextMenu: document.getElementById('queueContextMenu'),
+    queueContextDownloads: document.getElementById('queueContextDownloads'),
+    queueContextCancelBtn: document.getElementById('queueContextCancelBtn'),
+    queueContextRemoveBtn: document.getElementById('queueContextRemoveBtn'),
 });
 const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
-const presets = Object.freeze({
-    best: {
-        label: 'Best',
+const presetOptions = Object.freeze([
+    {
+        key: 'best',
+        selectLabel: 'Best (bv*+ba/b)',
+        queueLabel: 'Best',
+        menuLabel: 'Download Best',
         format: 'bv*+ba/b',
         extractAudio: false,
         audioFormat: null,
         transcribeText: false,
     },
-    1080: {
-        label: 'Max 1080p',
+    {
+        key: '1080',
+        selectLabel: 'Max 1080p',
+        queueLabel: 'Max 1080p',
+        menuLabel: 'Download Max 1080p',
         format: 'bv*[height<=1080]+ba/b[height<=1080]',
         extractAudio: false,
         audioFormat: null,
         transcribeText: false,
     },
-    audio_mp3: {
-        label: 'Audio only (mp3)',
+    {
+        key: 'audio_mp3',
+        selectLabel: 'Audio only (mp3)',
+        queueLabel: 'Audio only (mp3)',
+        menuLabel: 'Download Audio only (mp3)',
         format: 'ba/b',
         extractAudio: true,
         audioFormat: 'mp3',
         transcribeText: false,
     },
-    audio_opus: {
-        label: 'Audio only (opus)',
+    {
+        key: 'audio_opus',
+        selectLabel: 'Audio only (opus)',
+        queueLabel: 'Audio only (opus)',
+        menuLabel: 'Download Audio only (opus)',
         format: 'ba/b',
         extractAudio: true,
         audioFormat: 'opus',
         transcribeText: false,
     },
-    text: {
-        label: 'Text (fast-whisper)',
+    {
+        key: 'text',
+        selectLabel: 'Text (fast-whisper)',
+        queueLabel: 'Text (fast-whisper)',
+        menuLabel: 'Download Text (fast-whisper)',
         format: 'ba/b',
         extractAudio: true,
         audioFormat: 'mp3',
         transcribeText: true,
     },
-});
+]);
+const presets = Object.freeze(
+    Object.fromEntries(presetOptions.map(preset => [preset.key, preset])),
+);
 const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
+const cancellableJobStates = new Set(['downloading', 'transcribing']);
+const removableJobStates = new Set(['queued', 'success', 'error', 'cancelled']);
 let urlShakeTimer = null;
+let magicImportInFlight = false;
 const formatDuration = seconds => {
     if (!seconds && seconds !== 0) return '-';
     const mins = Math.floor(seconds / 60);
@@ -167,6 +195,75 @@ const shakeUrlInput = () => {
         els.urlInput.classList.remove('invalid-shake');
         urlShakeTimer = null;
     }, 420);
+};
+
+const isMagicImportEnabled = () => Boolean(els.magicImportEnabled?.checked);
+
+const syncMagicImportTriggerState = () => {
+    const enabled = isMagicImportEnabled();
+    els.magicImportTrigger.setAttribute('aria-disabled', String(!enabled));
+    els.magicImportTrigger.title = enabled
+        ? 'Magic import from clipboard'
+        : 'Magic import is disabled in Settings';
+};
+
+const readClipboardText = async () => {
+    if (invoke) {
+        const text = await invoke('read_clipboard_text');
+        if (typeof text === 'string') return text;
+    }
+    if (navigator.clipboard?.readText) {
+        return navigator.clipboard.readText();
+    }
+    if (typeof tauriGlobal?.clipboard?.readText === 'function') {
+        return tauriGlobal.clipboard.readText();
+    }
+    return '';
+};
+
+const tryMagicImport = async () => {
+    if (magicImportInFlight) return;
+    if (!isMagicImportEnabled()) return;
+    if (state.activeView !== 'download') return;
+    if (els.urlInput.value.trim()) return;
+
+    magicImportInFlight = true;
+    try {
+        const clipboardText = (await readClipboardText()).trim();
+        if (!isValidHttpUrl(clipboardText)) return;
+        const lastDownloadedUrl = `${state.config?.last_download_url || ''}`.trim();
+        if (lastDownloadedUrl && clipboardText === lastDownloadedUrl) return;
+
+        els.urlInput.value = clipboardText;
+        if (state.infoUrl !== clipboardText) {
+            state.info = null;
+            state.infoUrl = null;
+            renderInfo();
+            setInfoBadge('Idle');
+        }
+        els.urlInput.focus();
+    } catch {
+        // Ignore clipboard read failures; magic import is best-effort.
+    } finally {
+        magicImportInFlight = false;
+    }
+};
+
+const cacheLastDownloadedUrl = async url => {
+    const nextUrl = url.trim();
+    if (!nextUrl) return;
+
+    state.config = {
+        ...(state.config || {}),
+        last_download_url: nextUrl,
+    };
+
+    if (!invoke) return;
+    try {
+        await invoke('cache_last_download_url', { url: nextUrl });
+    } catch (err) {
+        appendLog(`[config] ${err}`, true);
+    }
 };
 
 const extractYouTubeVideoId = url => {
@@ -272,6 +369,76 @@ const setActiveView = view => {
     if (isSettings) void refreshYtDlpVersions();
 };
 
+const renderPresetOptions = () => {
+    const selectedPresetKey = presets[els.presetSelect.value] ? els.presetSelect.value : null;
+    els.presetSelect.innerHTML = '';
+
+    presetOptions.forEach(preset => {
+        const option = document.createElement('option');
+        option.value = preset.key;
+        option.textContent = preset.selectLabel;
+        els.presetSelect.appendChild(option);
+    });
+
+    els.presetSelect.value = selectedPresetKey || presetOptions[0]?.key || '';
+};
+
+const renderQueueContextMenu = () => {
+    els.queueContextDownloads.innerHTML = '';
+    presetOptions.forEach(preset => {
+        const button = document.createElement('button');
+        button.className = 'queue-context-menu-btn';
+        button.type = 'button';
+        button.dataset.action = 'download';
+        button.dataset.presetKey = preset.key;
+        button.textContent = preset.menuLabel;
+        els.queueContextDownloads.appendChild(button);
+    });
+};
+
+const hideQueueContextMenu = () => {
+    state.contextMenuJobId = null;
+    els.queueContextMenu.hidden = true;
+    els.queueContextMenu.style.left = '';
+    els.queueContextMenu.style.top = '';
+};
+
+const getContextMenuJob = () => {
+    if (!state.contextMenuJobId) return null;
+    return state.jobs.get(state.contextMenuJobId) || null;
+};
+
+const syncQueueContextMenuState = () => {
+    const job = getContextMenuJob();
+    const isCancelling = job?.state === 'cancelling';
+    const canCancel = Boolean(job && cancellableJobStates.has(job.state));
+    const showCancel = Boolean(job && (canCancel || isCancelling));
+    const canRemove = Boolean(job && removableJobStates.has(job.state));
+
+    els.queueContextCancelBtn.hidden = !showCancel;
+    els.queueContextCancelBtn.disabled = !canCancel;
+    els.queueContextCancelBtn.textContent = isCancelling ? 'Cancelling...' : 'Cancel download';
+    els.queueContextRemoveBtn.hidden = !canRemove;
+};
+
+const openQueueContextMenu = (job, x, y) => {
+    state.contextMenuJobId = job.id;
+    syncQueueContextMenuState();
+    els.queueContextMenu.hidden = false;
+
+    requestAnimationFrame(() => {
+        if (els.queueContextMenu.hidden || state.contextMenuJobId !== job.id) return;
+        const margin = 12;
+        const menuWidth = els.queueContextMenu.offsetWidth;
+        const menuHeight = els.queueContextMenu.offsetHeight;
+        const left = Math.max(margin, Math.min(x, window.innerWidth - menuWidth - margin));
+        const top = Math.max(margin, Math.min(y, window.innerHeight - menuHeight - margin));
+
+        els.queueContextMenu.style.left = `${left}px`;
+        els.queueContextMenu.style.top = `${top}px`;
+    });
+};
+
 const renderInfo = () => {
     if (!state.info) {
         els.infoTitle.textContent = '-';
@@ -297,7 +464,14 @@ const renderQueue = () => {
     items.forEach(job => {
         const item = document.createElement('div');
         item.className = `queue-item ${job.id === state.selectedId ? 'active' : ''}`;
+        item.oncontextmenu = event => {
+            event.preventDefault();
+            state.selectedId = job.id;
+            renderQueue();
+            openQueueContextMenu(job, event.clientX, event.clientY);
+        };
         item.onclick = async () => {
+            hideQueueContextMenu();
             state.selectedId = job.id;
             renderQueue();
             if (job.state === 'success' && job.outputPath && invoke) {
@@ -367,6 +541,10 @@ const renderQueue = () => {
         els.queueList.appendChild(item);
     });
 
+    if (state.contextMenuJobId && !state.jobs.has(state.contextMenuJobId)) {
+        hideQueueContextMenu();
+    }
+    syncQueueContextMenuState();
     els.queueBadge.textContent = `${state.queueIds.length} queued`;
 };
 
@@ -420,6 +598,8 @@ const syncConfig = async () => {
         state.config = await invoke('get_config');
         els.outputDir.value = state.config.default_output_dir || '';
         els.ytDlpPath.value = state.config.yt_dlp_path || defaultYtDlpPath;
+        els.magicImportEnabled.checked = state.config.magic_import_enabled ?? true;
+        syncMagicImportTriggerState();
         void refreshYtDlpVersions();
     } catch (err) {
         appendLog(`[config] ${err}`, true);
@@ -457,18 +637,20 @@ const loadInfo = async () => {
     }
 };
 
-const enqueueDownload = async () => {
-    const url = els.urlInput.value.trim();
+const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     if (!url) return;
+    if (!invoke) return;
     if (!isValidHttpUrl(url)) {
         shakeUrlInput();
         return;
     }
 
-    const presetKey = els.presetSelect.value;
     const preset = presets[presetKey] || presets.best;
     const output_dir = els.outputDir.value.trim() || null;
     const hasLoadedInfo = state.info && state.infoUrl === url;
+    const fallbackThumbnail = resolveYouTubeThumbnail(url);
+    const thumbnail = options.thumbnail ?? (hasLoadedInfo ? state.info?.thumbnail || null : fallbackThumbnail);
+    const label = options.label ?? (hasLoadedInfo ? state.info?.title || url : url);
 
     try {
         const id = await invoke('enqueue_download', {
@@ -484,24 +666,27 @@ const enqueueDownload = async () => {
 
         updateJob(id, {
             url,
-            label: hasLoadedInfo ? state.info?.title || url : url,
-            thumbnail: hasLoadedInfo ? state.info?.thumbnail || null : resolveYouTubeThumbnail(url),
+            label,
+            thumbnail,
             state: 'queued',
             outputPath: null,
-            previewResolved: Boolean(hasLoadedInfo || resolveYouTubeThumbnail(url)),
+            previewResolved: Boolean(hasLoadedInfo || thumbnail || fallbackThumbnail),
             previewLoading: false,
             percent: 0,
             speed: '-',
             eta: '-',
-            formatLabel: preset.label,
+            formatLabel: preset.queueLabel,
         });
+        void cacheLastDownloadedUrl(url);
         maybeHydrateQueueThumbnail(id);
 
-        els.urlInput.value = '';
-        state.info = null;
-        state.infoUrl = null;
-        renderInfo();
-        els.urlInput.focus();
+        if (!options.preserveComposerState) {
+            els.urlInput.value = '';
+            state.info = null;
+            state.infoUrl = null;
+            renderInfo();
+            els.urlInput.focus();
+        }
     } catch (err) {
         if (`${err || ''}`.includes('URL must start with')) {
             shakeUrlInput();
@@ -510,14 +695,58 @@ const enqueueDownload = async () => {
     }
 };
 
+const removeJobFromQueue = async job => {
+    const existingJob = state.jobs.get(job.id);
+    if (!existingJob) return;
+
+    const previousQueueIds = [...state.queueIds];
+    const previousSelectedId = state.selectedId;
+    const wasSuppressed = state.suppressedJobIds.has(job.id);
+
+    state.suppressedJobIds.add(job.id);
+    state.jobs.delete(job.id);
+    state.queueIds = state.queueIds.filter(id => id !== job.id);
+    if (state.selectedId === job.id) state.selectedId = null;
+    renderQueue();
+
+    if (job.state !== 'queued') return;
+
+    try {
+        await invoke('cancel_download', { id: job.id });
+    } catch (err) {
+        if (!wasSuppressed) state.suppressedJobIds.delete(job.id);
+        state.jobs.set(job.id, existingJob);
+        state.queueIds = previousQueueIds;
+        state.selectedId = previousSelectedId;
+        renderQueue();
+        appendLog(`[remove] ${err}`, true);
+    }
+};
+
+const enqueueDownload = async () => {
+    const url = els.urlInput.value.trim();
+    const presetKey = els.presetSelect.value;
+    await enqueueDownloadForUrl(url, presetKey);
+};
+
 const saveSettings = async () => {
     try {
         await invoke('set_config', {
             config: {
                 yt_dlp_path: els.ytDlpPath.value.trim() || null,
                 default_output_dir: els.outputDir.value.trim() || null,
+                magic_import_enabled: Boolean(els.magicImportEnabled.checked),
+                last_download_url: state.config?.last_download_url || null,
             },
         });
+        state.config = {
+            ...(state.config || {}),
+            yt_dlp_path: els.ytDlpPath.value.trim() || null,
+            default_output_dir: els.outputDir.value.trim() || null,
+            magic_import_enabled: Boolean(els.magicImportEnabled.checked),
+            last_download_url: state.config?.last_download_url || null,
+        };
+        syncMagicImportTriggerState();
         appendLog('[config] saved', false);
         void refreshYtDlpVersions();
     } catch (err) {
@@ -575,6 +804,18 @@ const clearQueue = async () => {
 };
 
 const bindEvents = () => {
+    els.magicImportTrigger.addEventListener('click', () => {
+        void tryMagicImport();
+    });
+    els.magicImportTrigger.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        void tryMagicImport();
+    });
+    window.addEventListener('focus', () => {
+        void tryMagicImport();
+    });
+    els.magicImportEnabled.addEventListener('change', syncMagicImportTriggerState);
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
     els.urlInput.addEventListener('keydown', event => {
@@ -602,6 +843,69 @@ const bindEvents = () => {
     });
     els.viewDownloadBtn.addEventListener('click', () => setActiveView('download'));
     els.viewSettingsBtn.addEventListener('click', () => setActiveView('settings'));
+    els.queueContextMenu.addEventListener('contextmenu', event => {
+        event.preventDefault();
+    });
+    els.queueContextMenu.addEventListener('click', async event => {
+        const button = event.target.closest('button[data-action]');
+        if (!button) return;
+
+        const job = getContextMenuJob();
+        hideQueueContextMenu();
+        if (!job) return;
+
+        if (button.dataset.action === 'copy-link') {
+            try {
+                await navigator.clipboard.writeText(job.url || '');
+            } catch (err) {
+                appendLog(`[copy] ${err}`, true);
+            }
+            return;
+        }
+
+        if (button.dataset.action === 'download') {
+            if (!job.url) return;
+            await enqueueDownloadForUrl(job.url, button.dataset.presetKey, {
+                preserveComposerState: true,
+                label: job.label || job.url,
+                thumbnail: job.thumbnail || null,
+            });
+            return;
+        }
+
+        if (button.dataset.action === 'cancel') {
+            try {
+                await invoke('cancel_download', { id: job.id });
+            } catch (err) {
+                appendLog(`[cancel] ${err}`, true);
+            }
+            return;
+        }
+
+        if (button.dataset.action === 'remove') {
+            await removeJobFromQueue(job);
+        }
+    });
+    document.addEventListener('pointerdown', event => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (els.queueContextMenu.hidden) return;
+        if (target && els.queueContextMenu.contains(target)) return;
+        hideQueueContextMenu();
+    });
+    document.addEventListener('contextmenu', event => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (target && els.queueContextMenu.contains(target)) {
+            event.preventDefault();
+            return;
+        }
+        if (!target?.closest('.queue-item')) hideQueueContextMenu();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') hideQueueContextMenu();
+    });
+    window.addEventListener('resize', hideQueueContextMenu);
+    window.addEventListener('blur', hideQueueContextMenu);
+    els.queueList.addEventListener('scroll', hideQueueContextMenu, { passive: true });
 
     els.copyLogsBtn.addEventListener('click', async () => {
         try {
@@ -661,6 +965,9 @@ const bindBackendEvents = async () => {
 };
 
 const init = async () => {
+    renderPresetOptions();
+    renderQueueContextMenu();
+    syncMagicImportTriggerState();
     bindEvents();
     setActiveView('download');
     requestAnimationFrame(() => {

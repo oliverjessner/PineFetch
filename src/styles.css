@@ -322,7 +322,9 @@ input[type='checkbox'] {
     height: 20px;
     border-radius: 50%;
     background: #d8dfea;
-    transition: transform 0.18s ease, background-color 0.18s ease;
+    transition:
+        transform 0.18s ease,
+        background-color 0.18s ease;
 }
 
 #magicImportEnabled:checked {
@@ -703,13 +705,13 @@ select:focus {
     border: 1px solid var(--border);
     background: rgba(6, 8, 12, 0.95);
     display: grid;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
     max-height: 240px;
     overflow: hidden;
 }
 
 #settingsView .log-panel {
-    --terminal-height: 424px;
+    --terminal-height: 334px;
     flex: 0 0 var(--terminal-height);
     height: var(--terminal-height);
     min-height: var(--terminal-height);

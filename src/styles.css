@@ -293,6 +293,11 @@ select {
     width: 100%;
 }
 
+input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 input[type='checkbox'] {
     width: auto;
 }

@@ -101,6 +101,8 @@ struct InfoResponse {
   duration: Option<i64>,
   thumbnail: Option<String>,
   formats: Option<Vec<InfoFormat>>,
+  description: Option<String>,
+  id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,6 +284,8 @@ fn load_info(app: AppHandle, state: State<AppState>, url: String) -> Result<Info
       .and_then(|v| v.as_str())
       .map(|s| s.to_string()),
     formats,
+    description: value.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+    id: value.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()),
   })
 }
 
@@ -1049,7 +1053,11 @@ fn run_faster_whisper_transcription(
 
 fn build_output_template(output_dir: &str) -> String {
   let mut path = PathBuf::from(output_dir);
-  path.push("%(title)s.%(ext)s");
+  // Use title, but fallback to uploader and id for platforms where title might be missing or duplicate
+  // %(title)s - video title
+  // %(uploader)s - uploader name
+  // %(id)s - unique video ID (ensures uniqueness for Instagram posts from same creator)
+  path.push("%(title)s - %(uploader)s - %(id)s.%(ext)s");
   path.to_string_lossy().to_string()
 }
 

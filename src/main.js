@@ -1,7 +1,6 @@
 const tauriGlobal = window.__TAURI__;
 const invoke = tauriGlobal?.tauri?.invoke;
 const listen = tauriGlobal?.event?.listen;
-
 const state = Object.seal({
     jobs: new Map(),
     queueIds: [],
@@ -101,19 +100,20 @@ const presetOptions = Object.freeze([
         transcribeText: true,
     },
 ]);
-const presets = Object.freeze(
-    Object.fromEntries(presetOptions.map(preset => [preset.key, preset])),
-);
+const presets = Object.freeze(Object.fromEntries(presetOptions.map(preset => [preset.key, preset])));
 const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
 const cancellableJobStates = new Set(['downloading', 'transcribing']);
 const removableJobStates = new Set(['queued', 'success', 'error', 'cancelled']);
 let urlShakeTimer = null;
 let magicImportInFlight = false;
+
 const formatDuration = seconds => {
     if (!seconds && seconds !== 0) return '-';
+
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     const hrs = Math.floor(mins / 60);
+
     if (hrs > 0) return `${hrs}h ${String(mins % 60).padStart(2, '0')}m`;
     return `${mins}m ${String(secs).padStart(2, '0')}s`;
 };
@@ -121,6 +121,7 @@ const formatDuration = seconds => {
 const detectPlatform = url => {
     try {
         const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+
         if (host === 'youtu.be' || host.endsWith('youtube.com')) return 'youtube';
         if (host.endsWith('facebook.com') || host === 'fb.watch') return 'facebook';
         if (host.endsWith('twitch.tv')) return 'twitch';
@@ -135,41 +136,41 @@ const detectPlatform = url => {
 
 const getPlatformIconSvg = platform => {
     switch (platform) {
-    case 'youtube':
-        return `
+        case 'youtube':
+            return `
 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
   <path d="M22 12c0 2.7-.3 4.4-.6 5.3-.3.8-.9 1.4-1.7 1.7-.9.3-2.6.6-7.7.6s-6.8-.3-7.7-.6c-.8-.3-1.4-.9-1.7-1.7C2.3 16.4 2 14.7 2 12s.3-4.4.6-5.3c.3-.8.9-1.4 1.7-1.7C5.2 4.7 6.9 4.4 12 4.4s6.8.3 7.7.6c.8.3 1.4.9 1.7 1.7.3.9.6 2.6.6 5.3Z" fill="currentColor"/>
   <path d="M10 8.8 15.5 12 10 15.2V8.8Z" fill="#fff"/>
 </svg>`;
-    case 'facebook':
-        return `
+        case 'facebook':
+            return `
 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
   <path d="M13.6 8.6h2.3V5.4h-2.7c-2.6 0-4 1.5-4 4v1.9H7v3.1h2.2v5.2h3.3v-5.2h2.7l.4-3.1h-3.1V9.8c0-.8.3-1.2.8-1.2Z" fill="currentColor"/>
 </svg>`;
-    case 'twitch':
-        return `
+        case 'twitch':
+            return `
 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
   <path d="M4 3h16v11.2l-4 4H12l-2.8 2.8V18.2H4V3Zm2 2v11.2h3.2v1.6l1.6-1.6H15l3-3V5H6Zm4.2 2.4h1.8v4.2h-1.8V7.4Zm4 0H16v4.2h-1.8V7.4Z" fill="currentColor"/>
 </svg>`;
-    case 'x':
-        return `
+        case 'x':
+            return `
 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
   <path d="M4 4h3.8l4.7 6.4L17.8 4H20l-6.4 7.3L20.5 20h-3.8l-5-6.8L5.9 20H3.7l6.7-7.6L4 4Z" fill="currentColor"/>
 </svg>`;
-    case 'tiktok':
-        return `
+        case 'tiktok':
+            return `
 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
   <path d="M14.5 4c1.1 1.6 2.3 2.4 4 2.5V9c-1.5 0-2.8-.4-4-1.2v6.6a4.8 4.8 0 1 1-3.8-4.7v2.6a2.2 2.2 0 1 0 1.3 2V4h2.5Z" fill="currentColor"/>
 </svg>`;
-    case 'instagram':
-        return `
+        case 'instagram':
+            return `
 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
   <rect x="3.5" y="3.5" width="17" height="17" rx="5" fill="none" stroke="currentColor" stroke-width="2"/>
   <circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/>
   <circle cx="17.2" cy="6.8" r="1.2" fill="currentColor"/>
 </svg>`;
-    default:
-        return '';
+        default:
+            return '';
     }
 };
 
@@ -202,9 +203,7 @@ const isMagicImportEnabled = () => Boolean(els.magicImportEnabled?.checked);
 const syncMagicImportTriggerState = () => {
     const enabled = isMagicImportEnabled();
     els.magicImportTrigger.setAttribute('aria-disabled', String(!enabled));
-    els.magicImportTrigger.title = enabled
-        ? 'Magic import from clipboard'
-        : 'Magic import is disabled in Settings';
+    els.magicImportTrigger.title = enabled ? 'Magic import from clipboard' : 'Magic import is disabled in Settings';
 };
 
 const readClipboardText = async () => {
@@ -231,17 +230,18 @@ const tryMagicImport = async () => {
     try {
         const clipboardText = (await readClipboardText()).trim();
         if (!isValidHttpUrl(clipboardText)) return;
+        const platform = detectPlatform(clipboardText);
+        if (!platform) return;
         const lastDownloadedUrl = `${state.config?.last_download_url || ''}`.trim();
         if (lastDownloadedUrl && clipboardText === lastDownloadedUrl) return;
 
         els.urlInput.value = clipboardText;
-        if (state.infoUrl !== clipboardText) {
-            state.info = null;
-            state.infoUrl = null;
-            renderInfo();
-            setInfoBadge('Idle');
-        }
+        state.info = null;
+        state.infoUrl = null;
+        renderInfo();
+        setInfoBadge('Loading...');
         els.urlInput.focus();
+        void loadInfo();
     } catch {
         // Ignore clipboard read failures; magic import is best-effort.
     } finally {
@@ -447,8 +447,12 @@ const renderInfo = () => {
         els.infoThumb.style.backgroundImage = '';
         return;
     }
-    const { title, uploader, duration, thumbnail } = state.info;
-    els.infoTitle.textContent = title || '-';
+    const { title, uploader, duration, thumbnail, description } = state.info;
+
+    // For Instagram, prefer description or a combination for better identification
+    const displayTitle = description && description.trim() ? description : title;
+
+    els.infoTitle.textContent = displayTitle || '-';
     els.infoUploader.textContent = uploader || '-';
     els.infoDuration.textContent = formatDuration(duration);
     if (thumbnail) {
@@ -606,13 +610,18 @@ const syncConfig = async () => {
     }
 };
 
+let loadInfoInFlight = false;
+
 const loadInfo = async () => {
+    if (loadInfoInFlight) return;
     const url = els.urlInput.value.trim();
     if (!url) return;
     if (!isValidHttpUrl(url)) {
         shakeUrlInput();
         return;
     }
+    loadInfoInFlight = true;
+    els.urlInput.disabled = true;
     els.loadInfoBtn.classList.add('loading');
     els.loadInfoBtn.disabled = true;
     setInfoBadge('Loading...');
@@ -632,8 +641,11 @@ const loadInfo = async () => {
         setInfoBadge('Error');
         appendLog(`[info] ${err}`, true);
     } finally {
+        els.urlInput.disabled = false;
         els.loadInfoBtn.classList.remove('loading');
         els.loadInfoBtn.disabled = false;
+        loadInfoInFlight = false;
+        els.urlInput.focus();
     }
 };
 
@@ -650,7 +662,11 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     const hasLoadedInfo = state.info && state.infoUrl === url;
     const fallbackThumbnail = resolveYouTubeThumbnail(url);
     const thumbnail = options.thumbnail ?? (hasLoadedInfo ? state.info?.thumbnail || null : fallbackThumbnail);
-    const label = options.label ?? (hasLoadedInfo ? state.info?.title || url : url);
+
+    // Use description for better identification, especially for Instagram
+    const infoDescription = state.info?.description;
+    const displayLabel = infoDescription && infoDescription.trim() ? infoDescription : state.info?.title;
+    const label = options.label ?? (hasLoadedInfo ? displayLabel || url : url);
 
     try {
         const id = await invoke('enqueue_download', {
@@ -776,7 +792,12 @@ const openFolder = async () => {
 const clearQueue = async () => {
     const idsToCancel = new Set(state.queueIds);
     state.jobs.forEach(job => {
-        if (job.state === 'queued' || job.state === 'downloading' || job.state === 'transcribing' || job.state === 'cancelling') {
+        if (
+            job.state === 'queued' ||
+            job.state === 'downloading' ||
+            job.state === 'transcribing' ||
+            job.state === 'cancelling'
+        ) {
             idsToCancel.add(job.id);
         }
     });
@@ -784,9 +805,7 @@ const clearQueue = async () => {
     idsToCancel.forEach(id => state.suppressedJobIds.add(id));
 
     if (invoke && idsToCancel.size > 0) {
-        const results = await Promise.allSettled(
-            Array.from(idsToCancel).map(id => invoke('cancel_download', { id })),
-        );
+        const results = await Promise.allSettled(Array.from(idsToCancel).map(id => invoke('cancel_download', { id })));
         results.forEach(result => {
             if (result.status === 'rejected') {
                 const message = `${result.reason || ''}`.toLowerCase();
@@ -818,6 +837,27 @@ const bindEvents = () => {
     els.magicImportEnabled.addEventListener('change', syncMagicImportTriggerState);
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
+
+    let urlInputDebounceTimer = null;
+    els.urlInput.addEventListener('input', () => {
+        const url = els.urlInput.value.trim();
+        if (!url) {
+            state.info = null;
+            state.infoUrl = null;
+            renderInfo();
+            setInfoBadge('Idle');
+            return;
+        }
+        if (!isValidHttpUrl(url)) return;
+        const platform = detectPlatform(url);
+        if (!platform) return;
+        if (urlInputDebounceTimer) clearTimeout(urlInputDebounceTimer);
+        urlInputDebounceTimer = setTimeout(() => {
+            setInfoBadge('Loading...');
+            void loadInfo();
+        }, 600);
+    });
+
     els.urlInput.addEventListener('keydown', event => {
         const key = event.key.toLowerCase();
         if (event.metaKey && !event.ctrlKey && !event.altKey && key === 'i') {
@@ -918,9 +958,7 @@ const bindEvents = () => {
 
 const bindBackendEvents = async () => {
     await listen('queue:update', event => {
-        state.queueIds = event.payload
-            .map(job => job.id)
-            .filter(id => !state.suppressedJobIds.has(id));
+        state.queueIds = event.payload.map(job => job.id).filter(id => !state.suppressedJobIds.has(id));
         event.payload.forEach(job => {
             if (state.suppressedJobIds.has(job.id)) return;
             const existing = state.jobs.get(job.id);

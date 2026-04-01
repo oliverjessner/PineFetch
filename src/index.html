@@ -1,172 +1,190 @@
 <!doctype html>
-    <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PineFetch</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <div class="app-shell">
-      <header class="top-bar">
-        <div
-          id="magicImportTrigger"
-          class="brand"
-          role="button"
-          tabindex="0"
-          aria-label="Magic import from clipboard"
-        >
-          <img class="brand-logo" src="images/logo.png" alt="PineFetch logo" />
-          <div>
-            <h1>PineFetch</h1>
-          </div>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>PineFetch</title>
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        <div class="app-shell">
+            <header class="top-bar">
+                <div
+                    id="magicImportTrigger"
+                    class="brand"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Magic import from clipboard"
+                >
+                    <img class="brand-logo" src="images/logo.png" alt="PineFetch logo" />
+                    <div>
+                        <h1>PineFetch</h1>
+                    </div>
+                </div>
+                <div class="top-actions">
+                    <div class="view-toggle" role="tablist" aria-label="Main view">
+                        <button id="viewDownloadBtn" class="view-toggle-btn active" type="button" aria-pressed="true">
+                            Download
+                        </button>
+                        <button id="viewHistoryBtn" class="view-toggle-btn" type="button" aria-pressed="false">
+                            History
+                        </button>
+                        <button id="viewSettingsBtn" class="view-toggle-btn" type="button" aria-pressed="false">
+                            Settings
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <main class="split">
+                <section class="panel left">
+                    <div class="panel-header">
+                        <h2 id="leftPanelTitle">Download</h2>
+                        <span class="badge" id="infoBadge">Idle</span>
+                    </div>
+
+                    <div id="downloadView" class="panel-view active">
+                        <div class="field">
+                            <label for="urlInput">URL</label>
+                            <input id="urlInput" type="text" placeholder="https://..." />
+                        </div>
+
+                        <div class="field">
+                            <label for="presetSelect">Preset format</label>
+                            <select id="presetSelect"></select>
+                        </div>
+
+                        <div class="field-row">
+                            <button id="startDownloadBtn" class="btn primary">Queue</button>
+                            <button id="loadInfoBtn" class="btn"><span class="btn-label">Load info</span></button>
+                        </div>
+
+                        <div class="info-card" id="infoCard">
+                            <div class="info-meta">
+                                <div>
+                                    <p class="label">Title</p>
+                                    <p id="infoTitle">-</p>
+                                </div>
+                                <div>
+                                    <p class="label">Uploader</p>
+                                    <p id="infoUploader">-</p>
+                                </div>
+                                <div>
+                                    <p class="label">Duration</p>
+                                    <p id="infoDuration">-</p>
+                                </div>
+                            </div>
+                            <div class="info-thumb" id="infoThumb"></div>
+                        </div>
+
+                        <div class="divider"></div>
+
+                        <p class="hint">Please only download content you have the rights or permission to access.</p>
+                    </div>
+
+                    <div id="historyView" class="panel-view" hidden>
+                        <div class="field-row" style="justify-content: flex-end; margin-bottom: 8px">
+                            <button id="clearHistoryBtn" class="btn ghost" type="button">Clear History</button>
+                        </div>
+                        <div id="historyList" class="history-list"></div>
+                        <p class="hint" id="historyHint" hidden>No history yet. Downloaded items will appear here.</p>
+                    </div>
+
+                    <div id="settingsView" class="panel-view" hidden>
+                        <div class="field">
+                            <label for="outputDir">Output folder</label>
+                            <div class="field-row">
+                                <input id="outputDir" type="text" placeholder="/Users/..." />
+                                <button id="pickDirBtn" class="btn ghost">Choose</button>
+                            </div>
+                        </div>
+
+                        <div class="field">
+                            <label for="ytDlpPath">yt-dlp path</label>
+                            <input id="ytDlpPath" type="text" placeholder="/opt/homebrew/bin/yt-dlp" />
+                        </div>
+
+                        <div class="field">
+                            <label>yt-dlp versions</label>
+                            <div class="version-info">
+                                <p id="ytDlpInstalledVersion">Installed: -</p>
+                                <p id="ytDlpLatestVersion">Latest: -</p>
+                            </div>
+                        </div>
+
+                        <div class="field">
+                            <label class="toggle-field" for="magicImportEnabled">
+                                <span class="toggle-copy">
+                                    <span class="toggle-title">Magic import</span>
+                                    <span class="toggle-hint"
+                                        >Click PineFetch with an empty URL field to import a URL from the
+                                        clipboard.</span
+                                    >
+                                </span>
+                                <input id="magicImportEnabled" type="checkbox" checked />
+                            </label>
+                        </div>
+
+                        <div class="field-row">
+                            <button id="saveSettingsBtn" class="btn">Save settings</button>
+                            <button id="openFolderBtn" class="btn ghost">Open folder</button>
+                        </div>
+
+                        <section class="log-panel" id="logPanel">
+                            <div class="log-header">
+                                <div>
+                                    <h3>Terminal Log</h3>
+                                    <p id="logHint">stdout / stderr</p>
+                                </div>
+                                <div class="log-actions">
+                                    <button id="copyLogsBtn" class="btn ghost">Copy</button>
+                                </div>
+                            </div>
+                            <div id="logBody" class="log-body"></div>
+                        </section>
+
+                        <p class="hint">These settings are used for all new downloads.</p>
+                    </div>
+                </section>
+
+                <section class="panel right">
+                    <div class="panel-header">
+                        <h2>Queue / Progress</h2>
+                        <div class="badge" id="queueBadge">0 queued</div>
+                    </div>
+
+                    <div id="queueList" class="queue-list"></div>
+                    <div class="queue-actions">
+                        <button id="clearQueueBtn" class="btn ghost" type="button">Clear</button>
+                    </div>
+                </section>
+            </main>
+
+            <div id="queueContextMenu" class="queue-context-menu" hidden>
+                <button class="queue-context-menu-btn" type="button" data-action="copy-link">Copy link</button>
+                <div class="queue-context-divider" role="separator" aria-hidden="true"></div>
+                <div id="queueContextDownloads" class="queue-context-downloads"></div>
+                <button
+                    id="queueContextCancelBtn"
+                    class="queue-context-menu-btn queue-context-menu-btn-danger"
+                    type="button"
+                    data-action="cancel"
+                    hidden
+                >
+                    Cancel download
+                </button>
+                <button
+                    id="queueContextRemoveBtn"
+                    class="queue-context-menu-btn"
+                    type="button"
+                    data-action="remove"
+                    hidden
+                >
+                    Remove from queue
+                </button>
+            </div>
         </div>
-        <div class="top-actions">
-          <div class="view-toggle" role="tablist" aria-label="Main view">
-            <button id="viewDownloadBtn" class="view-toggle-btn active" type="button" aria-pressed="true">Download</button>
-            <button id="viewSettingsBtn" class="view-toggle-btn" type="button" aria-pressed="false">Settings</button>
-          </div>
-        </div>
-      </header>
 
-      <main class="split">
-        <section class="panel left">
-          <div class="panel-header">
-            <h2 id="leftPanelTitle">Download</h2>
-            <span class="badge" id="infoBadge">Idle</span>
-          </div>
-
-          <div id="downloadView" class="panel-view active">
-            <div class="field">
-              <label for="urlInput">URL</label>
-              <input id="urlInput" type="text" placeholder="https://..." />
-            </div>
-
-            <div class="field">
-              <label for="presetSelect">Preset format</label>
-              <select id="presetSelect"></select>
-            </div>
-
-            <div class="field-row">
-              <button id="startDownloadBtn" class="btn primary">Queue</button>
-              <button id="loadInfoBtn" class="btn"><span class="btn-label">Load info</span></button>
-            </div>
-
-            <div class="info-card" id="infoCard">
-              <div class="info-meta">
-                <div>
-                  <p class="label">Title</p>
-                  <p id="infoTitle">-</p>
-                </div>
-                <div>
-                  <p class="label">Uploader</p>
-                  <p id="infoUploader">-</p>
-                </div>
-                <div>
-                  <p class="label">Duration</p>
-                  <p id="infoDuration">-</p>
-                </div>
-              </div>
-              <div class="info-thumb" id="infoThumb"></div>
-            </div>
-
-            <div class="divider"></div>
-
-            <p class="hint">Please only download content you have the rights or permission to access.</p>
-          </div>
-
-          <div id="settingsView" class="panel-view" hidden>
-            <div class="field">
-              <label for="outputDir">Output folder</label>
-              <div class="field-row">
-                <input id="outputDir" type="text" placeholder="/Users/..." />
-                <button id="pickDirBtn" class="btn ghost">Choose</button>
-              </div>
-            </div>
-
-            <div class="field">
-              <label for="ytDlpPath">yt-dlp path</label>
-              <input id="ytDlpPath" type="text" placeholder="/opt/homebrew/bin/yt-dlp" />
-            </div>
-
-            <div class="field">
-              <label>yt-dlp versions</label>
-              <div class="version-info">
-                <p id="ytDlpInstalledVersion">Installed: -</p>
-                <p id="ytDlpLatestVersion">Latest: -</p>
-              </div>
-            </div>
-
-            <div class="field">
-              <label class="toggle-field" for="magicImportEnabled">
-                <span class="toggle-copy">
-                  <span class="toggle-title">Magic import</span>
-                  <span class="toggle-hint">Click PineFetch with an empty URL field to import a URL from the clipboard.</span>
-                </span>
-                <input id="magicImportEnabled" type="checkbox" checked />
-              </label>
-            </div>
-
-            <div class="field-row">
-              <button id="saveSettingsBtn" class="btn">Save settings</button>
-              <button id="openFolderBtn" class="btn ghost">Open folder</button>
-            </div>
-
-            <section class="log-panel" id="logPanel">
-              <div class="log-header">
-                <div>
-                  <h3>Terminal Log</h3>
-                  <p id="logHint">stdout / stderr</p>
-                </div>
-                <div class="log-actions">
-                  <button id="copyLogsBtn" class="btn ghost">Copy</button>
-                </div>
-              </div>
-              <div id="logBody" class="log-body"></div>
-            </section>
-
-            <p class="hint">These settings are used for all new downloads.</p>
-          </div>
-        </section>
-
-        <section class="panel right">
-          <div class="panel-header">
-            <h2>Queue / Progress</h2>
-            <div class="badge" id="queueBadge">0 queued</div>
-          </div>
-
-          <div id="queueList" class="queue-list"></div>
-          <div class="queue-actions">
-            <button id="clearQueueBtn" class="btn ghost" type="button">Clear</button>
-          </div>
-        </section>
-      </main>
-
-      <div id="queueContextMenu" class="queue-context-menu" hidden>
-        <button class="queue-context-menu-btn" type="button" data-action="copy-link">Copy link</button>
-        <div class="queue-context-divider" role="separator" aria-hidden="true"></div>
-        <div id="queueContextDownloads" class="queue-context-downloads"></div>
-        <button
-          id="queueContextCancelBtn"
-          class="queue-context-menu-btn queue-context-menu-btn-danger"
-          type="button"
-          data-action="cancel"
-          hidden
-        >
-          Cancel download
-        </button>
-        <button
-          id="queueContextRemoveBtn"
-          class="queue-context-menu-btn"
-          type="button"
-          data-action="remove"
-          hidden
-        >
-          Remove from queue
-        </button>
-      </div>
-    </div>
-
-    <script src="main.js"></script>
-  </body>
+        <script src="main.js"></script>
+    </body>
 </html>

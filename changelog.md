@@ -4,10 +4,12 @@
 
 - context menu with items to redownload and cancel
 - magic import, pinefetch checks if you clipboard has an url, if so it automatically insert to the URL input field
+- history
 
 ## Improvements
 
 - scroll fixes
+- press esc to clear the input field and the load info
 
 # 0.1.0
 

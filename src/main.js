@@ -39,9 +39,14 @@ const els = Object.seal({
     copyLogsBtn: document.getElementById('copyLogsBtn'),
     leftPanelTitle: document.getElementById('leftPanelTitle'),
     downloadView: document.getElementById('downloadView'),
+    historyView: document.getElementById('historyView'),
+    historyList: document.getElementById('historyList'),
+    historyHint: document.getElementById('historyHint'),
     settingsView: document.getElementById('settingsView'),
     viewDownloadBtn: document.getElementById('viewDownloadBtn'),
+    viewHistoryBtn: document.getElementById('viewHistoryBtn'),
     viewSettingsBtn: document.getElementById('viewSettingsBtn'),
+    clearHistoryBtn: document.getElementById('clearHistoryBtn'),
     queueContextMenu: document.getElementById('queueContextMenu'),
     queueContextDownloads: document.getElementById('queueContextDownloads'),
     queueContextCancelBtn: document.getElementById('queueContextCancelBtn'),
@@ -350,23 +355,37 @@ const refreshYtDlpVersions = async () => {
 };
 
 const setActiveView = view => {
-    const nextView = view === 'settings' ? 'settings' : 'download';
-    const isSettings = nextView === 'settings';
-    state.activeView = nextView;
+    const isDownload = view === 'download';
+    const isHistory = view === 'history';
+    const isSettings = view === 'settings';
+    state.activeView = view;
 
-    els.downloadView.hidden = isSettings;
+    els.downloadView.hidden = !isDownload;
+    els.historyView.hidden = !isHistory;
     els.settingsView.hidden = !isSettings;
-    els.downloadView.classList.toggle('active', !isSettings);
+    els.downloadView.classList.toggle('active', isDownload);
+    els.historyView.classList.toggle('active', isHistory);
     els.settingsView.classList.toggle('active', isSettings);
 
-    els.viewDownloadBtn.classList.toggle('active', !isSettings);
-    els.viewDownloadBtn.setAttribute('aria-pressed', String(!isSettings));
+    els.viewDownloadBtn.classList.toggle('active', isDownload);
+    els.viewDownloadBtn.setAttribute('aria-pressed', String(isDownload));
+    els.viewHistoryBtn.classList.toggle('active', isHistory);
+    els.viewHistoryBtn.setAttribute('aria-pressed', String(isHistory));
     els.viewSettingsBtn.classList.toggle('active', isSettings);
     els.viewSettingsBtn.setAttribute('aria-pressed', String(isSettings));
 
-    els.leftPanelTitle.textContent = isSettings ? 'Settings' : 'Download';
-    els.infoBadge.style.display = isSettings ? 'none' : 'inline-flex';
-    if (isSettings) void refreshYtDlpVersions();
+    if (isDownload) {
+        els.leftPanelTitle.textContent = 'Download';
+        els.infoBadge.style.display = 'inline-flex';
+    } else if (isHistory) {
+        els.leftPanelTitle.textContent = 'History';
+        els.infoBadge.style.display = 'none';
+        void renderHistory();
+    } else {
+        els.leftPanelTitle.textContent = 'Settings';
+        els.infoBadge.style.display = 'none';
+        void refreshYtDlpVersions();
+    }
 };
 
 const renderPresetOptions = () => {
@@ -449,10 +468,19 @@ const renderInfo = () => {
     }
     const { title, uploader, duration, thumbnail, description } = state.info;
 
-    // For Instagram, prefer description or a combination for better identification
-    const displayTitle = description && description.trim() ? description : title;
+    // For Instagram, use description if title is missing or generic; otherwise use title
+    // For YouTube and others, always use title
+    let displayTitle = title;
+    if (!displayTitle || displayTitle.trim() === '') {
+        // Fallback to description only if title is missing
+        displayTitle = description && description.trim() ? description : '-';
+        // Truncate long descriptions for display
+        if (displayTitle.length > 200) {
+            displayTitle = displayTitle.substring(0, 200) + '...';
+        }
+    }
 
-    els.infoTitle.textContent = displayTitle || '-';
+    els.infoTitle.textContent = displayTitle;
     els.infoUploader.textContent = uploader || '-';
     els.infoDuration.textContent = formatDuration(duration);
     if (thumbnail) {
@@ -552,6 +580,114 @@ const renderQueue = () => {
     els.queueBadge.textContent = `${state.queueIds.length} queued`;
 };
 
+const formatHistoryDate = timestamp => {
+    if (!timestamp) return '-';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } else if (diffDays === 1) {
+        return 'Yesterday';
+    } else if (diffDays < 7) {
+        return date.toLocaleDateString([], { weekday: 'short' });
+    } else {
+        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+};
+
+const renderHistory = async () => {
+    if (!invoke) {
+        els.historyList.innerHTML = '';
+        els.historyHint.hidden = true;
+        return;
+    }
+
+    try {
+        const history = await invoke('get_history');
+        els.historyList.innerHTML = '';
+
+        if (history.length === 0) {
+            els.historyHint.hidden = false;
+            return;
+        }
+
+        els.historyHint.hidden = true;
+
+        // Sort by completed_at descending (newest first)
+        const sorted = [...history].sort((a, b) => (b.completed_at || 0) - (a.completed_at || 0));
+
+        sorted.forEach(entry => {
+            const item = document.createElement('div');
+            item.className = `history-item ${entry.thumbnail ? '' : 'no-thumb'}`;
+
+            item.onclick = async () => {
+                // Rust uses snake_case: output_path, not outputPath
+                const outputPath = entry.output_path || entry.outputPath;
+                if (outputPath && invoke) {
+                    try {
+                        const exists = await invoke('open_file_path', { path: outputPath });
+                        if (!exists) {
+                            appendLog(`[history] File not found: ${outputPath}`, true);
+                        }
+                    } catch (err) {
+                        appendLog(`[open] ${err}`, true);
+                    }
+                }
+            };
+
+            const content = document.createElement('div');
+            content.className = 'history-content';
+
+            const title = document.createElement('div');
+            title.className = 'history-title';
+            title.textContent = entry.title || entry.url;
+            content.appendChild(title);
+
+            const meta = document.createElement('div');
+            meta.className = 'history-meta';
+            const dateStr = formatHistoryDate(entry.completed_at);
+            const platform = entry.platform || detectPlatform(entry.url) || 'unknown';
+            meta.innerHTML = `
+                <span>${platform}</span>
+                <span>${dateStr}</span>
+            `;
+            content.appendChild(meta);
+
+            item.appendChild(content);
+
+            if (entry.thumbnail) {
+                const thumb = document.createElement('div');
+                thumb.className = 'history-thumb';
+                thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
+                item.appendChild(thumb);
+            }
+
+            // Add remove button (top-right corner)
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'history-item-remove-btn';
+            removeBtn.innerHTML = '×';
+            removeBtn.title = 'Remove from history';
+            removeBtn.onclick = async event => {
+                event.stopPropagation();
+                try {
+                    await invoke('remove_history_entry', { id: entry.id });
+                    void renderHistory();
+                } catch (err) {
+                    appendLog(`[history] ${err}`, true);
+                }
+            };
+            item.appendChild(removeBtn);
+
+            els.historyList.appendChild(item);
+        });
+    } catch (err) {
+        appendLog(`[history] ${err}`, true);
+    }
+};
+
 const appendLog = (text, isError) => {
     state.logs.push(text);
     const line = document.createElement('div');
@@ -611,6 +747,7 @@ const syncConfig = async () => {
 };
 
 let loadInfoInFlight = false;
+let loadInfoAborted = false;
 
 const loadInfo = async () => {
     if (loadInfoInFlight) return;
@@ -621,17 +758,20 @@ const loadInfo = async () => {
         return;
     }
     loadInfoInFlight = true;
+    loadInfoAborted = false;
     els.urlInput.disabled = true;
     els.loadInfoBtn.classList.add('loading');
     els.loadInfoBtn.disabled = true;
     setInfoBadge('Loading...');
     try {
         const info = await invoke('load_info', { url });
+        if (loadInfoAborted) return;
         state.info = info;
         state.infoUrl = url;
         renderInfo();
         setInfoBadge('Ready');
     } catch (err) {
+        if (loadInfoAborted) return;
         if (`${err || ''}`.includes('URL must start with')) {
             shakeUrlInput();
         }
@@ -641,11 +781,15 @@ const loadInfo = async () => {
         setInfoBadge('Error');
         appendLog(`[info] ${err}`, true);
     } finally {
-        els.urlInput.disabled = false;
-        els.loadInfoBtn.classList.remove('loading');
-        els.loadInfoBtn.disabled = false;
+        if (!loadInfoAborted) {
+            els.urlInput.disabled = false;
+            els.loadInfoBtn.classList.remove('loading');
+            els.loadInfoBtn.disabled = false;
+        }
         loadInfoInFlight = false;
-        els.urlInput.focus();
+        if (!loadInfoAborted) {
+            els.urlInput.focus();
+        }
     }
 };
 
@@ -663,10 +807,19 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     const fallbackThumbnail = resolveYouTubeThumbnail(url);
     const thumbnail = options.thumbnail ?? (hasLoadedInfo ? state.info?.thumbnail || null : fallbackThumbnail);
 
-    // Use description for better identification, especially for Instagram
+    // Use title primarily; fallback to truncated description only if title missing
+    const infoTitle = state.info?.title;
     const infoDescription = state.info?.description;
-    const displayLabel = infoDescription && infoDescription.trim() ? infoDescription : state.info?.title;
+    let displayLabel = infoTitle;
+    if (!displayLabel || displayLabel.trim() === '') {
+        displayLabel = infoDescription && infoDescription.trim() ? infoDescription : url;
+        if (displayLabel.length > 100) {
+            displayLabel = displayLabel.substring(0, 100) + '...';
+        }
+    }
     const label = options.label ?? (hasLoadedInfo ? displayLabel || url : url);
+    const titleForRequest = hasLoadedInfo ? state.info?.title || null : null;
+    const thumbnailForRequest = hasLoadedInfo ? state.info?.thumbnail || null : (options.thumbnail ?? null);
 
     try {
         const id = await invoke('enqueue_download', {
@@ -677,6 +830,8 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
                 extract_audio: preset.extractAudio,
                 audio_format: preset.audioFormat,
                 transcribe_text: preset.transcribeText,
+                title: titleForRequest,
+                thumbnail: thumbnailForRequest,
             },
         });
 
@@ -870,6 +1025,21 @@ const bindEvents = () => {
             if (!els.urlInput.value.trim()) return;
             event.preventDefault();
             void enqueueDownload();
+            return;
+        }
+        if (key === 'escape') {
+            event.preventDefault();
+            loadInfoAborted = true;
+            els.urlInput.value = '';
+            state.info = null;
+            state.infoUrl = null;
+            renderInfo();
+            setInfoBadge('Idle');
+            els.urlInput.disabled = false;
+            els.loadInfoBtn.classList.remove('loading');
+            els.loadInfoBtn.disabled = false;
+            els.urlInput.focus();
+            return;
         }
     });
     els.saveSettingsBtn.addEventListener('click', saveSettings);
@@ -882,7 +1052,14 @@ const bindEvents = () => {
         if (state.activeView === 'settings') void refreshYtDlpVersions();
     });
     els.viewDownloadBtn.addEventListener('click', () => setActiveView('download'));
+    els.viewHistoryBtn.addEventListener('click', () => setActiveView('history'));
     els.viewSettingsBtn.addEventListener('click', () => setActiveView('settings'));
+    els.clearHistoryBtn.addEventListener('click', () => {
+        if (invoke) {
+            void invoke('clear_history');
+            void renderHistory();
+        }
+    });
     els.queueContextMenu.addEventListener('contextmenu', event => {
         event.preventDefault();
     });

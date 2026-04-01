@@ -46,6 +46,8 @@ struct DownloadRequest {
   extract_audio: bool,
   audio_format: Option<String>,
   transcribe_text: bool,
+  title: Option<String>,
+  thumbnail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +59,8 @@ struct DownloadJob {
   extract_audio: bool,
   audio_format: Option<String>,
   transcribe_text: bool,
+  title: Option<String>,
+  thumbnail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +107,18 @@ struct InfoResponse {
   formats: Option<Vec<InfoFormat>>,
   description: Option<String>,
   id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HistoryEntry {
+  id: String,
+  url: String,
+  title: Option<String>,
+  thumbnail: Option<String>,
+  platform: Option<String>,
+  output_path: Option<String>,
+  created_at: u64,
+  completed_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +169,7 @@ struct AppState {
   current_job_id: Mutex<Option<String>>,
   current_child: Mutex<Option<Arc<Mutex<Child>>>>,
   cancel_requested: Mutex<Option<String>>,
+  history: Mutex<Vec<HistoryEntry>>,
 }
 
 impl AppState {
@@ -164,6 +181,7 @@ impl AppState {
       current_job_id: Mutex::new(None),
       current_child: Mutex::new(None),
       cancel_requested: Mutex::new(None),
+      history: Mutex::new(Vec::new()),
     }
   }
 }
@@ -215,6 +233,19 @@ async fn pick_output_dir() -> Result<Option<String>, String> {
 fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
   tauri::api::shell::open(&app.shell_scope(), path, None)
     .map_err(|e| format!("Open folder failed: {e}"))
+}
+
+#[tauri::command]
+fn open_file_path(app: AppHandle, path: String) -> Result<bool, String> {
+  // Check if file exists
+  let exists = std::path::Path::new(&path).exists();
+  if !exists {
+    return Ok(false);
+  }
+  // Open the file (or reveal in finder on macOS)
+  tauri::api::shell::open(&app.shell_scope(), path, None)
+    .map_err(|e| format!("Open file failed: {e}"))?;
+  Ok(true)
 }
 
 #[tauri::command]
@@ -349,6 +380,8 @@ fn enqueue_download(
     extract_audio: request.extract_audio,
     audio_format: request.audio_format,
     transcribe_text: request.transcribe_text,
+    title: request.title,
+    thumbnail: request.thumbnail,
   };
 
   {
@@ -429,6 +462,100 @@ fn cancel_download(app: AppHandle, state: State<AppState>, id: String) -> Result
       output_path: None,
     },
   );
+  Ok(())
+}
+
+#[tauri::command]
+fn get_history(state: State<AppState>) -> Result<Vec<HistoryEntry>, String> {
+  let history = state.history.lock().map_err(|_| "History lock poisoned")?;
+  Ok(history.clone())
+}
+
+fn detect_platform(url: &str) -> Option<String> {
+  if let Ok(parsed) = url::Url::parse(url) {
+    let host = parsed.host_str().unwrap_or("").to_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    
+    if host == "youtu.be" || host.ends_with("youtube.com") {
+      return Some("youtube".to_string());
+    }
+    if host.ends_with("facebook.com") || host == "fb.watch" {
+      return Some("facebook".to_string());
+    }
+    if host.ends_with("twitch.tv") {
+      return Some("twitch".to_string());
+    }
+    if host == "x.com" || host.ends_with(".x.com") || host.ends_with("twitter.com") {
+      return Some("x".to_string());
+    }
+    if host.ends_with("tiktok.com") {
+      return Some("tiktok".to_string());
+    }
+    if host.ends_with("instagram.com") || host.ends_with("instagr.am") {
+      return Some("instagram".to_string());
+    }
+  }
+  None
+}
+
+fn add_history_entry_on_success(
+  app: &AppHandle,
+  state: &AppState,
+  job: &DownloadJob,
+  output_path: Option<&str>,
+) {
+  let entry = HistoryEntry {
+    id: Uuid::new_v4().to_string(),
+    url: job.url.clone(),
+    title: job.title.clone(),
+    thumbnail: job.thumbnail.clone(),
+    platform: detect_platform(&job.url),
+    output_path: output_path.map(|s| s.to_string()),
+    created_at: std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .unwrap_or_default()
+      .as_millis() as u64,
+    completed_at: Some(
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64,
+    ),
+  };
+
+  let mut history = match state.history.lock() {
+    Ok(h) => h,
+    Err(_) => return,
+  };
+
+  history.push(entry);
+
+  // Clone for saving, then drop lock
+  let history_clone = history.clone();
+  drop(history);
+  let _ = save_history(app, &history_clone);
+}
+
+#[tauri::command]
+fn remove_history_entry(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
+  let mut history = state.history.lock().map_err(|_| "History lock poisoned")?;
+  let before = history.len();
+  history.retain(|entry| entry.id != id);
+  let removed = before != history.len();
+  if removed {
+    let history_clone = history.clone();
+    drop(history);
+    save_history(&app, &history_clone)?;
+  }
+  Ok(())
+}
+
+#[tauri::command]
+fn clear_history(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+  let mut history = state.history.lock().map_err(|_| "History lock poisoned")?;
+  history.clear();
+  drop(history);
+  save_history(&app, &[])?;
   Ok(())
 }
 
@@ -554,6 +681,8 @@ fn ensure_worker(app: AppHandle, state: State<AppState>) -> Result<(), String> {
                     output_path: Some(transcript_path.clone()),
                   },
                 );
+                // Add to history on success
+                add_history_entry_on_success(&app_handle, &state_handle, &job, Some(transcript_path.as_str()));
               }
               Err(err) => {
                 emit_state(
@@ -579,6 +708,8 @@ fn ensure_worker(app: AppHandle, state: State<AppState>) -> Result<(), String> {
                 output_path: run_result.output_path.clone(),
               },
             );
+            // Add to history on success
+            add_history_entry_on_success(&app_handle, &state_handle, &job, run_result.output_path.as_deref());
           }
         }
         Err(err) => {
@@ -1153,6 +1284,30 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
   Ok(dir.join("config.json"))
 }
 
+fn history_path(app: &AppHandle) -> Result<PathBuf, String> {
+  let dir = tauri::api::path::app_data_dir(&app.config())
+    .ok_or("Data directory unavailable")?;
+  fs::create_dir_all(&dir).map_err(|e| format!("Data dir create failed: {e}"))?;
+  Ok(dir.join("history.json"))
+}
+
+fn load_history(app: &AppHandle) -> Vec<HistoryEntry> {
+  if let Ok(path) = history_path(app) {
+    if let Ok(raw) = fs::read_to_string(path) {
+      if let Ok(history) = serde_json::from_str::<Vec<HistoryEntry>>(&raw) {
+        return history;
+      }
+    }
+  }
+  Vec::new()
+}
+
+fn save_history(app: &AppHandle, history: &[HistoryEntry]) -> Result<(), String> {
+  let path = history_path(app)?;
+  let data = serde_json::to_string_pretty(history).map_err(|e| format!("History serialize failed: {e}"))?;
+  fs::write(path, data).map_err(|e| format!("History write failed: {e}"))
+}
+
 fn load_config(app: &AppHandle) -> AppConfig {
   if let Ok(path) = config_path(app) {
     if let Ok(raw) = fs::read_to_string(path) {
@@ -1174,7 +1329,11 @@ fn main() {
   tauri::Builder::default()
     .setup(|app| {
       let config = load_config(&app.handle());
-      app.manage(AppState::new(config));
+      let state = AppState::new(config);
+      // Load history from disk
+      let history = load_history(&app.handle());
+      *state.history.lock().map_err(|_| "History lock failed")? = history;
+      app.manage(state);
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -1183,11 +1342,15 @@ fn main() {
       cache_last_download_url,
       pick_output_dir,
       open_folder,
+      open_file_path,
       read_clipboard_text,
       load_info,
       get_yt_dlp_installed_version,
       enqueue_download,
-      cancel_download
+      cancel_download,
+      get_history,
+      remove_history_entry,
+      clear_history
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

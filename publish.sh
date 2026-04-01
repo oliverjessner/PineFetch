@@ -9,12 +9,20 @@ APP="$BUNDLE_DIR/macos/PineFetch.app"
 DMG_DIR="$BUNDLE_DIR/dmg"
 TMP_CHANGELOG=$(mktemp)
 TMP_RELEASE_NOTES=$(mktemp)
+VERSION=$(node -p 'require("./src-tauri/tauri.conf.json").package.version || "0.0.0"')
+TAG="v$VERSION"
 
 cleanup() {
     rm -f "$TMP_CHANGELOG" "$TMP_RELEASE_NOTES"
 }
 
 trap cleanup EXIT
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "Committing working tree before release..."
+    git add -A
+    git commit -m "chore: release $TAG"
+fi
 
 echo "Cleaning previous builds..."
 rm -rf "$BUNDLE_DIR"
@@ -32,8 +40,6 @@ codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 mkdir -p "$DMG_DIR"
-VERSION=$(node -p 'require("./src-tauri/tauri.conf.json").package.version || "0.0.0"')
-TAG="v$VERSION"
 OUT="$DMG_DIR/PineFetch_${VERSION}_aarch64_adhoc.dmg"
 hdiutil create -volname "PineFetch" -srcfolder "$APP" -ov -format UDZO "$OUT"
 echo "Created $OUT"

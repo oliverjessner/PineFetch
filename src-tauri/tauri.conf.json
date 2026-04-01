@@ -8,7 +8,7 @@
     },
     "package": {
         "productName": "PineFetch",
-        "version": "0.1.0"
+        "version": "0.2.0"
     },
   "tauri": {
     "allowlist": {
@@ -18,6 +18,7 @@
       "identifier": "com.pinefetch.app",
       "active": true,
       "targets": "all",
+      "copyright": "Copyright (c) 2026 Oliver Jessner - https://oliverjessner.at",
       "resources": [
         "resources/whisper-runtime",
         "resources/ffmpeg-runtime",

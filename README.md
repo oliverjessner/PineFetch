@@ -1,10 +1,12 @@
 # PineFetch
 
-Local Tauri desktop UI for `yt-dlp` with a minimal terminal-inspired interface. Designed for legitimate use-cases only (your uploads, Creative Commons/Public Domain, or content you have explicit permission to download).
+A local-first macOS desktop app that wraps **yt-dlp** with a clean UI: paste links, pick a preset, queue downloads, and optionally export audio. Transparent, minimal, and built for everyday workflows.
 
-**Note:** Please only download content you have the rights or permission to access.
+> PineFetch is designed for content you **own** or where you have **explicit permission** to download. Please respect platform Terms of Service and local laws.
 
 ![screenshot of the app](/src/images/download.png)
+
+**Note:** Please only download content you have the rights or permission to access.
 
 ## Features
 
@@ -16,6 +18,10 @@ Local Tauri desktop UI for `yt-dlp` with a minimal terminal-inspired interface. 
 - Persisted config (yt-dlp path + default output directory)
 
 ### Install
+
+```bash
+brew install yt-dlp ffmpeg
+```
 
 ```bash
 npm install
@@ -30,13 +36,8 @@ npm run dev
 ### Build
 
 ```bash
-npm run build:adhoc-dmg
+npm run publish
 ```
-
-`build:adhoc-dmg` now prepares and bundles a local `fast-whisper` runtime under
-`src-tauri/resources/whisper-runtime` and a local `ffmpeg` runtime under
-`src-tauri/resources/ffmpeg-runtime`, plus a local `deno` runtime under
-`src-tauri/resources/deno-runtime`, before creating the app bundle.
 
 ## yt-dlp location
 
@@ -48,3 +49,15 @@ npm run build:adhoc-dmg
 
 - This app is for legitimate usage only: your own uploads, Creative Commons/Public Domain, or content with explicit permission to download.
 - No DRM or paywall circumvention is supported or promoted.
+
+## Features
+
+- **Queue-based downloads** (multiple URLs, processed in order)
+- **Presets** for common workflows (e.g. Best / Audio-only / Custom)
+- **Optional logs** for transparency and troubleshooting
+- **Playlist support** (where supported by yt-dlp)
+- **Local-first**: no accounts, no cloud processing, files stay on your device
+
+## Other Menus
+
+![screenshot of the app](/src/images/settings.png)

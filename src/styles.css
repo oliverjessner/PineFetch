@@ -184,6 +184,7 @@ body {
     display: flex;
 }
 
+#historyView.active,
 #settingsView.active {
     flex: 1;
     min-height: 0;
@@ -415,6 +416,12 @@ select:focus {
     background: transparent;
 }
 
+.btn[aria-pressed='true'] {
+    border-color: rgba(76, 242, 199, 0.38);
+    background: rgba(76, 242, 199, 0.12);
+    box-shadow: 0 0 0 1px rgba(76, 242, 199, 0.08) inset;
+}
+
 .btn.danger {
     border-color: rgba(255, 93, 108, 0.5);
     color: var(--danger);
@@ -483,16 +490,33 @@ select:focus {
 
 .queue-actions {
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.queue-mode-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.queue-mode-hint {
+    margin: 10px 0 0;
+    font-size: 0.74rem;
+    color: var(--muted);
+    min-height: 1.1rem;
 }
 
 .history-list {
     display: flex;
     flex-direction: column;
+    flex: 1;
     gap: 12px;
     min-height: 0;
     overflow-y: auto;
-    max-height: calc(100vh - 280px);
 }
 
 .history-item {

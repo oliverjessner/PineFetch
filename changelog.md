@@ -1,3 +1,7 @@
+# 0.3.0
+
+- Start and stop download
+
 # 0.2.0
 
 ## Highlights

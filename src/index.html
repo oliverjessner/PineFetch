@@ -83,10 +83,10 @@
                     </div>
 
                     <div id="historyView" class="panel-view" hidden>
-                        <div class="field-row" style="justify-content: flex-end; margin-bottom: 8px">
+                        <div id="historyList" class="history-list"></div>
+                        <div class="history-actions">
                             <button id="clearHistoryBtn" class="btn ghost" type="button">Clear History</button>
                         </div>
-                        <div id="historyList" class="history-list"></div>
                         <p class="hint" id="historyHint" hidden>No history yet. Downloaded items will appear here.</p>
                     </div>
 
@@ -155,6 +155,12 @@
 
                     <div id="queueList" class="queue-list"></div>
                     <div class="queue-actions">
+                        <div class="queue-mode-actions">
+                            <button id="queueAutoStartBtn" class="btn ghost" type="button" aria-pressed="true">
+                                Auto-start: on
+                            </button>
+                            <button id="startQueueBtn" class="btn" type="button">Start queue</button>
+                        </div>
                         <button id="clearQueueBtn" class="btn ghost" type="button">Clear</button>
                     </div>
                 </section>

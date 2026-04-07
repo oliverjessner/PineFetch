@@ -4,6 +4,8 @@ const listen = tauriGlobal?.event?.listen;
 const state = Object.seal({
     jobs: new Map(),
     queueIds: [],
+    queueAutoStartEnabled: true,
+    queueWorkerRunning: false,
     suppressedJobIds: new Set(),
     selectedId: null,
     contextMenuJobId: null,
@@ -33,6 +35,9 @@ const els = Object.seal({
     infoThumb: document.getElementById('infoThumb'),
     queueList: document.getElementById('queueList'),
     queueBadge: document.getElementById('queueBadge'),
+    queueAutoStartBtn: document.getElementById('queueAutoStartBtn'),
+    startQueueBtn: document.getElementById('startQueueBtn'),
+    queueModeHint: document.getElementById('queueModeHint'),
     clearQueueBtn: document.getElementById('clearQueueBtn'),
     infoBadge: document.getElementById('infoBadge'),
     logBody: document.getElementById('logBody'),
@@ -108,6 +113,7 @@ const presetOptions = Object.freeze([
 const presets = Object.freeze(Object.fromEntries(presetOptions.map(preset => [preset.key, preset])));
 const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
 const cancellableJobStates = new Set(['downloading', 'transcribing']);
+const queueBusyJobStates = new Set(['downloading', 'transcribing', 'cancelling']);
 const removableJobStates = new Set(['queued', 'success', 'error', 'cancelled']);
 let urlShakeTimer = null;
 let magicImportInFlight = false;
@@ -490,6 +496,39 @@ const renderInfo = () => {
     }
 };
 
+const renderQueueControls = () => {
+    const queuedCount = state.queueIds.length;
+    const isBusy =
+        state.queueWorkerRunning || Array.from(state.jobs.values()).some(job => queueBusyJobStates.has(job.state));
+    const setQueueModeHint = text => {
+        if (els.queueModeHint) {
+            els.queueModeHint.textContent = text;
+        }
+    };
+
+    els.queueAutoStartBtn.textContent = `Auto-start: ${state.queueAutoStartEnabled ? 'on' : 'off'}`;
+    els.queueAutoStartBtn.setAttribute('aria-pressed', String(state.queueAutoStartEnabled));
+
+    els.startQueueBtn.disabled = state.queueAutoStartEnabled || queuedCount === 0 || isBusy;
+
+    if (state.queueAutoStartEnabled) {
+        setQueueModeHint('New items start downloading as soon as they are queued.');
+        return;
+    }
+
+    if (isBusy) {
+        setQueueModeHint('Manual mode is active. The current queue run will finish before new items wait.');
+        return;
+    }
+
+    if (queuedCount > 0) {
+        setQueueModeHint('Manual mode is active. Build the queue first, then click Start queue.');
+        return;
+    }
+
+    setQueueModeHint('Manual mode is active. New items stay queued until you click Start queue.');
+};
+
 const renderQueue = () => {
     const items = Array.from(state.jobs.values()).sort((a, b) => a.createdAt - b.createdAt);
     els.queueList.innerHTML = '';
@@ -578,6 +617,7 @@ const renderQueue = () => {
     }
     syncQueueContextMenuState();
     els.queueBadge.textContent = `${state.queueIds.length} queued`;
+    renderQueueControls();
 };
 
 const formatHistoryDate = timestamp => {
@@ -746,6 +786,18 @@ const syncConfig = async () => {
     }
 };
 
+const syncQueueStatus = async () => {
+    if (!invoke) return;
+    try {
+        const status = await invoke('get_queue_status');
+        state.queueAutoStartEnabled = status?.auto_start ?? true;
+        state.queueWorkerRunning = Boolean(status?.worker_running);
+        renderQueueControls();
+    } catch (err) {
+        appendLog(`[queue] ${err}`, true);
+    }
+};
+
 let loadInfoInFlight = false;
 let loadInfoAborted = false;
 
@@ -900,6 +952,32 @@ const enqueueDownload = async () => {
     await enqueueDownloadForUrl(url, presetKey);
 };
 
+const toggleQueueAutoStart = async () => {
+    if (!invoke) return;
+    try {
+        const status = await invoke('set_queue_auto_start', {
+            enabled: !state.queueAutoStartEnabled,
+        });
+        state.queueAutoStartEnabled = status?.auto_start ?? !state.queueAutoStartEnabled;
+        state.queueWorkerRunning = Boolean(status?.worker_running);
+        renderQueueControls();
+    } catch (err) {
+        appendLog(`[queue] ${err}`, true);
+    }
+};
+
+const startQueueProcessing = async () => {
+    if (!invoke) return;
+    try {
+        const status = await invoke('start_queue');
+        state.queueAutoStartEnabled = status?.auto_start ?? state.queueAutoStartEnabled;
+        state.queueWorkerRunning = Boolean(status?.worker_running);
+        renderQueueControls();
+    } catch (err) {
+        appendLog(`[queue] ${err}`, true);
+    }
+};
+
 const saveSettings = async () => {
     try {
         await invoke('set_config', {
@@ -992,6 +1070,12 @@ const bindEvents = () => {
     els.magicImportEnabled.addEventListener('change', syncMagicImportTriggerState);
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
+    els.queueAutoStartBtn.addEventListener('click', () => {
+        void toggleQueueAutoStart();
+    });
+    els.startQueueBtn.addEventListener('click', () => {
+        void startQueueProcessing();
+    });
 
     let urlInputDebounceTimer = null;
     els.urlInput.addEventListener('input', () => {
@@ -1134,6 +1218,12 @@ const bindEvents = () => {
 };
 
 const bindBackendEvents = async () => {
+    await listen('queue:status', event => {
+        state.queueAutoStartEnabled = event.payload?.auto_start ?? true;
+        state.queueWorkerRunning = Boolean(event.payload?.worker_running);
+        renderQueueControls();
+    });
+
     await listen('queue:update', event => {
         state.queueIds = event.payload.map(job => job.id).filter(id => !state.suppressedJobIds.has(id));
         event.payload.forEach(job => {
@@ -1183,6 +1273,7 @@ const init = async () => {
     renderPresetOptions();
     renderQueueContextMenu();
     syncMagicImportTriggerState();
+    renderQueueControls();
     bindEvents();
     setActiveView('download');
     requestAnimationFrame(() => {
@@ -1193,6 +1284,7 @@ const init = async () => {
         return;
     }
     await syncConfig();
+    await syncQueueStatus();
     await bindBackendEvents();
     renderQueue();
 };

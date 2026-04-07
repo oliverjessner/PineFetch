@@ -8,29 +8,22 @@
     },
     "package": {
         "productName": "PineFetch",
-        "version": "0.2.0"
+        "version": "1.0.0"
     },
-  "tauri": {
-    "allowlist": {
-      "all": true
-    },
-    "bundle": {
-      "identifier": "com.pinefetch.app",
-      "active": true,
-      "targets": "all",
-      "copyright": "Copyright (c) 2026 Oliver Jessner - https://oliverjessner.at",
-      "resources": [
-        "resources/whisper-runtime",
-        "resources/ffmpeg-runtime",
-        "resources/deno-runtime"
-      ],
-      "icon": [
-        "icons/icon.png",
-        "icons/icon.icns"
-      ]
-    },
-    "windows": [
-      {
+    "tauri": {
+        "allowlist": {
+            "all": true
+        },
+        "bundle": {
+            "identifier": "com.pinefetch.app",
+            "active": true,
+            "targets": "all",
+            "copyright": "Copyright (c) 2026 Oliver Jessner - https://oliverjessner.at\nMIT License",
+            "resources": ["resources/whisper-runtime", "resources/ffmpeg-runtime", "resources/deno-runtime"],
+            "icon": ["icons/icon.png", "icons/icon.icns"]
+        },
+        "windows": [
+            {
                 "title": "PineFetch",
                 "width": 1400,
                 "height": 960,

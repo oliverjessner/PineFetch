@@ -2,7 +2,7 @@
 name = "pinefetch"
 version = "1.0.0"
 description = "Local yt-dlp desktop UI"
-authors = ["You"]
+authors = ["Oliver Jessner"]
 license = "MIT"
 repository = ""
 edition = "2021"

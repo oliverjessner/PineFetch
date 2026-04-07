@@ -73,3 +73,5 @@ yt-dlp: [https://github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp)
 ffmpeg: [https://ffmpeg.org/](https://ffmpeg.org/)
 
 ## License
+
+MIT

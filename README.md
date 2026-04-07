@@ -1,4 +1,4 @@
-# PineFetch
+# PineFetch 🍍
 
 A local-first macOS desktop app that wraps **yt-dlp** with a clean UI: paste links, pick a preset, queue downloads, and optionally export audio. Transparent, minimal, and built for everyday workflows.
 
@@ -69,8 +69,8 @@ History shows completed and failed jobs at a glance, including status and timest
 
 ## Credits
 
-yt-dlp: [https://github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp)
-ffmpeg: [https://ffmpeg.org/](https://ffmpeg.org/)
+- yt-dlp: [https://github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp)
+- ffmpeg: [https://ffmpeg.org/](https://ffmpeg.org/)
 
 ## License
 

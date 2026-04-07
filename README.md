@@ -65,7 +65,7 @@ The Settings screen lets you tune PineFetch for everyday use: default preset, do
 
 History shows completed and failed jobs at a glance, including status and timestamp.
 
-![history](/src/images/history.png
+![history](/src/images/history.png)
 
 ## Credits
 

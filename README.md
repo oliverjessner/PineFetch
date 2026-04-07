@@ -60,4 +60,16 @@ npm run publish
 
 ## Other Menus
 
+The Settings screen lets you tune PineFetch for everyday use: default preset, download location, and whether logs are visible.
 ![screenshot of the app](/src/images/settings.png)
+
+History shows completed and failed jobs at a glance, including status and timestamp.
+
+![history](/src/images/history.png
+
+## Credits
+
+yt-dlp: [https://github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp)
+ffmpeg: [https://ffmpeg.org/](https://ffmpeg.org/)
+
+## License

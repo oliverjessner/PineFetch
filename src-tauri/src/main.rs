@@ -243,18 +243,17 @@ async fn pick_output_dir() -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
+    let path =
+        canonical_existing_local_path(&path)?.ok_or_else(|| "Path does not exist".to_string())?;
     tauri::api::shell::open(&app.shell_scope(), path, None)
         .map_err(|e| format!("Open folder failed: {e}"))
 }
 
 #[tauri::command]
 fn open_file_path(app: AppHandle, path: String) -> Result<bool, String> {
-    // Check if file exists
-    let exists = std::path::Path::new(&path).exists();
-    if !exists {
+    let Some(path) = canonical_existing_local_path(&path)? else {
         return Ok(false);
-    }
-    // Open the file (or reveal in finder on macOS)
+    };
     tauri::api::shell::open(&app.shell_scope(), path, None)
         .map_err(|e| format!("Open file failed: {e}"))?;
     Ok(true)
@@ -1341,6 +1340,26 @@ fn is_valid_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
 }
 
+fn canonical_existing_local_path(raw: &str) -> Result<Option<String>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.contains('\0')
+        || trimmed.contains("://")
+        || trimmed.starts_with("mailto:")
+        || trimmed.starts_with("tel:")
+    {
+        return Err("Only local filesystem paths can be opened".to_string());
+    }
+
+    match fs::canonicalize(trimmed) {
+        Ok(path) => Ok(Some(path.to_string_lossy().to_string())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(format!("Path could not be opened: {err}")),
+    }
+}
+
 fn resolve_output_dir(state: &AppState, requested: Option<String>) -> Result<String, String> {
     if let Some(dir) = requested {
         if dir.trim().is_empty() {
@@ -1483,4 +1502,27 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_remote_open_targets() {
+        let err = canonical_existing_local_path("https://example.com").unwrap_err();
+        assert!(err.contains("local filesystem"));
+    }
+
+    #[test]
+    fn canonicalizes_existing_local_paths() {
+        let temp_dir = std::env::temp_dir();
+        let canonical = fs::canonicalize(&temp_dir).unwrap();
+
+        let resolved = canonical_existing_local_path(temp_dir.to_string_lossy().as_ref())
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(resolved, canonical.to_string_lossy());
+    }
 }

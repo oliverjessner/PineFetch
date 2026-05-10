@@ -12,7 +12,27 @@
     },
     "tauri": {
         "allowlist": {
-            "all": true
+            "all": false,
+            "clipboard": {
+                "all": false,
+                "readText": true,
+                "writeText": false
+            },
+            "dialog": {
+                "all": false,
+                "open": true,
+                "save": false,
+                "message": false,
+                "ask": false,
+                "confirm": false
+            },
+            "shell": {
+                "all": false,
+                "execute": false,
+                "sidecar": false,
+                "open": "^(?:/[^\\u0000]*|[A-Za-z]:\\\\[^\\u0000]*|\\\\\\\\[^\\u0000]+)$",
+                "scope": []
+            }
         },
         "bundle": {
             "identifier": "com.pinefetch.app",
@@ -33,7 +53,7 @@
             }
         ],
         "security": {
-            "csp": null
+            "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data: asset: http://asset.localhost; connect-src 'self' https://api.github.com; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
         }
     }
 }

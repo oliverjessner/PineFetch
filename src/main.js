@@ -145,44 +145,117 @@ const detectPlatform = url => {
     return null;
 };
 
-const getPlatformIconSvg = platform => {
+const svgNamespace = 'http://www.w3.org/2000/svg';
+
+const createSvgElement = shapes => {
+    const svg = document.createElementNS(svgNamespace, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+
+    shapes.forEach(({ tag, attrs }) => {
+        const shape = document.createElementNS(svgNamespace, tag);
+        Object.entries(attrs).forEach(([name, value]) => {
+            shape.setAttribute(name, value);
+        });
+        svg.appendChild(shape);
+    });
+
+    return svg;
+};
+
+const getPlatformIconElement = platform => {
     switch (platform) {
         case 'youtube':
-            return `
-<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-  <path d="M22 12c0 2.7-.3 4.4-.6 5.3-.3.8-.9 1.4-1.7 1.7-.9.3-2.6.6-7.7.6s-6.8-.3-7.7-.6c-.8-.3-1.4-.9-1.7-1.7C2.3 16.4 2 14.7 2 12s.3-4.4.6-5.3c.3-.8.9-1.4 1.7-1.7C5.2 4.7 6.9 4.4 12 4.4s6.8.3 7.7.6c.8.3 1.4.9 1.7 1.7.3.9.6 2.6.6 5.3Z" fill="currentColor"/>
-  <path d="M10 8.8 15.5 12 10 15.2V8.8Z" fill="#fff"/>
-</svg>`;
+            return createSvgElement([
+                {
+                    tag: 'path',
+                    attrs: {
+                        d: 'M22 12c0 2.7-.3 4.4-.6 5.3-.3.8-.9 1.4-1.7 1.7-.9.3-2.6.6-7.7.6s-6.8-.3-7.7-.6c-.8-.3-1.4-.9-1.7-1.7C2.3 16.4 2 14.7 2 12s.3-4.4.6-5.3c.3-.8.9-1.4 1.7-1.7C5.2 4.7 6.9 4.4 12 4.4s6.8.3 7.7.6c.8.3 1.4.9 1.7 1.7.3.9.6 2.6.6 5.3Z',
+                        fill: 'currentColor',
+                    },
+                },
+                { tag: 'path', attrs: { d: 'M10 8.8 15.5 12 10 15.2V8.8Z', fill: '#fff' } },
+            ]);
         case 'facebook':
-            return `
-<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-  <path d="M13.6 8.6h2.3V5.4h-2.7c-2.6 0-4 1.5-4 4v1.9H7v3.1h2.2v5.2h3.3v-5.2h2.7l.4-3.1h-3.1V9.8c0-.8.3-1.2.8-1.2Z" fill="currentColor"/>
-</svg>`;
+            return createSvgElement([
+                {
+                    tag: 'path',
+                    attrs: {
+                        d: 'M13.6 8.6h2.3V5.4h-2.7c-2.6 0-4 1.5-4 4v1.9H7v3.1h2.2v5.2h3.3v-5.2h2.7l.4-3.1h-3.1V9.8c0-.8.3-1.2.8-1.2Z',
+                        fill: 'currentColor',
+                    },
+                },
+            ]);
         case 'twitch':
-            return `
-<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-  <path d="M4 3h16v11.2l-4 4H12l-2.8 2.8V18.2H4V3Zm2 2v11.2h3.2v1.6l1.6-1.6H15l3-3V5H6Zm4.2 2.4h1.8v4.2h-1.8V7.4Zm4 0H16v4.2h-1.8V7.4Z" fill="currentColor"/>
-</svg>`;
+            return createSvgElement([
+                {
+                    tag: 'path',
+                    attrs: {
+                        d: 'M4 3h16v11.2l-4 4H12l-2.8 2.8V18.2H4V3Zm2 2v11.2h3.2v1.6l1.6-1.6H15l3-3V5H6Zm4.2 2.4h1.8v4.2h-1.8V7.4Zm4 0H16v4.2h-1.8V7.4Z',
+                        fill: 'currentColor',
+                    },
+                },
+            ]);
         case 'x':
-            return `
-<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-  <path d="M4 4h3.8l4.7 6.4L17.8 4H20l-6.4 7.3L20.5 20h-3.8l-5-6.8L5.9 20H3.7l6.7-7.6L4 4Z" fill="currentColor"/>
-</svg>`;
+            return createSvgElement([
+                {
+                    tag: 'path',
+                    attrs: {
+                        d: 'M4 4h3.8l4.7 6.4L17.8 4H20l-6.4 7.3L20.5 20h-3.8l-5-6.8L5.9 20H3.7l6.7-7.6L4 4Z',
+                        fill: 'currentColor',
+                    },
+                },
+            ]);
         case 'tiktok':
-            return `
-<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-  <path d="M14.5 4c1.1 1.6 2.3 2.4 4 2.5V9c-1.5 0-2.8-.4-4-1.2v6.6a4.8 4.8 0 1 1-3.8-4.7v2.6a2.2 2.2 0 1 0 1.3 2V4h2.5Z" fill="currentColor"/>
-</svg>`;
+            return createSvgElement([
+                {
+                    tag: 'path',
+                    attrs: {
+                        d: 'M14.5 4c1.1 1.6 2.3 2.4 4 2.5V9c-1.5 0-2.8-.4-4-1.2v6.6a4.8 4.8 0 1 1-3.8-4.7v2.6a2.2 2.2 0 1 0 1.3 2V4h2.5Z',
+                        fill: 'currentColor',
+                    },
+                },
+            ]);
         case 'instagram':
-            return `
-<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-  <rect x="3.5" y="3.5" width="17" height="17" rx="5" fill="none" stroke="currentColor" stroke-width="2"/>
-  <circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/>
-  <circle cx="17.2" cy="6.8" r="1.2" fill="currentColor"/>
-</svg>`;
+            return createSvgElement([
+                {
+                    tag: 'rect',
+                    attrs: {
+                        x: '3.5',
+                        y: '3.5',
+                        width: '17',
+                        height: '17',
+                        rx: '5',
+                        fill: 'none',
+                        stroke: 'currentColor',
+                        'stroke-width': '2',
+                    },
+                },
+                {
+                    tag: 'circle',
+                    attrs: {
+                        cx: '12',
+                        cy: '12',
+                        r: '3.5',
+                        fill: 'none',
+                        stroke: 'currentColor',
+                        'stroke-width': '2',
+                    },
+                },
+                { tag: 'circle', attrs: { cx: '17.2', cy: '6.8', r: '1.2', fill: 'currentColor' } },
+            ]);
         default:
-            return '';
+            return null;
     }
+};
+
+const appendTextSpans = (parent, values) => {
+    values.forEach(value => {
+        const span = document.createElement('span');
+        span.textContent = value;
+        parent.appendChild(span);
+    });
 };
 
 const isValidHttpUrl = value => {
@@ -396,7 +469,7 @@ const setActiveView = view => {
 
 const renderPresetOptions = () => {
     const selectedPresetKey = presets[els.presetSelect.value] ? els.presetSelect.value : null;
-    els.presetSelect.innerHTML = '';
+    els.presetSelect.replaceChildren();
 
     presetOptions.forEach(preset => {
         const option = document.createElement('option');
@@ -409,7 +482,7 @@ const renderPresetOptions = () => {
 };
 
 const renderQueueContextMenu = () => {
-    els.queueContextDownloads.innerHTML = '';
+    els.queueContextDownloads.replaceChildren();
     presetOptions.forEach(preset => {
         const button = document.createElement('button');
         button.className = 'queue-context-menu-btn';
@@ -531,7 +604,7 @@ const renderQueueControls = () => {
 
 const renderQueue = () => {
     const items = Array.from(state.jobs.values()).sort((a, b) => a.createdAt - b.createdAt);
-    els.queueList.innerHTML = '';
+    els.queueList.replaceChildren();
     items.forEach(job => {
         const item = document.createElement('div');
         item.className = `queue-item ${job.id === state.selectedId ? 'active' : ''}`;
@@ -563,8 +636,11 @@ const renderQueue = () => {
         if (platform) {
             const platformIcon = document.createElement('span');
             platformIcon.className = `queue-platform-icon ${platform}`;
-            platformIcon.innerHTML = getPlatformIconSvg(platform);
-            title.appendChild(platformIcon);
+            const icon = getPlatformIconElement(platform);
+            if (icon) {
+                platformIcon.appendChild(icon);
+                title.appendChild(platformIcon);
+            }
         }
         const titleText = document.createElement('span');
         titleText.className = 'queue-title-text';
@@ -585,11 +661,7 @@ const renderQueue = () => {
 
         const meta = document.createElement('div');
         meta.className = 'queue-meta';
-        meta.innerHTML = `
-      <span>${job.speed || '-'}</span>
-      <span>${job.eta || '-'}</span>
-      <span>${job.formatLabel || ''}</span>
-    `;
+        appendTextSpans(meta, [job.speed || '-', job.eta || '-', job.formatLabel || '']);
         const main = document.createElement('div');
         main.className = 'queue-main';
 
@@ -640,14 +712,14 @@ const formatHistoryDate = timestamp => {
 
 const renderHistory = async () => {
     if (!invoke) {
-        els.historyList.innerHTML = '';
+        els.historyList.replaceChildren();
         els.historyHint.hidden = true;
         return;
     }
 
     try {
         const history = await invoke('get_history');
-        els.historyList.innerHTML = '';
+        els.historyList.replaceChildren();
 
         if (history.length === 0) {
             els.historyHint.hidden = false;
@@ -690,10 +762,7 @@ const renderHistory = async () => {
             meta.className = 'history-meta';
             const dateStr = formatHistoryDate(entry.completed_at);
             const platform = entry.platform || detectPlatform(entry.url) || 'unknown';
-            meta.innerHTML = `
-                <span>${platform}</span>
-                <span>${dateStr}</span>
-            `;
+            appendTextSpans(meta, [platform, dateStr]);
             content.appendChild(meta);
 
             item.appendChild(content);
@@ -708,7 +777,7 @@ const renderHistory = async () => {
             // Add remove button (top-right corner)
             const removeBtn = document.createElement('button');
             removeBtn.className = 'history-item-remove-btn';
-            removeBtn.innerHTML = '×';
+            removeBtn.textContent = '×';
             removeBtn.title = 'Remove from history';
             removeBtn.onclick = async event => {
                 event.stopPropagation();

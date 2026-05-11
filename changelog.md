@@ -1,3 +1,7 @@
+# 1.0.1
+
+- fixed vibe coding problems with https://github.com/oliverjessner/ItWorksBut
+
 # 1.0.0
 
 - Start and stop download

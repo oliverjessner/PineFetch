@@ -39,6 +39,14 @@ npm run dev
 npm run publish
 ```
 
+### Build Windows
+
+Run this on Windows with the Rust MSVC toolchain, Node.js, ffmpeg/ffprobe, Deno, and Python 3.10+ installed:
+
+```powershell
+npm run build:windows
+```
+
 ## yt-dlp location
 
 - If `yt-dlp` is in your PATH, the app will find it automatically.

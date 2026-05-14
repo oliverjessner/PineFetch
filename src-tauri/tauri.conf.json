@@ -40,7 +40,7 @@
             "targets": "all",
             "copyright": "Copyright (c) 2026 Oliver Jessner - https://oliverjessner.at\nMIT License",
             "resources": ["resources/whisper-runtime", "resources/ffmpeg-runtime", "resources/deno-runtime"],
-            "icon": ["icons/icon.png", "icons/icon.icns"]
+            "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"]
         },
         "windows": [
             {

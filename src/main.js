@@ -18,6 +18,7 @@ const state = Object.seal({
 const els = Object.seal({
     magicImportTrigger: document.getElementById('magicImportTrigger'),
     magicImportEnabled: document.getElementById('magicImportEnabled'),
+    cutAtTimestampEnabled: document.getElementById('cutAtTimestampEnabled'),
     urlInput: document.getElementById('urlInput'),
     loadInfoBtn: document.getElementById('loadInfoBtn'),
     startDownloadBtn: document.getElementById('startDownloadBtn'),
@@ -127,6 +128,74 @@ const formatDuration = seconds => {
 
     if (hrs > 0) return `${hrs}h ${String(mins % 60).padStart(2, '0')}m`;
     return `${mins}m ${String(secs).padStart(2, '0')}s`;
+};
+
+const formatCutStartLabel = seconds => {
+    if (!Number.isFinite(Number(seconds)) || Number(seconds) <= 0) return null;
+    return `from ${formatDuration(Number(seconds))}`;
+};
+
+const timestampParamNames = new Set(['t', 'start', 'start_time', 'time_continue']);
+
+const normalizePositiveTimestamp = seconds => {
+    const value = Number(seconds);
+    return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const parseTimestampValue = raw => {
+    const value = `${raw || ''}`.trim().toLowerCase();
+    if (!value) return null;
+
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return normalizePositiveTimestamp(numeric);
+
+    if (value.includes(':')) {
+        const parts = value.split(':');
+        if (parts.length < 2 || parts.length > 3) return null;
+
+        let total = 0;
+        for (const part of parts) {
+            if (!part) return null;
+            const amount = Number(part);
+            if (!Number.isFinite(amount) || amount < 0) return null;
+            total = total * 60 + amount;
+        }
+        return normalizePositiveTimestamp(total);
+    }
+
+    const matches = [...value.matchAll(/(\d+(?:\.\d+)?)([hms])/g)];
+    if (!matches.length || matches.map(match => match[0]).join('') !== value) return null;
+
+    const total = matches.reduce((sum, [, amount, unit]) => {
+        const multiplier = unit === 'h' ? 3600 : unit === 'm' ? 60 : 1;
+        return sum + Number(amount) * multiplier;
+    }, 0);
+    return normalizePositiveTimestamp(total);
+};
+
+const extractUrlStartTimestamp = url => {
+    try {
+        const parsed = new URL(url);
+        for (const [name, value] of parsed.searchParams.entries()) {
+            if (!timestampParamNames.has(name)) continue;
+            const seconds = parseTimestampValue(value);
+            if (seconds) return seconds;
+        }
+
+        if (parsed.hash) {
+            const fragment = parsed.hash.slice(1);
+            const fragmentParams = new URLSearchParams(fragment);
+            for (const [name, value] of fragmentParams.entries()) {
+                if (!timestampParamNames.has(name)) continue;
+                const seconds = parseTimestampValue(value);
+                if (seconds) return seconds;
+            }
+            return parseTimestampValue(fragment);
+        }
+    } catch {
+        return null;
+    }
+    return null;
 };
 
 const detectPlatform = url => {
@@ -661,7 +730,10 @@ const renderQueue = () => {
 
         const meta = document.createElement('div');
         meta.className = 'queue-meta';
-        appendTextSpans(meta, [job.speed || '-', job.eta || '-', job.formatLabel || '']);
+        const metaItems = [job.speed || '-', job.eta || '-', job.formatLabel || ''];
+        const cutStartLabel = formatCutStartLabel(job.cutStartTime);
+        if (cutStartLabel) metaItems.push(cutStartLabel);
+        appendTextSpans(meta, metaItems);
         const main = document.createElement('div');
         main.className = 'queue-main';
 
@@ -848,6 +920,7 @@ const syncConfig = async () => {
         els.outputDir.value = state.config.default_output_dir || '';
         els.ytDlpPath.value = state.config.yt_dlp_path || defaultYtDlpPath;
         els.magicImportEnabled.checked = state.config.magic_import_enabled ?? true;
+        els.cutAtTimestampEnabled.checked = state.config.cut_at_timestamp_enabled ?? true;
         syncMagicImportTriggerState();
         void refreshYtDlpVersions();
     } catch (err) {
@@ -924,6 +997,8 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
 
     const preset = presets[presetKey] || presets.best;
     const output_dir = els.outputDir.value.trim() || null;
+    const cutAtTimestampEnabled = Boolean(els.cutAtTimestampEnabled.checked);
+    const cutStartTime = cutAtTimestampEnabled ? extractUrlStartTimestamp(url) : null;
     const hasLoadedInfo = state.info && state.infoUrl === url;
     const fallbackThumbnail = resolveYouTubeThumbnail(url);
     const thumbnail = options.thumbnail ?? (hasLoadedInfo ? state.info?.thumbnail || null : fallbackThumbnail);
@@ -951,6 +1026,8 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
                 extract_audio: preset.extractAudio,
                 audio_format: preset.audioFormat,
                 transcribe_text: preset.transcribeText,
+                cut_at_timestamp_enabled: cutAtTimestampEnabled,
+                cut_start_time: cutStartTime,
                 title: titleForRequest,
                 thumbnail: thumbnailForRequest,
             },
@@ -968,6 +1045,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
             speed: '-',
             eta: '-',
             formatLabel: preset.queueLabel,
+            cutStartTime,
         });
         void cacheLastDownloadedUrl(url);
         maybeHydrateQueueThumbnail(id);
@@ -1054,6 +1132,7 @@ const saveSettings = async () => {
                 yt_dlp_path: els.ytDlpPath.value.trim() || null,
                 default_output_dir: els.outputDir.value.trim() || null,
                 magic_import_enabled: Boolean(els.magicImportEnabled.checked),
+                cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
                 last_download_url: state.config?.last_download_url || null,
             },
         });
@@ -1062,6 +1141,7 @@ const saveSettings = async () => {
             yt_dlp_path: els.ytDlpPath.value.trim() || null,
             default_output_dir: els.outputDir.value.trim() || null,
             magic_import_enabled: Boolean(els.magicImportEnabled.checked),
+            cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
             last_download_url: state.config?.last_download_url || null,
         };
         syncMagicImportTriggerState();
@@ -1304,6 +1384,7 @@ const bindBackendEvents = async () => {
                 thumbnail: existing?.thumbnail || resolveYouTubeThumbnail(job.url),
                 state: 'queued',
                 outputPath: existing?.outputPath || null,
+                cutStartTime: job.cut_start_time ?? null,
                 previewResolved: existing?.previewResolved || Boolean(resolveYouTubeThumbnail(job.url)),
                 previewLoading: existing?.previewLoading || false,
                 formatLabel: existing?.formatLabel || job.format,

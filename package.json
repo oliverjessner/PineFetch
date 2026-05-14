@@ -1,6 +1,6 @@
 {
     "name": "pinefetch",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "private": true,
     "scripts": {
         "dev": "tauri dev",
@@ -13,5 +13,17 @@
     },
     "devDependencies": {
         "@tauri-apps/cli": "^1.5.0"
-    }
+    },
+    "contributors": [
+        {
+            "name": "Oliver Jessner",
+            "url": "https://github.com/oliverjessner",
+            "hireable": true
+        },
+        {
+            "name": "Muhammed Kaan Akman",
+            "url": "https://github.com/MukaanDE",
+            "hireable": true
+        }
+    ]
 }

@@ -17,12 +17,18 @@ fn default_magic_import_enabled() -> bool {
     true
 }
 
+fn default_cut_at_timestamp_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppConfig {
     yt_dlp_path: Option<String>,
     default_output_dir: Option<String>,
     #[serde(default = "default_magic_import_enabled")]
     magic_import_enabled: bool,
+    #[serde(default = "default_cut_at_timestamp_enabled")]
+    cut_at_timestamp_enabled: bool,
     #[serde(default)]
     last_download_url: Option<String>,
 }
@@ -33,6 +39,7 @@ impl Default for AppConfig {
             yt_dlp_path: None,
             default_output_dir: None,
             magic_import_enabled: default_magic_import_enabled(),
+            cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
         }
     }
@@ -46,6 +53,10 @@ struct DownloadRequest {
     extract_audio: bool,
     audio_format: Option<String>,
     transcribe_text: bool,
+    #[serde(default = "default_cut_at_timestamp_enabled")]
+    cut_at_timestamp_enabled: bool,
+    #[serde(default)]
+    cut_start_time: Option<f64>,
     title: Option<String>,
     thumbnail: Option<String>,
 }
@@ -61,6 +72,7 @@ struct DownloadJob {
     transcribe_text: bool,
     title: Option<String>,
     thumbnail: Option<String>,
+    cut_start_time: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -429,6 +441,11 @@ fn enqueue_download(
     }
 
     let output_dir = resolve_output_dir(&state, request.output_dir.clone())?;
+    let cut_start_time = resolve_cut_start_time(
+        request.cut_at_timestamp_enabled,
+        request.cut_start_time,
+        &request.url,
+    );
     let id = Uuid::new_v4().to_string();
     let job = DownloadJob {
         id: id.clone(),
@@ -440,6 +457,7 @@ fn enqueue_download(
         transcribe_text: request.transcribe_text,
         title: request.title,
         thumbnail: request.thumbnail,
+        cut_start_time,
     };
 
     {
@@ -861,17 +879,20 @@ fn run_download_job(
         job.format.clone(),
         "-o".to_string(),
         output_template,
-        job.url.clone(),
     ];
 
+    let needs_ffmpeg = job.extract_audio
+        || job.transcribe_text
+        || job.format.contains('+')
+        || job.cut_start_time.is_some();
     if let Some(location) = ffmpeg_location.as_ref() {
         args.push("--ffmpeg-location".to_string());
         args.push(location.clone());
-    } else if job.extract_audio || job.transcribe_text || job.format.contains('+') {
+    } else if needs_ffmpeg {
         return Err(
-      "ffmpeg and ffprobe not found. Install ffmpeg (or make sure it is in the same directory as yt-dlp) and try again."
-        .to_string(),
-    );
+            "ffmpeg and ffprobe not found. Install ffmpeg (or make sure it is in the same directory as yt-dlp) and try again."
+                .to_string(),
+        );
     }
 
     if let Some(deno) = deno_path.as_ref() {
@@ -886,6 +907,33 @@ fn run_download_job(
             args.push(fmt.to_string());
         }
     }
+
+    if let Some(cut_start_time) = job.cut_start_time {
+        let cut_timestamp = format_yt_dlp_timestamp(cut_start_time);
+        emit_log(
+            app,
+            LogEvent {
+                id: job.id.clone(),
+                line: format!(
+                    "[cut] URL timestamp detected; passing --download-sections *{cut_timestamp}-inf"
+                ),
+                is_error: false,
+            },
+        );
+        args.push("--download-sections".to_string());
+        args.push(format!("*{cut_timestamp}-inf"));
+        emit_progress(
+            app,
+            DownloadProgress {
+                id: job.id.clone(),
+                percent: Some(0.1),
+                speed: Some("section".to_string()),
+                eta: Some("-".to_string()),
+            },
+        );
+    }
+
+    args.push(job.url.clone());
 
     let mut command = Command::new(yt_dlp);
     command.args(args);
@@ -1340,6 +1388,143 @@ fn is_valid_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
 }
 
+fn resolve_cut_start_time(
+    cut_at_timestamp_enabled: bool,
+    requested_cut_start_time: Option<f64>,
+    url: &str,
+) -> Option<f64> {
+    if !cut_at_timestamp_enabled {
+        return None;
+    }
+
+    requested_cut_start_time
+        .and_then(normalize_positive_timestamp)
+        .or_else(|| extract_url_start_timestamp(url))
+}
+
+fn extract_url_start_timestamp(raw_url: &str) -> Option<f64> {
+    let parsed = url::Url::parse(raw_url).ok()?;
+
+    for (name, value) in parsed.query_pairs() {
+        if is_start_timestamp_param(name.as_ref()) {
+            if let Some(seconds) = parse_timestamp_value(value.as_ref()) {
+                return Some(seconds);
+            }
+        }
+    }
+
+    if let Some(fragment) = parsed.fragment() {
+        for (name, value) in url::form_urlencoded::parse(fragment.as_bytes()) {
+            if is_start_timestamp_param(name.as_ref()) {
+                if let Some(seconds) = parse_timestamp_value(value.as_ref()) {
+                    return Some(seconds);
+                }
+            }
+        }
+
+        parse_timestamp_value(fragment)
+    } else {
+        None
+    }
+}
+
+fn is_start_timestamp_param(name: &str) -> bool {
+    matches!(name, "t" | "start" | "start_time" | "time_continue")
+}
+
+fn parse_timestamp_value(raw: &str) -> Option<f64> {
+    let value = raw.trim().to_ascii_lowercase();
+    if value.is_empty() {
+        return None;
+    }
+
+    if let Ok(seconds) = value.parse::<f64>() {
+        return normalize_positive_timestamp(seconds);
+    }
+
+    if value.contains(':') {
+        return parse_colon_timestamp(&value);
+    }
+
+    parse_unit_timestamp(&value)
+}
+
+fn parse_colon_timestamp(value: &str) -> Option<f64> {
+    let parts = value.split(':').collect::<Vec<_>>();
+    if parts.len() < 2 || parts.len() > 3 {
+        return None;
+    }
+
+    let mut total = 0.0;
+    for part in parts {
+        if part.is_empty() {
+            return None;
+        }
+        let value = part.parse::<f64>().ok()?;
+        if !value.is_finite() || value < 0.0 {
+            return None;
+        }
+        total = total * 60.0 + value;
+    }
+
+    normalize_positive_timestamp(total)
+}
+
+fn parse_unit_timestamp(value: &str) -> Option<f64> {
+    let mut number = String::new();
+    let mut total = 0.0;
+    let mut saw_unit = false;
+
+    for character in value.chars() {
+        if character.is_ascii_digit() || character == '.' {
+            number.push(character);
+            continue;
+        }
+
+        let multiplier = match character {
+            'h' => 3600.0,
+            'm' => 60.0,
+            's' => 1.0,
+            _ => return None,
+        };
+        if number.is_empty() {
+            return None;
+        }
+        let amount = number.parse::<f64>().ok()?;
+        if !amount.is_finite() || amount < 0.0 {
+            return None;
+        }
+        total += amount * multiplier;
+        number.clear();
+        saw_unit = true;
+    }
+
+    if !saw_unit || !number.is_empty() {
+        return None;
+    }
+
+    normalize_positive_timestamp(total)
+}
+
+fn normalize_positive_timestamp(seconds: f64) -> Option<f64> {
+    if seconds.is_finite() && seconds > 0.0 {
+        Some(seconds)
+    } else {
+        None
+    }
+}
+
+fn format_yt_dlp_timestamp(seconds: f64) -> String {
+    let mut formatted = format!("{seconds:.3}");
+    while formatted.contains('.') && formatted.ends_with('0') {
+        formatted.pop();
+    }
+    if formatted.ends_with('.') {
+        formatted.pop();
+    }
+    formatted
+}
+
 fn canonical_existing_local_path(raw: &str) -> Result<Option<String>, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -1524,5 +1709,59 @@ mod tests {
             .unwrap();
 
         assert_eq!(resolved, canonical.to_string_lossy());
+    }
+
+    #[test]
+    fn extracts_numeric_query_timestamp() {
+        let timestamp =
+            extract_url_start_timestamp("https://youtu.be/-PrRmxn2U-w?si=gsvuw4hTglBy5UQd&t=61");
+
+        assert_eq!(timestamp, Some(61.0));
+    }
+
+    #[test]
+    fn extracts_compact_query_timestamp() {
+        let timestamp = extract_url_start_timestamp("https://example.com/watch?v=abc&t=1h2m3s");
+
+        assert_eq!(timestamp, Some(3723.0));
+    }
+
+    #[test]
+    fn extracts_fragment_timestamp() {
+        let timestamp = extract_url_start_timestamp("https://example.com/video#t=01:02");
+
+        assert_eq!(timestamp, Some(62.0));
+    }
+
+    #[test]
+    fn uses_requested_cut_start_time_when_provided() {
+        let timestamp = resolve_cut_start_time(true, Some(61.0), "https://example.com/video");
+
+        assert_eq!(timestamp, Some(61.0));
+    }
+
+    #[test]
+    fn disables_requested_cut_start_time() {
+        let timestamp = resolve_cut_start_time(false, Some(61.0), "https://example.com/video?t=62");
+
+        assert_eq!(timestamp, None);
+    }
+
+    #[test]
+    fn ignores_invalid_or_zero_timestamp() {
+        assert_eq!(
+            extract_url_start_timestamp("https://example.com/video?t=abc"),
+            None
+        );
+        assert_eq!(
+            extract_url_start_timestamp("https://example.com/video?t=0"),
+            None
+        );
+    }
+
+    #[test]
+    fn formats_yt_dlp_timestamp_without_extra_zeroes() {
+        assert_eq!(format_yt_dlp_timestamp(61.0), "61");
+        assert_eq!(format_yt_dlp_timestamp(61.5), "61.5");
     }
 }

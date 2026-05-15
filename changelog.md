@@ -1,6 +1,7 @@
-# 1.1.0
+# 1.2.0
 
-- download at specific timestap with
+- download at specific timestap with t&=3
+- non blocking rendering
 
 # 1.0.1
 

@@ -44,11 +44,14 @@ const els = Object.seal({
     logBody: document.getElementById('logBody'),
     copyLogsBtn: document.getElementById('copyLogsBtn'),
     leftPanelTitle: document.getElementById('leftPanelTitle'),
+    rightPanelTitle: document.getElementById('rightPanelTitle'),
     downloadView: document.getElementById('downloadView'),
     historyView: document.getElementById('historyView'),
     historyList: document.getElementById('historyList'),
     historyHint: document.getElementById('historyHint'),
     settingsView: document.getElementById('settingsView'),
+    queueProgressView: document.getElementById('queueProgressView'),
+    settingsSideView: document.getElementById('settingsSideView'),
     viewDownloadBtn: document.getElementById('viewDownloadBtn'),
     viewHistoryBtn: document.getElementById('viewHistoryBtn'),
     viewSettingsBtn: document.getElementById('viewSettingsBtn'),
@@ -62,13 +65,14 @@ const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releas
 const presetOptions = Object.freeze([
     {
         key: 'best',
-        selectLabel: 'Best (bv*+ba/b)',
+        selectLabel: 'Best (bestvideo+bestaudio)',
         queueLabel: 'Best',
         menuLabel: 'Download Best',
-        format: 'bv*+ba/b',
+        format: 'bestvideo+bestaudio/best',
         extractAudio: false,
         audioFormat: null,
         transcribeText: false,
+        filenameSuffix: '_best',
     },
     {
         key: '1080',
@@ -79,6 +83,7 @@ const presetOptions = Object.freeze([
         extractAudio: false,
         audioFormat: null,
         transcribeText: false,
+        filenameSuffix: '__max',
     },
     {
         key: 'audio_mp3',
@@ -89,6 +94,7 @@ const presetOptions = Object.freeze([
         extractAudio: true,
         audioFormat: 'mp3',
         transcribeText: false,
+        filenameSuffix: null,
     },
     {
         key: 'audio_opus',
@@ -99,6 +105,7 @@ const presetOptions = Object.freeze([
         extractAudio: true,
         audioFormat: 'opus',
         transcribeText: false,
+        filenameSuffix: null,
     },
     {
         key: 'text',
@@ -109,6 +116,7 @@ const presetOptions = Object.freeze([
         extractAudio: true,
         audioFormat: 'mp3',
         transcribeText: true,
+        filenameSuffix: null,
     },
 ]);
 const presets = Object.freeze(Object.fromEntries(presetOptions.map(preset => [preset.key, preset])));
@@ -511,9 +519,13 @@ const setActiveView = view => {
     els.downloadView.hidden = !isDownload;
     els.historyView.hidden = !isHistory;
     els.settingsView.hidden = !isSettings;
+    els.queueProgressView.hidden = isSettings;
+    els.settingsSideView.hidden = !isSettings;
     els.downloadView.classList.toggle('active', isDownload);
     els.historyView.classList.toggle('active', isHistory);
     els.settingsView.classList.toggle('active', isSettings);
+    els.queueProgressView.classList.toggle('active', !isSettings);
+    els.settingsSideView.classList.toggle('active', isSettings);
 
     els.viewDownloadBtn.classList.toggle('active', isDownload);
     els.viewDownloadBtn.setAttribute('aria-pressed', String(isDownload));
@@ -524,13 +536,19 @@ const setActiveView = view => {
 
     if (isDownload) {
         els.leftPanelTitle.textContent = 'Download';
+        els.rightPanelTitle.textContent = 'Queue / Progress';
+        els.queueBadge.style.display = 'inline-flex';
         els.infoBadge.style.display = 'inline-flex';
     } else if (isHistory) {
         els.leftPanelTitle.textContent = 'History';
+        els.rightPanelTitle.textContent = 'Queue / Progress';
+        els.queueBadge.style.display = 'inline-flex';
         els.infoBadge.style.display = 'none';
         void renderHistory();
     } else {
         els.leftPanelTitle.textContent = 'Settings';
+        els.rightPanelTitle.textContent = 'Options';
+        els.queueBadge.style.display = 'none';
         els.infoBadge.style.display = 'none';
         void refreshYtDlpVersions();
     }
@@ -941,31 +959,41 @@ const syncQueueStatus = async () => {
 };
 
 let loadInfoInFlight = false;
-let loadInfoAborted = false;
+let loadInfoPending = false;
+let loadInfoRequestId = 0;
+
+const canLoadInfoForUrl = url => isValidHttpUrl(url) && Boolean(detectPlatform(url));
 
 const loadInfo = async () => {
-    if (loadInfoInFlight) return;
     const url = els.urlInput.value.trim();
     if (!url) return;
     if (!isValidHttpUrl(url)) {
         shakeUrlInput();
         return;
     }
+    if (loadInfoInFlight) {
+        loadInfoPending = true;
+        return;
+    }
+
+    const requestUrl = url;
+    const requestId = ++loadInfoRequestId;
     loadInfoInFlight = true;
-    loadInfoAborted = false;
-    els.urlInput.disabled = true;
     els.loadInfoBtn.classList.add('loading');
     els.loadInfoBtn.disabled = true;
     setInfoBadge('Loading...');
     try {
-        const info = await invoke('load_info', { url });
-        if (loadInfoAborted) return;
+        const info = await invoke('load_info', { url: requestUrl });
+        if (requestId !== loadInfoRequestId || els.urlInput.value.trim() !== requestUrl) {
+            loadInfoPending = true;
+            return;
+        }
         state.info = info;
-        state.infoUrl = url;
+        state.infoUrl = requestUrl;
         renderInfo();
         setInfoBadge('Ready');
     } catch (err) {
-        if (loadInfoAborted) return;
+        if (requestId !== loadInfoRequestId || els.urlInput.value.trim() !== requestUrl) return;
         if (`${err || ''}`.includes('URL must start with')) {
             shakeUrlInput();
         }
@@ -975,14 +1003,24 @@ const loadInfo = async () => {
         setInfoBadge('Error');
         appendLog(`[info] ${err}`, true);
     } finally {
-        if (!loadInfoAborted) {
-            els.urlInput.disabled = false;
-            els.loadInfoBtn.classList.remove('loading');
-            els.loadInfoBtn.disabled = false;
-        }
         loadInfoInFlight = false;
-        if (!loadInfoAborted) {
+        els.loadInfoBtn.classList.remove('loading');
+        els.loadInfoBtn.disabled = false;
+
+        const nextUrl = els.urlInput.value.trim();
+        const inputChanged = nextUrl !== requestUrl;
+        const shouldReload = (loadInfoPending || inputChanged) && canLoadInfoForUrl(nextUrl);
+        loadInfoPending = false;
+
+        if (requestId === loadInfoRequestId && !inputChanged && document.activeElement === els.loadInfoBtn) {
             els.urlInput.focus();
+        }
+
+        if (shouldReload) {
+            setInfoBadge('Loading...');
+            window.setTimeout(() => {
+                void loadInfo();
+            }, 0);
         }
     }
 };
@@ -1028,22 +1066,24 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
                 transcribe_text: preset.transcribeText,
                 cut_at_timestamp_enabled: cutAtTimestampEnabled,
                 cut_start_time: cutStartTime,
+                filename_suffix: preset.filenameSuffix,
                 title: titleForRequest,
                 thumbnail: thumbnailForRequest,
             },
         });
 
+        const existingJob = state.jobs.get(id);
         updateJob(id, {
             url,
             label,
             thumbnail,
-            state: 'queued',
-            outputPath: null,
+            state: existingJob?.state || 'queued',
+            outputPath: existingJob?.outputPath || null,
             previewResolved: Boolean(hasLoadedInfo || thumbnail || fallbackThumbnail),
             previewLoading: false,
-            percent: 0,
-            speed: '-',
-            eta: '-',
+            percent: existingJob?.percent ?? 0,
+            speed: existingJob?.speed || '-',
+            eta: existingJob?.eta || '-',
             formatLabel: preset.queueLabel,
             cutStartTime,
         });
@@ -1230,6 +1270,8 @@ const bindEvents = () => {
     els.urlInput.addEventListener('input', () => {
         const url = els.urlInput.value.trim();
         if (!url) {
+            loadInfoRequestId += 1;
+            loadInfoPending = false;
             state.info = null;
             state.infoUrl = null;
             renderInfo();
@@ -1262,13 +1304,13 @@ const bindEvents = () => {
         }
         if (key === 'escape') {
             event.preventDefault();
-            loadInfoAborted = true;
+            loadInfoRequestId += 1;
+            loadInfoPending = false;
             els.urlInput.value = '';
             state.info = null;
             state.infoUrl = null;
             renderInfo();
             setInfoBadge('Idle');
-            els.urlInput.disabled = false;
             els.loadInfoBtn.classList.remove('loading');
             els.loadInfoBtn.disabled = false;
             els.urlInput.focus();
@@ -1398,6 +1440,11 @@ const bindBackendEvents = async () => {
         if (state.suppressedJobIds.has(id)) return;
         const patch = { state: status };
         if (output_path) patch.outputPath = output_path;
+        if (status === 'success') {
+            patch.percent = 100;
+            patch.speed = 'done';
+            patch.eta = '-';
+        }
         updateJob(id, patch);
         if (error) appendLog(`[${id}] ${error} (${exit_code ?? '?'})`, true);
     });

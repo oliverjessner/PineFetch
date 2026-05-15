@@ -196,11 +196,31 @@ body {
 }
 
 .panel.right {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    display: flex;
+    flex-direction: column;
     gap: 16px;
     min-height: 0;
     overflow: hidden;
+}
+
+.right-panel-view {
+    display: none;
+    flex: 1;
+    min-height: 0;
+}
+
+.right-panel-view.active {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+#queueProgressView.active .queue-list {
+    flex: 1;
+}
+
+.settings-side-view {
+    justify-content: flex-start;
 }
 
 .panel-header {

@@ -57,6 +57,8 @@ struct DownloadRequest {
     cut_at_timestamp_enabled: bool,
     #[serde(default)]
     cut_start_time: Option<f64>,
+    #[serde(default)]
+    filename_suffix: Option<String>,
     title: Option<String>,
     thumbnail: Option<String>,
 }
@@ -73,6 +75,7 @@ struct DownloadJob {
     title: Option<String>,
     thumbnail: Option<String>,
     cut_start_time: Option<f64>,
+    filename_suffix: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,14 +282,30 @@ fn read_clipboard_text(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn load_info(app: AppHandle, state: State<AppState>, url: String) -> Result<InfoResponse, String> {
+async fn load_info(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<InfoResponse, String> {
     if !is_valid_url(&url) {
         return Err("URL must start with http:// or https://".to_string());
     }
     let yt_dlp = resolve_yt_dlp(&app, &state)?;
+    let deno = resolve_deno_executable(&app);
+
+    tauri::async_runtime::spawn_blocking(move || load_info_with_yt_dlp(yt_dlp, deno, url))
+        .await
+        .map_err(|e| format!("Info task failed: {e}"))?
+}
+
+fn load_info_with_yt_dlp(
+    yt_dlp: String,
+    deno: Option<String>,
+    url: String,
+) -> Result<InfoResponse, String> {
     let mut command = Command::new(yt_dlp);
     command.args(["--dump-json", "--no-playlist", "--no-warnings"]);
-    if let Some(deno) = resolve_deno_executable(&app) {
+    if let Some(deno) = deno {
         command.arg("--js-runtimes");
         command.arg(format!("deno:{deno}"));
     }
@@ -458,6 +477,7 @@ fn enqueue_download(
         title: request.title,
         thumbnail: request.thumbnail,
         cut_start_time,
+        filename_suffix: normalize_filename_suffix(request.filename_suffix.as_deref()),
     };
 
     {
@@ -866,7 +886,7 @@ fn run_download_job(
     let yt_dlp = resolve_yt_dlp(app, state)?;
     let ffmpeg_location = resolve_ffmpeg_location(app, &yt_dlp);
     let deno_path = resolve_deno_executable(app);
-    let output_template = build_output_template(&job.output_dir);
+    let output_template = build_output_template(&job.output_dir, job.filename_suffix.as_deref());
 
     let mut args = vec![
         "--no-playlist".to_string(),
@@ -914,21 +934,8 @@ fn run_download_job(
             app,
             LogEvent {
                 id: job.id.clone(),
-                line: format!(
-                    "[cut] URL timestamp detected; passing --download-sections *{cut_timestamp}-inf"
-                ),
+                line: format!("[cut] URL timestamp detected; downloading full file before local cut at {cut_timestamp}s"),
                 is_error: false,
-            },
-        );
-        args.push("--download-sections".to_string());
-        args.push(format!("*{cut_timestamp}-inf"));
-        emit_progress(
-            app,
-            DownloadProgress {
-                id: job.id.clone(),
-                percent: Some(0.1),
-                speed: Some("section".to_string()),
-                eta: Some("-".to_string()),
             },
         );
     }
@@ -1039,16 +1046,210 @@ fn run_download_job(
     let _ = handle_out.join();
     let _ = handle_err.join();
 
-    let output_path = output_path_capture
+    let mut output_path = output_path_capture
         .lock()
         .ok()
         .and_then(|guard| guard.clone())
         .filter(|candidate| Path::new(candidate).exists());
 
+    if status.success() {
+        if let Some(cut_start_time) = job.cut_start_time {
+            let trimmed_path = trim_downloaded_file(
+                app,
+                job,
+                output_path.as_deref(),
+                ffmpeg_location.as_deref(),
+                cut_start_time,
+            )?;
+            output_path = Some(trimmed_path);
+        }
+    }
+
     Ok(DownloadRunResult {
         exit_code: status.code().unwrap_or(-1),
         output_path,
     })
+}
+
+fn trim_downloaded_file(
+    app: &AppHandle,
+    job: &DownloadJob,
+    output_path: Option<&str>,
+    ffmpeg_location: Option<&str>,
+    cut_start_time: f64,
+) -> Result<String, String> {
+    let input_path = output_path
+        .ok_or_else(|| "Could not determine downloaded file path for timestamp cut".to_string())?;
+    let input_path = Path::new(input_path);
+    if !input_path.exists() {
+        return Err(format!(
+            "Downloaded file not found for timestamp cut: {}",
+            input_path.to_string_lossy()
+        ));
+    }
+
+    let ffmpeg_location =
+        ffmpeg_location.ok_or_else(|| "ffmpeg not available for timestamp cut".to_string())?;
+    let ffmpeg_path = Path::new(ffmpeg_location).join(ffmpeg_tool_name());
+    if !ffmpeg_path.exists() {
+        return Err(format!(
+            "ffmpeg executable not found for timestamp cut: {}",
+            ffmpeg_path.to_string_lossy()
+        ));
+    }
+
+    let cut_timestamp = format_yt_dlp_timestamp(cut_start_time);
+    emit_progress(
+        app,
+        DownloadProgress {
+            id: job.id.clone(),
+            percent: Some(100.0),
+            speed: Some("cutting".to_string()),
+            eta: Some("-".to_string()),
+        },
+    );
+    emit_log(
+        app,
+        LogEvent {
+            id: job.id.clone(),
+            line: format!("[cut] trimming local file from {cut_timestamp}s"),
+            is_error: false,
+        },
+    );
+
+    let final_path = build_timestamp_cut_output_path(input_path, cut_start_time)?;
+    let temp_path = build_cut_sidecar_path(input_path, "cut")?;
+    let backup_path = build_cut_sidecar_path(input_path, "original")?;
+
+    let input_path_str = input_path.to_string_lossy().to_string();
+    let temp_path_str = temp_path.to_string_lossy().to_string();
+
+    let output = Command::new(&ffmpeg_path)
+        .args([
+            "-hide_banner",
+            "-y",
+            "-ss",
+            cut_timestamp.as_str(),
+            "-i",
+            input_path_str.as_str(),
+            "-map",
+            "0",
+            "-c",
+            "copy",
+            "-avoid_negative_ts",
+            "make_zero",
+            temp_path_str.as_str(),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run ffmpeg timestamp cut: {e}"))?;
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        emit_log(
+            app,
+            LogEvent {
+                id: job.id.clone(),
+                line: format!("[ffmpeg] {line}"),
+                is_error: false,
+            },
+        );
+    }
+    for line in String::from_utf8_lossy(&output.stderr).lines() {
+        emit_log(
+            app,
+            LogEvent {
+                id: job.id.clone(),
+                line: format!("[ffmpeg] {line}"),
+                is_error: !output.status.success(),
+            },
+        );
+    }
+
+    if !output.status.success() {
+        let _ = fs::remove_file(&temp_path);
+        let code = output.status.code().unwrap_or(-1);
+        return Err(format!("ffmpeg timestamp cut failed with exit code {code}"));
+    }
+
+    if !temp_path.exists() {
+        return Err("ffmpeg finished but no cut file was created".to_string());
+    }
+
+    fs::rename(input_path, &backup_path)
+        .map_err(|e| format!("Could not back up full file before cut replace: {e}"))?;
+    if final_path.exists() {
+        let _ = fs::remove_file(&final_path);
+    }
+    if let Err(err) = fs::rename(&temp_path, &final_path) {
+        let _ = fs::rename(&backup_path, input_path);
+        return Err(format!("Could not move cut file into final path: {err}"));
+    }
+    let _ = fs::remove_file(&backup_path);
+
+    emit_log(
+        app,
+        LogEvent {
+            id: job.id.clone(),
+            line: format!("[cut] saved: {}", final_path.to_string_lossy()),
+            is_error: false,
+        },
+    );
+
+    Ok(final_path.to_string_lossy().to_string())
+}
+
+fn build_cut_sidecar_path(input_path: &Path, label: &str) -> Result<PathBuf, String> {
+    let parent = input_path
+        .parent()
+        .ok_or_else(|| "Downloaded file has no parent directory".to_string())?;
+    let extension = input_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("tmp");
+    Ok(parent.join(format!(
+        ".pinefetch-{label}-{}.{}",
+        Uuid::new_v4(),
+        extension
+    )))
+}
+
+fn build_timestamp_cut_output_path(
+    input_path: &Path,
+    cut_start_time: f64,
+) -> Result<PathBuf, String> {
+    let parent = input_path
+        .parent()
+        .ok_or_else(|| "Downloaded file has no parent directory".to_string())?;
+    let stem = input_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "Downloaded file has no usable file name".to_string())?;
+    let cut_suffix = format_timestamp_filename_suffix(cut_start_time);
+
+    let mut filename = format!("{stem}{cut_suffix}");
+    if let Some(extension) = input_path.extension().and_then(|value| value.to_str()) {
+        if !extension.is_empty() {
+            filename.push('.');
+            filename.push_str(extension);
+        }
+    }
+
+    Ok(parent.join(filename))
+}
+
+fn format_timestamp_filename_suffix(seconds: f64) -> String {
+    let mut timestamp = format_yt_dlp_timestamp(seconds);
+    timestamp = timestamp
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("_t{timestamp}")
 }
 
 fn parse_after_move_filepath(line: &str) -> Option<String> {
@@ -1356,14 +1557,29 @@ fn run_faster_whisper_transcription(
     Ok(transcript_path_str)
 }
 
-fn build_output_template(output_dir: &str) -> String {
+fn build_output_template(output_dir: &str, filename_suffix: Option<&str>) -> String {
     let mut path = PathBuf::from(output_dir);
     // Use title, but fallback to uploader and id for platforms where title might be missing or duplicate
     // %(title)s - video title
     // %(uploader)s - uploader name
     // %(id)s - unique video ID (ensures uniqueness for Instagram posts from same creator)
-    path.push("%(title)s - %(uploader)s - %(id)s.%(ext)s");
+    let suffix = filename_suffix.unwrap_or("");
+    path.push(format!("%(title)s - %(uploader)s - %(id)s{suffix}.%(ext)s"));
     path.to_string_lossy().to_string()
+}
+
+fn normalize_filename_suffix(raw: Option<&str>) -> Option<String> {
+    let suffix = raw?.trim();
+    if suffix.is_empty()
+        || suffix.len() > 32
+        || !suffix.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
+    {
+        return None;
+    }
+
+    Some(suffix.to_string())
 }
 
 fn emit_queue(app: &AppHandle, state: &AppState) -> Result<(), String> {
@@ -1763,5 +1979,41 @@ mod tests {
     fn formats_yt_dlp_timestamp_without_extra_zeroes() {
         assert_eq!(format_yt_dlp_timestamp(61.0), "61");
         assert_eq!(format_yt_dlp_timestamp(61.5), "61.5");
+    }
+
+    #[test]
+    fn appends_filename_suffix_before_extension() {
+        let template = build_output_template("/tmp/pinefetch", Some("__max"));
+
+        assert!(template.ends_with("%(title)s - %(uploader)s - %(id)s__max.%(ext)s"));
+    }
+
+    #[test]
+    fn rejects_unsafe_filename_suffix() {
+        assert_eq!(
+            normalize_filename_suffix(Some("__max")),
+            Some("__max".to_string())
+        );
+        assert_eq!(normalize_filename_suffix(Some("../max")), None);
+        assert_eq!(normalize_filename_suffix(Some("")), None);
+    }
+
+    #[test]
+    fn appends_timestamp_suffix_to_cut_output_path() {
+        let path = build_timestamp_cut_output_path(
+            Path::new("/tmp/Title - Uploader - id_best.webm"),
+            13.0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            path.to_string_lossy(),
+            "/tmp/Title - Uploader - id_best_t13.webm"
+        );
+    }
+
+    #[test]
+    fn sanitizes_decimal_timestamp_suffix() {
+        assert_eq!(format_timestamp_filename_suffix(13.5), "_t13_5");
     }
 }

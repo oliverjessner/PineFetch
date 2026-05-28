@@ -148,6 +148,12 @@ struct QueueStatus {
     worker_running: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct TxtImportFile {
+    path: String,
+    content: String,
+}
+
 #[derive(Debug, Clone)]
 struct DownloadRunResult {
     exit_code: i32,
@@ -254,6 +260,33 @@ async fn pick_output_dir() -> Result<Option<String>, String> {
         .await
         .map_err(|_| "Dialog task failed".to_string())?
         .map_err(|_| "Dialog closed".to_string())
+}
+
+#[tauri::command]
+async fn pick_txt_file() -> Result<Option<TxtImportFile>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tauri::api::dialog::FileDialogBuilder::new()
+        .add_filter("Text", &["txt"])
+        .pick_file(move |path| {
+            let _ = tx.send(path);
+        });
+
+    let selected_path = tauri::async_runtime::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(|_| "Dialog task failed".to_string())?
+        .map_err(|_| "Dialog closed".to_string())?;
+
+    let Some(path) = selected_path else {
+        return Ok(None);
+    };
+
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("TXT file could not be read: {e}"))?;
+
+    Ok(Some(TxtImportFile {
+        path: path.to_string_lossy().to_string(),
+        content,
+    }))
 }
 
 #[tauri::command]
@@ -1887,6 +1920,7 @@ fn main() {
             set_config,
             cache_last_download_url,
             pick_output_dir,
+            pick_txt_file,
             open_folder,
             open_file_path,
             read_clipboard_text,

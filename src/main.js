@@ -22,6 +22,8 @@ const els = Object.seal({
     urlInput: document.getElementById('urlInput'),
     loadInfoBtn: document.getElementById('loadInfoBtn'),
     startDownloadBtn: document.getElementById('startDownloadBtn'),
+    importTxtBtn: document.getElementById('importTxtBtn'),
+    txtImportStatus: document.getElementById('txtImportStatus'),
     pickDirBtn: document.getElementById('pickDirBtn'),
     saveSettingsBtn: document.getElementById('saveSettingsBtn'),
     openFolderBtn: document.getElementById('openFolderBtn'),
@@ -427,30 +429,116 @@ const cacheLastDownloadedUrl = async url => {
     }
 };
 
+const normalizeHostname = hostname => `${hostname || ''}`.replace(/\.$/, '').toLowerCase();
+
+const isYouTubeHostname = hostname => {
+    const host = normalizeHostname(hostname).replace(/^www\./, '');
+    return host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com');
+};
+
+const getYouTubeVideoIdFromParsedUrl = parsed => {
+    const host = normalizeHostname(parsed.hostname).replace(/^www\./, '');
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+    if (host === 'youtu.be') return pathParts[0] || null;
+    if (host !== 'youtube.com' && !host.endsWith('.youtube.com')) return null;
+
+    const route = (pathParts[0] || '').toLowerCase();
+    if (route === 'watch') return parsed.searchParams.get('v')?.trim() || null;
+    if (route === 'shorts' || route === 'embed' || route === 'v' || route === 'live') {
+        return pathParts[1] || null;
+    }
+
+    return null;
+};
+
 const extractYouTubeVideoId = url => {
     try {
         const parsed = new URL(url);
-        const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
-        if (host === 'youtu.be') {
-            return parsed.pathname.split('/').filter(Boolean)[0] || null;
-        }
-        if (host.endsWith('youtube.com')) {
-            if (parsed.pathname === '/watch') {
-                return parsed.searchParams.get('v');
-            }
-            if (parsed.pathname.startsWith('/shorts/') || parsed.pathname.startsWith('/embed/')) {
-                return parsed.pathname.split('/').filter(Boolean)[1] || null;
-            }
-        }
+        if (!isYouTubeHostname(parsed.hostname)) return null;
+        return getYouTubeVideoIdFromParsedUrl(parsed);
     } catch {
         return null;
     }
-    return null;
 };
 
 const resolveYouTubeThumbnail = url => {
     const videoId = extractYouTubeVideoId(url);
     return videoId ? `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` : null;
+};
+
+const getYouTubeImportTimestampKey = url => {
+    const seconds = extractUrlStartTimestamp(url);
+    return Number.isFinite(Number(seconds)) && Number(seconds) > 0 ? `${Number(seconds)}` : '';
+};
+
+const normalizeYouTubeUrl = value => {
+    const trimmed = `${value || ''}`.trim();
+    if (!trimmed) return null;
+
+    try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        if (!isYouTubeHostname(parsed.hostname)) return null;
+
+        const videoId = getYouTubeVideoIdFromParsedUrl(parsed);
+        if (!videoId) return null;
+
+        parsed.hostname = normalizeHostname(parsed.hostname);
+        const url = parsed.toString();
+        const timestampKey = getYouTubeImportTimestampKey(url);
+        return {
+            url,
+            key: `youtube:${videoId}:${timestampKey}`,
+        };
+    } catch {
+        return null;
+    }
+};
+
+const parseTxtImportLinks = content => {
+    const rawContent = `${content || ''}`;
+    const seenKeys = new Set();
+    const result = {
+        items: [],
+        invalidCount: 0,
+        duplicateCount: 0,
+        ignoredCount: 0,
+        isEmpty: rawContent.trim().length === 0,
+    };
+
+    rawContent.split(/\r\n|\n|\r/).forEach(rawLine => {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) {
+            result.ignoredCount += 1;
+            return;
+        }
+
+        const normalized = normalizeYouTubeUrl(line);
+        if (!normalized) {
+            result.invalidCount += 1;
+            return;
+        }
+
+        if (seenKeys.has(normalized.key)) {
+            result.duplicateCount += 1;
+            return;
+        }
+
+        seenKeys.add(normalized.key);
+        result.items.push(normalized);
+    });
+
+    return result;
+};
+
+const getQueuedYouTubeImportKeys = () => {
+    const keys = new Set();
+    state.jobs.forEach(job => {
+        const normalized = normalizeYouTubeUrl(job.url);
+        if (normalized) keys.add(normalized.key);
+    });
+    return keys;
 };
 
 const setInfoBadge = text => {
@@ -1026,11 +1114,11 @@ const loadInfo = async () => {
 };
 
 const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
-    if (!url) return;
-    if (!invoke) return;
+    if (!url) return null;
+    if (!invoke) return null;
     if (!isValidHttpUrl(url)) {
         shakeUrlInput();
-        return;
+        return null;
     }
 
     const preset = presets[presetKey] || presets.best;
@@ -1097,11 +1185,13 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
             renderInfo();
             els.urlInput.focus();
         }
+        return id;
     } catch (err) {
         if (`${err || ''}`.includes('URL must start with')) {
             shakeUrlInput();
         }
         appendLog(`[queue] ${err}`, true);
+        return null;
     }
 };
 
@@ -1211,6 +1301,104 @@ const openFolder = async () => {
     }
 };
 
+const pluralize = (count, singular, plural = `${singular}s`) => `${count} ${count === 1 ? singular : plural}`;
+
+const formatTxtImportCounts = (importedCount, invalidCount, duplicateCount, failedCount = 0) => {
+    const parts = [
+        `Imported ${pluralize(importedCount, 'link')}.`,
+        `Skipped ${pluralize(invalidCount, 'invalid line')} and ${pluralize(duplicateCount, 'duplicate')}.`,
+    ];
+    if (failedCount > 0) parts.push(`${pluralize(failedCount, 'link')} failed to queue.`);
+    return parts.join(' ');
+};
+
+const setTxtImportStatus = (message, isError = false) => {
+    if (!els.txtImportStatus) return;
+    els.txtImportStatus.textContent = message;
+    els.txtImportStatus.hidden = !message;
+    els.txtImportStatus.classList.toggle('err', Boolean(message && isError));
+    els.txtImportStatus.classList.toggle('success', Boolean(message && !isError));
+};
+
+const setTxtImportBusy = isBusy => {
+    if (!els.importTxtBtn) return;
+    els.importTxtBtn.disabled = isBusy;
+    els.importTxtBtn.textContent = isBusy ? 'Importing...' : 'Import TXT';
+};
+
+const importTxtLinks = async () => {
+    if (!invoke) {
+        setTxtImportStatus('TXT import is only available in the Tauri app.', true);
+        return;
+    }
+
+    setTxtImportStatus('');
+    setTxtImportBusy(true);
+    try {
+        const file = await invoke('pick_txt_file');
+        if (!file) return;
+
+        const parsed = parseTxtImportLinks(file.content);
+        if (parsed.isEmpty) {
+            const message = 'TXT file is empty.';
+            setTxtImportStatus(message, true);
+            appendLog(`[txt-import] ${message}`, true);
+            return;
+        }
+
+        if (parsed.items.length === 0) {
+            const message = `No valid YouTube links found. Skipped ${pluralize(
+                parsed.invalidCount,
+                'invalid line'
+            )} and ${pluralize(parsed.duplicateCount, 'duplicate')}.`;
+            setTxtImportStatus(message, true);
+            appendLog(`[txt-import] ${message}`, true);
+            return;
+        }
+
+        const presetKey = els.presetSelect.value;
+        const queuedKeys = getQueuedYouTubeImportKeys();
+        let importedCount = 0;
+        let duplicateCount = parsed.duplicateCount;
+        let failedCount = 0;
+
+        for (const item of parsed.items) {
+            if (queuedKeys.has(item.key)) {
+                duplicateCount += 1;
+                continue;
+            }
+
+            queuedKeys.add(item.key);
+            const id = await enqueueDownloadForUrl(item.url, presetKey, {
+                preserveComposerState: true,
+            });
+            if (id) {
+                importedCount += 1;
+            } else {
+                failedCount += 1;
+            }
+        }
+
+        const skippedSummary = `Skipped ${pluralize(parsed.invalidCount, 'invalid line')} and ${pluralize(
+            duplicateCount,
+            'duplicate'
+        )}.`;
+        const message =
+            importedCount === 0 && failedCount === 0 && duplicateCount > 0
+                ? `No new YouTube links imported. ${skippedSummary}`
+                : formatTxtImportCounts(importedCount, parsed.invalidCount, duplicateCount, failedCount);
+        const isError = importedCount === 0;
+        setTxtImportStatus(message, isError);
+        appendLog(`[txt-import] ${message}`, isError || failedCount > 0);
+    } catch (err) {
+        const message = `TXT import failed: ${err}`;
+        setTxtImportStatus(message, true);
+        appendLog(`[txt-import] ${message}`, true);
+    } finally {
+        setTxtImportBusy(false);
+    }
+};
+
 const clearQueue = async () => {
     const idsToCancel = new Set(state.queueIds);
     state.jobs.forEach(job => {
@@ -1259,6 +1447,9 @@ const bindEvents = () => {
     els.magicImportEnabled.addEventListener('change', syncMagicImportTriggerState);
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
+    els.importTxtBtn.addEventListener('click', () => {
+        void importTxtLinks();
+    });
     els.queueAutoStartBtn.addEventListener('click', () => {
         void toggleQueueAutoStart();
     });

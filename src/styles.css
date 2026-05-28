@@ -302,6 +302,25 @@ body {
     align-items: center;
 }
 
+.download-actions {
+    flex-wrap: wrap;
+}
+
+.txt-import-status {
+    min-height: 1.1rem;
+    color: var(--muted);
+    font-size: 0.74rem;
+    line-height: 1.45;
+}
+
+.txt-import-status.success {
+    color: var(--accent);
+}
+
+.txt-import-status.err {
+    color: var(--danger);
+}
+
 label {
     color: var(--muted);
     font-size: 0.8rem;

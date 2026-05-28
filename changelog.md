@@ -1,3 +1,7 @@
+# 1.3.0
+
+- adding a txt import
+
 # 1.2.0
 
 - download at specific timestap with t&=3

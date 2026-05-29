@@ -1,7 +1,6 @@
 {
     "name": "pinefetch",
     "version": "1.4.3",
-    "private": true,
     "scripts": {
         "dev": "tauri dev",
         "prepare:whisper-runtime": "bash scripts/prepare-whisper-runtime.sh",

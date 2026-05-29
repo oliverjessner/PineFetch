@@ -1,6 +1,7 @@
 # 1.4.3
 
 - fix presets for sent pinefect-link-dump links
+- much better history
 - history in sqlite
 
 # 1.4.0

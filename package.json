@@ -1,6 +1,6 @@
 {
     "name": "pinefetch",
-    "version": "1.4.0",
+    "version": "1.4.3",
     "private": true,
     "scripts": {
         "dev": "tauri dev",
@@ -24,6 +24,6 @@
         }
     ],
     "dependencies": {
-        "pinefetch-designsystem": "^0.0.3"
+        "pinefetch-designsystem": "^0.1.1"
     }
 }

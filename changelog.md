@@ -1,3 +1,8 @@
+# 1.4.3
+
+- fix presets for sent pinefect-link-dump links
+- history in sqlite
+
 # 1.4.0
 
 - using https://github.com/oliverjessner/PineFetch-Designsystem

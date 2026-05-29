@@ -134,6 +134,10 @@ body {
     flex-wrap: wrap;
 }
 
+#importTxtBtn {
+    margin-left: auto;
+}
+
 #loadInfoBtn {
     min-width: 140px;
 }

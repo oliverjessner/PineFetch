@@ -146,6 +146,17 @@ const presetOptions = Object.freeze([
     },
 ]);
 const presets = Object.freeze(Object.fromEntries(presetOptions.map(preset => [preset.key, preset])));
+const normalizePresetKey = key => (presets[key] ? key : presetOptions[0]?.key || 'best');
+const getSelectedPresetKey = () => normalizePresetKey(els.presetSelect.value);
+const findPresetForDownloadJob = job =>
+    presetOptions.find(
+        preset =>
+            job?.format === preset.format &&
+            Boolean(job?.extract_audio) === preset.extractAudio &&
+            (job?.audio_format ?? null) === (preset.audioFormat ?? null) &&
+            Boolean(job?.transcribe_text) === preset.transcribeText &&
+            (job?.filename_suffix ?? null) === (preset.filenameSuffix ?? null)
+    ) || null;
 const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
 const cancellableJobStates = new Set(['downloading', 'transcribing']);
 const queueBusyJobStates = new Set(['downloading', 'transcribing', 'cancelling']);
@@ -355,6 +366,7 @@ const getPlatformIconElement = platform => {
 
 const appendTextSpans = (parent, values) => {
     values.forEach(value => {
+        if (value === null || value === undefined || value === '') return;
         const span = document.createElement('span');
         span.textContent = value;
         parent.appendChild(span);
@@ -680,7 +692,7 @@ const setActiveView = view => {
 };
 
 const renderPresetOptions = () => {
-    const selectedPresetKey = presets[els.presetSelect.value] ? els.presetSelect.value : null;
+    const selectedPresetKey = normalizePresetKey(els.presetSelect.value);
     els.presetSelect.replaceChildren();
 
     presetOptions.forEach(preset => {
@@ -690,7 +702,7 @@ const renderPresetOptions = () => {
         els.presetSelect.appendChild(option);
     });
 
-    els.presetSelect.value = selectedPresetKey || presetOptions[0]?.key || '';
+    els.presetSelect.value = selectedPresetKey;
 };
 
 const renderQueueContextMenu = () => {
@@ -925,6 +937,20 @@ const formatHistoryDate = timestamp => {
     }
 };
 
+const formatUploadDate = uploadDate => {
+    const raw = `${uploadDate || ''}`.trim();
+    if (!raw) return null;
+
+    if (/^\d{8}$/.test(raw)) {
+        const year = raw.slice(0, 4);
+        const month = raw.slice(4, 6);
+        const day = raw.slice(6, 8);
+        return `${year}-${month}-${day}`;
+    }
+
+    return raw;
+};
+
 const renderHistory = async () => {
     if (!invoke) {
         els.historyList.replaceChildren();
@@ -970,14 +996,20 @@ const renderHistory = async () => {
 
             const title = document.createElement('div');
             title.className = 'pf-history-title';
-            title.textContent = entry.title || entry.url;
+            title.textContent = entry.title || entry.filename || entry.url;
             content.appendChild(title);
 
             const meta = document.createElement('div');
             meta.className = 'pf-history-meta';
             const dateStr = formatHistoryDate(entry.completed_at);
             const platform = entry.platform || detectPlatform(entry.url) || 'unknown';
-            appendTextSpans(meta, [platform, dateStr]);
+            const uploadDate = formatUploadDate(entry.upload_date);
+            appendTextSpans(meta, [
+                platform,
+                entry.filename || '',
+                uploadDate ? `uploaded ${uploadDate}` : '',
+                dateStr,
+            ]);
             content.appendChild(meta);
 
             item.appendChild(content);
@@ -1062,10 +1094,27 @@ const syncConfig = async () => {
         state.config = await invoke('get_config');
         els.outputDir.value = state.config.default_output_dir || '';
         els.ytDlpPath.value = state.config.yt_dlp_path || defaultYtDlpPath;
+        els.presetSelect.value = normalizePresetKey(state.config.selected_preset_key);
         els.magicImportEnabled.checked = state.config.magic_import_enabled ?? true;
         els.cutAtTimestampEnabled.checked = state.config.cut_at_timestamp_enabled ?? true;
         syncMagicImportTriggerState();
         void refreshYtDlpVersions();
+    } catch (err) {
+        appendLog(`[config] ${err}`, true);
+    }
+};
+
+const persistSelectedPresetKey = async () => {
+    const selectedPresetKey = getSelectedPresetKey();
+    state.config = {
+        ...(state.config || {}),
+        selected_preset_key: selectedPresetKey,
+    };
+
+    if (!invoke) return;
+
+    try {
+        state.config = await invoke('set_selected_preset_key', { presetKey: selectedPresetKey });
     } catch (err) {
         appendLog(`[config] ${err}`, true);
     }
@@ -1433,6 +1482,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     const label = options.label ?? (hasLoadedInfo ? displayLabel || url : url);
     const titleForRequest = hasLoadedInfo ? state.info?.title || null : null;
     const thumbnailForRequest = hasLoadedInfo ? state.info?.thumbnail || null : (options.thumbnail ?? null);
+    const uploadDateForRequest = hasLoadedInfo ? state.info?.upload_date || null : null;
 
     try {
         const id = await invoke('enqueue_download', {
@@ -1448,6 +1498,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
                 filename_suffix: preset.filenameSuffix,
                 title: titleForRequest,
                 thumbnail: thumbnailForRequest,
+                upload_date: uploadDateForRequest,
             },
         });
 
@@ -1516,7 +1567,7 @@ const removeJobFromQueue = async job => {
 
 const enqueueDownload = async () => {
     const url = els.urlInput.value.trim();
-    const presetKey = els.presetSelect.value;
+    const presetKey = getSelectedPresetKey();
     await enqueueDownloadForUrl(url, presetKey);
 };
 
@@ -1547,11 +1598,13 @@ const startQueueProcessing = async () => {
 };
 
 const saveSettings = async () => {
+    const selectedPresetKey = getSelectedPresetKey();
     try {
         await invoke('set_config', {
             config: {
                 yt_dlp_path: els.ytDlpPath.value.trim() || null,
                 default_output_dir: els.outputDir.value.trim() || null,
+                selected_preset_key: selectedPresetKey,
                 magic_import_enabled: Boolean(els.magicImportEnabled.checked),
                 cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
                 last_download_url: state.config?.last_download_url || null,
@@ -1561,6 +1614,7 @@ const saveSettings = async () => {
             ...(state.config || {}),
             yt_dlp_path: els.ytDlpPath.value.trim() || null,
             default_output_dir: els.outputDir.value.trim() || null,
+            selected_preset_key: selectedPresetKey,
             magic_import_enabled: Boolean(els.magicImportEnabled.checked),
             cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
             last_download_url: state.config?.last_download_url || null,
@@ -1647,7 +1701,7 @@ const importTxtLinks = async () => {
             return;
         }
 
-        const presetKey = els.presetSelect.value;
+        const presetKey = getSelectedPresetKey();
         const queuedKeys = getQueuedYouTubeImportKeys();
         let importedCount = 0;
         let duplicateCount = parsed.duplicateCount;
@@ -1738,6 +1792,9 @@ const bindEvents = () => {
     els.magicImportEnabled.addEventListener('change', syncMagicImportTriggerState);
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
+    els.presetSelect.addEventListener('change', () => {
+        void persistSelectedPresetKey();
+    });
     els.importTxtBtn.addEventListener('click', () => {
         void importTxtLinks();
     });
@@ -1922,6 +1979,7 @@ const bindBackendEvents = async () => {
         event.payload.forEach(job => {
             if (state.suppressedJobIds.has(job.id)) return;
             const existing = state.jobs.get(job.id);
+            const preset = findPresetForDownloadJob(job);
             updateJob(job.id, {
                 url: job.url,
                 label: existing?.label || job.url,
@@ -1931,7 +1989,7 @@ const bindBackendEvents = async () => {
                 cutStartTime: job.cut_start_time ?? null,
                 previewResolved: existing?.previewResolved || Boolean(resolveYouTubeThumbnail(job.url)),
                 previewLoading: existing?.previewLoading || false,
-                formatLabel: existing?.formatLabel || job.format,
+                formatLabel: existing?.formatLabel || preset?.queueLabel || job.format,
             });
             maybeHydrateQueueThumbnail(job.id);
         });

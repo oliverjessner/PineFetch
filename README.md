@@ -68,6 +68,8 @@ http://127.0.0.1:2255
 
 Create a connection secret in **Settings → Link Dump Connections**. Copy it immediately; PineFetch stores only a hash and will not show the secret again.
 
+Links sent through Link Dump are queued with the currently selected PineFetch preset.
+
 Single link:
 
 ```bash

@@ -33,6 +33,8 @@ fn default_cut_at_timestamp_enabled() -> bool {
 struct AppConfig {
     yt_dlp_path: Option<String>,
     default_output_dir: Option<String>,
+    #[serde(default)]
+    selected_preset_key: Option<String>,
     #[serde(default = "default_magic_import_enabled")]
     magic_import_enabled: bool,
     #[serde(default = "default_cut_at_timestamp_enabled")]
@@ -46,6 +48,7 @@ impl Default for AppConfig {
         Self {
             yt_dlp_path: None,
             default_output_dir: None,
+            selected_preset_key: Some(DEFAULT_DOWNLOAD_PRESET_KEY.to_string()),
             magic_import_enabled: default_magic_import_enabled(),
             cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
@@ -69,6 +72,8 @@ struct DownloadRequest {
     filename_suffix: Option<String>,
     title: Option<String>,
     thumbnail: Option<String>,
+    #[serde(default)]
+    upload_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +87,7 @@ struct DownloadJob {
     transcribe_text: bool,
     title: Option<String>,
     thumbnail: Option<String>,
+    upload_date: Option<String>,
     cut_start_time: Option<f64>,
     filename_suffix: Option<String>,
 }
@@ -127,6 +133,7 @@ struct InfoResponse {
     uploader: Option<String>,
     duration: Option<i64>,
     thumbnail: Option<String>,
+    upload_date: Option<String>,
     formats: Option<Vec<InfoFormat>>,
     description: Option<String>,
     id: Option<String>,
@@ -136,11 +143,20 @@ struct InfoResponse {
 struct HistoryEntry {
     id: String,
     url: String,
+    #[serde(default)]
     title: Option<String>,
+    #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
     thumbnail: Option<String>,
+    #[serde(default)]
+    upload_date: Option<String>,
+    #[serde(default)]
     platform: Option<String>,
+    #[serde(default)]
     output_path: Option<String>,
     created_at: u64,
+    #[serde(default)]
     completed_at: Option<u64>,
 }
 
@@ -318,8 +334,60 @@ const LINK_DUMP_DEFAULT_HOST: &str = "127.0.0.1";
 const LINK_DUMP_DEFAULT_PORT: u16 = 2255;
 const LINK_DUMP_MAX_BATCH_SIZE: usize = 500;
 const LINK_DUMP_MAX_BODY_BYTES: usize = 1024 * 1024;
-const LINK_DUMP_DEFAULT_FORMAT: &str = "bestvideo+bestaudio/best";
-const LINK_DUMP_DEFAULT_FILENAME_SUFFIX: &str = "_best";
+const DEFAULT_DOWNLOAD_PRESET_KEY: &str = "best";
+
+#[derive(Debug, Clone, Copy)]
+struct DownloadPreset {
+    key: &'static str,
+    format: &'static str,
+    extract_audio: bool,
+    audio_format: Option<&'static str>,
+    transcribe_text: bool,
+    filename_suffix: Option<&'static str>,
+}
+
+const DOWNLOAD_PRESETS: &[DownloadPreset] = &[
+    DownloadPreset {
+        key: "best",
+        format: "bestvideo+bestaudio/best",
+        extract_audio: false,
+        audio_format: None,
+        transcribe_text: false,
+        filename_suffix: Some("_best"),
+    },
+    DownloadPreset {
+        key: "1080",
+        format: "bv*[height<=1080]+ba/b[height<=1080]",
+        extract_audio: false,
+        audio_format: None,
+        transcribe_text: false,
+        filename_suffix: Some("__max"),
+    },
+    DownloadPreset {
+        key: "audio_mp3",
+        format: "ba/b",
+        extract_audio: true,
+        audio_format: Some("mp3"),
+        transcribe_text: false,
+        filename_suffix: None,
+    },
+    DownloadPreset {
+        key: "audio_opus",
+        format: "ba/b",
+        extract_audio: true,
+        audio_format: Some("opus"),
+        transcribe_text: false,
+        filename_suffix: None,
+    },
+    DownloadPreset {
+        key: "text",
+        format: "ba/b",
+        extract_audio: true,
+        audio_format: Some("mp3"),
+        transcribe_text: true,
+        filename_suffix: None,
+    },
+];
 
 struct AppState {
     config: Mutex<AppConfig>,
@@ -351,6 +419,29 @@ impl AppState {
     }
 }
 
+fn download_preset_for_key(preset_key: Option<&str>) -> &'static DownloadPreset {
+    let key = preset_key
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .unwrap_or(DEFAULT_DOWNLOAD_PRESET_KEY);
+
+    DOWNLOAD_PRESETS
+        .iter()
+        .find(|preset| preset.key == key)
+        .unwrap_or(&DOWNLOAD_PRESETS[0])
+}
+
+fn normalize_download_preset_key(preset_key: Option<&str>) -> String {
+    download_preset_for_key(preset_key).key.to_string()
+}
+
+fn normalize_app_config(mut config: AppConfig) -> AppConfig {
+    config.selected_preset_key = Some(normalize_download_preset_key(
+        config.selected_preset_key.as_deref(),
+    ));
+    config
+}
+
 #[tauri::command]
 fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
     let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
@@ -359,11 +450,29 @@ fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
 
 #[tauri::command]
 fn set_config(app: AppHandle, state: State<AppState>, config: AppConfig) -> Result<(), String> {
+    let config = normalize_app_config(config);
     {
         let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
         *cfg = config.clone();
     }
     save_config(&app, &config)
+}
+
+#[tauri::command]
+fn set_selected_preset_key(
+    app: AppHandle,
+    state: State<AppState>,
+    preset_key: String,
+) -> Result<AppConfig, String> {
+    let selected_preset_key = normalize_download_preset_key(Some(&preset_key));
+    let next_config = {
+        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        cfg.selected_preset_key = Some(selected_preset_key);
+        cfg.clone()
+    };
+
+    save_config(&app, &next_config)?;
+    Ok(next_config)
 }
 
 #[tauri::command]
@@ -532,6 +641,11 @@ fn load_info_with_yt_dlp(
             .get("thumbnail")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        upload_date: value
+            .get("upload_date")
+            .or_else(|| value.get("release_date"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         formats,
         description: value
             .get("description")
@@ -660,6 +774,7 @@ fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<Down
         transcribe_text: request.transcribe_text,
         title: request.title,
         thumbnail: request.thumbnail,
+        upload_date: request.upload_date,
         cut_start_time,
         filename_suffix: normalize_filename_suffix(request.filename_suffix.as_deref()),
     })
@@ -761,8 +876,7 @@ fn cancel_download(app: AppHandle, state: State<AppState>, id: String) -> Result
 
 #[tauri::command]
 fn get_history(state: State<AppState>) -> Result<Vec<HistoryEntry>, String> {
-    let history = state.history.lock().map_err(|_| "History lock poisoned")?;
-    Ok(history.clone())
+    list_history_entries_from_db(state.inner())
 }
 
 fn detect_platform(url: &str) -> Option<String> {
@@ -792,29 +906,99 @@ fn detect_platform(url: &str) -> Option<String> {
     None
 }
 
+fn current_timestamp_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn filename_from_path(path: Option<&str>) -> Option<String> {
+    let filename = Path::new(path?)
+        .file_name()
+        .and_then(|value| value.to_str())?
+        .trim();
+    if filename.is_empty() {
+        None
+    } else {
+        Some(filename.to_string())
+    }
+}
+
+fn title_from_filename(filename: Option<&str>) -> Option<String> {
+    let stem = Path::new(filename?)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(filename?)
+        .trim();
+    if stem.is_empty() {
+        None
+    } else {
+        Some(stem.to_string())
+    }
+}
+
+fn trim_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn hydrate_history_metadata(
+    app: &AppHandle,
+    state: &AppState,
+    job: &DownloadJob,
+    filename: Option<&str>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let mut title = trim_optional_string(job.title.clone());
+    let mut thumbnail = trim_optional_string(job.thumbnail.clone());
+    let mut upload_date = trim_optional_string(job.upload_date.clone());
+
+    if title.is_none() || thumbnail.is_none() || upload_date.is_none() {
+        if let Ok(yt_dlp) = resolve_yt_dlp(app, state) {
+            let deno = resolve_deno_executable(app);
+            if let Ok(info) = load_info_with_yt_dlp(yt_dlp, deno, job.url.clone()) {
+                if title.is_none() {
+                    title = trim_optional_string(info.title);
+                }
+                if thumbnail.is_none() {
+                    thumbnail = trim_optional_string(info.thumbnail);
+                }
+                if upload_date.is_none() {
+                    upload_date = trim_optional_string(info.upload_date);
+                }
+            }
+        }
+    }
+
+    if title.is_none() {
+        title = title_from_filename(filename);
+    }
+
+    (title, thumbnail, upload_date)
+}
+
 fn add_history_entry_on_success(
     app: &AppHandle,
     state: &AppState,
     job: &DownloadJob,
     output_path: Option<&str>,
 ) {
+    let filename = filename_from_path(output_path);
+    let (title, thumbnail, upload_date) =
+        hydrate_history_metadata(app, state, job, filename.as_deref());
+    let now = current_timestamp_millis();
     let entry = HistoryEntry {
         id: Uuid::new_v4().to_string(),
         url: job.url.clone(),
-        title: job.title.clone(),
-        thumbnail: job.thumbnail.clone(),
+        title,
+        filename,
+        thumbnail,
+        upload_date,
         platform: detect_platform(&job.url),
         output_path: output_path.map(|s| s.to_string()),
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64,
-        completed_at: Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64,
-        ),
+        created_at: now,
+        completed_at: Some(now),
     };
 
     let mut history = match state.history.lock() {
@@ -822,34 +1006,26 @@ fn add_history_entry_on_success(
         Err(_) => return,
     };
 
-    history.push(entry);
-
-    // Clone for saving, then drop lock
-    let history_clone = history.clone();
+    history.push(entry.clone());
     drop(history);
-    let _ = save_history(app, &history_clone);
+    let _ = insert_history_entry_in_db(state, &entry);
 }
 
 #[tauri::command]
-fn remove_history_entry(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
+fn remove_history_entry(state: State<AppState>, id: String) -> Result<(), String> {
     let mut history = state.history.lock().map_err(|_| "History lock poisoned")?;
-    let before = history.len();
     history.retain(|entry| entry.id != id);
-    let removed = before != history.len();
-    if removed {
-        let history_clone = history.clone();
-        drop(history);
-        save_history(&app, &history_clone)?;
-    }
+    drop(history);
+    delete_history_entry_from_db(state.inner(), &id)?;
     Ok(())
 }
 
 #[tauri::command]
-fn clear_history(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+fn clear_history(state: State<AppState>) -> Result<(), String> {
     let mut history = state.history.lock().map_err(|_| "History lock poisoned")?;
     history.clear();
     drop(history);
-    save_history(&app, &[])?;
+    clear_history_entries_in_db(state.inner())?;
     Ok(())
 }
 
@@ -2025,35 +2201,154 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("config.json"))
 }
 
-fn history_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn legacy_history_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = tauri::api::path::app_data_dir(&app.config()).ok_or("Data directory unavailable")?;
     fs::create_dir_all(&dir).map_err(|e| format!("Data dir create failed: {e}"))?;
     Ok(dir.join("history.json"))
 }
 
-fn load_history(app: &AppHandle) -> Vec<HistoryEntry> {
-    if let Ok(path) = history_path(app) {
+fn load_legacy_history_json(app: &AppHandle) -> Vec<HistoryEntry> {
+    if let Ok(path) = legacy_history_path(app) {
         if let Ok(raw) = fs::read_to_string(path) {
             if let Ok(history) = serde_json::from_str::<Vec<HistoryEntry>>(&raw) {
-                return history;
+                return history.into_iter().map(normalize_history_entry).collect();
             }
         }
     }
     Vec::new()
 }
 
-fn save_history(app: &AppHandle, history: &[HistoryEntry]) -> Result<(), String> {
-    let path = history_path(app)?;
-    let data = serde_json::to_string_pretty(history)
-        .map_err(|e| format!("History serialize failed: {e}"))?;
-    fs::write(path, data).map_err(|e| format!("History write failed: {e}"))
+fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
+    entry.title = trim_optional_string(entry.title);
+    entry.filename = trim_optional_string(entry.filename)
+        .or_else(|| filename_from_path(entry.output_path.as_deref()));
+    entry.thumbnail = trim_optional_string(entry.thumbnail);
+    entry.upload_date = trim_optional_string(entry.upload_date);
+    entry.platform = trim_optional_string(entry.platform).or_else(|| detect_platform(&entry.url));
+    entry.output_path = trim_optional_string(entry.output_path);
+    if entry.title.is_none() {
+        entry.title = title_from_filename(entry.filename.as_deref());
+    }
+    entry
+}
+
+fn millis_to_i64(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
+}
+
+fn i64_to_millis(value: i64) -> u64 {
+    if value < 0 {
+        0
+    } else {
+        value as u64
+    }
+}
+
+fn optional_i64_to_millis(value: Option<i64>) -> Option<u64> {
+    value.map(i64_to_millis)
+}
+
+fn list_history_entries_from_db(state: &AppState) -> Result<Vec<HistoryEntry>, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, url, title, filename, thumbnail, upload_date, platform, output_path, created_at, completed_at
+             FROM history_entries
+             ORDER BY COALESCE(completed_at, created_at) DESC",
+        )
+        .map_err(|e| format!("History read failed: {e}"))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            let created_at: i64 = row.get(8)?;
+            let completed_at: Option<i64> = row.get(9)?;
+            Ok(HistoryEntry {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                title: row.get(2)?,
+                filename: row.get(3)?,
+                thumbnail: row.get(4)?,
+                upload_date: row.get(5)?,
+                platform: row.get(6)?,
+                output_path: row.get(7)?,
+                created_at: i64_to_millis(created_at),
+                completed_at: optional_i64_to_millis(completed_at),
+            })
+        })
+        .map_err(|e| format!("History read failed: {e}"))?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(normalize_history_entry(
+            row.map_err(|e| format!("History read failed: {e}"))?,
+        ));
+    }
+    Ok(entries)
+}
+
+fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<(), String> {
+    let entry = normalize_history_entry(entry.clone());
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.execute(
+        "INSERT OR REPLACE INTO history_entries (
+            id,
+            url,
+            title,
+            filename,
+            thumbnail,
+            upload_date,
+            platform,
+            output_path,
+            created_at,
+            completed_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            entry.id,
+            entry.url,
+            entry.title,
+            entry.filename,
+            entry.thumbnail,
+            entry.upload_date,
+            entry.platform,
+            entry.output_path,
+            millis_to_i64(entry.created_at),
+            entry.completed_at.map(millis_to_i64),
+        ],
+    )
+    .map_err(|e| format!("History insert failed: {e}"))?;
+    Ok(())
+}
+
+fn delete_history_entry_from_db(state: &AppState, id: &str) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.execute("DELETE FROM history_entries WHERE id = ?1", params![id])
+        .map_err(|e| format!("History delete failed: {e}"))?;
+    Ok(())
+}
+
+fn clear_history_entries_in_db(state: &AppState) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.execute("DELETE FROM history_entries", [])
+        .map_err(|e| format!("History clear failed: {e}"))?;
+    Ok(())
+}
+
+fn migrate_legacy_history_json(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    if !list_history_entries_from_db(state)?.is_empty() {
+        return Ok(());
+    }
+
+    for entry in load_legacy_history_json(app) {
+        insert_history_entry_in_db(state, &entry)?;
+    }
+    Ok(())
 }
 
 fn load_config(app: &AppHandle) -> AppConfig {
     if let Ok(path) = config_path(app) {
         if let Ok(raw) = fs::read_to_string(path) {
             if let Ok(cfg) = serde_json::from_str::<AppConfig>(&raw) {
-                return cfg;
+                return normalize_app_config(cfg);
             }
         }
     }
@@ -2120,25 +2415,26 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             deleted_at TEXT
         );
 
-        CREATE TABLE IF NOT EXISTS link_dump_request_log (
+        DROP TABLE IF EXISTS link_dump_request_log;
+
+        CREATE TABLE IF NOT EXISTS history_entries (
             id TEXT PRIMARY KEY,
-            secret_id TEXT,
-            endpoint TEXT NOT NULL,
-            received_count INTEGER NOT NULL DEFAULT 0,
-            added_count INTEGER NOT NULL DEFAULT 0,
-            skipped_count INTEGER NOT NULL DEFAULT 0,
-            invalid_count INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL,
-            error_message TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (secret_id) REFERENCES link_dump_secrets(id)
+            url TEXT NOT NULL,
+            title TEXT,
+            filename TEXT,
+            thumbnail TEXT,
+            upload_date TEXT,
+            platform TEXT,
+            output_path TEXT,
+            created_at INTEGER NOT NULL,
+            completed_at INTEGER
         );
 
         CREATE INDEX IF NOT EXISTS idx_link_dump_secrets_active
             ON link_dump_secrets(revoked_at, deleted_at);
 
-        CREATE INDEX IF NOT EXISTS idx_link_dump_request_log_created_at
-            ON link_dump_request_log(created_at);
+        CREATE INDEX IF NOT EXISTS idx_history_entries_completed_at
+            ON history_entries(completed_at, created_at);
         "#,
     )
 }
@@ -2401,44 +2697,6 @@ fn validate_link_dump_secret(
     }
 
     Ok(matched)
-}
-
-fn insert_link_dump_request_log(
-    state: &AppState,
-    secret_id: Option<&str>,
-    endpoint: &str,
-    summary: &LinkDumpQueueSummary,
-    status: &str,
-    error_message: Option<&str>,
-) {
-    let Ok(conn) = state.db.lock() else {
-        return;
-    };
-    let _ = conn.execute(
-        "INSERT INTO link_dump_request_log (
-            id,
-            secret_id,
-            endpoint,
-            received_count,
-            added_count,
-            skipped_count,
-            invalid_count,
-            status,
-            error_message,
-            created_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))",
-        params![
-            Uuid::new_v4().to_string(),
-            secret_id,
-            endpoint,
-            summary.received as i64,
-            summary.added as i64,
-            summary.skipped as i64,
-            summary.invalid as i64,
-            status,
-            error_message
-        ],
-    );
 }
 
 fn snapshot_link_dump_server_status(state: &AppState) -> LinkDumpServerStatus {
@@ -2876,25 +3134,10 @@ fn handle_add_youtube_link(
     stream: &mut TcpStream,
     body: &[u8],
 ) -> Result<(), String> {
-    let endpoint = "/addYoutubeLinkToQueue/";
     let parsed = serde_json::from_slice::<AddYoutubeLinkRequestBody>(body);
     let parsed = match parsed {
         Ok(parsed) => parsed,
         Err(_) => {
-            let summary = LinkDumpQueueSummary {
-                received: 1,
-                added: 0,
-                skipped: 0,
-                invalid: 1,
-            };
-            insert_link_dump_request_log(
-                state,
-                None,
-                endpoint,
-                &summary,
-                "error",
-                Some("Invalid JSON"),
-            );
             return write_json_response(
                 stream,
                 400,
@@ -2903,14 +3146,7 @@ fn handle_add_youtube_link(
         }
     };
 
-    let Some(valid_secret) = validate_link_dump_secret(state, parsed.secret.as_deref())? else {
-        let summary = LinkDumpQueueSummary {
-            received: 1,
-            added: 0,
-            skipped: 0,
-            invalid: 0,
-        };
-        insert_link_dump_request_log(state, None, endpoint, &summary, "unauthorized", None);
+    let Some(_valid_secret) = validate_link_dump_secret(state, parsed.secret.as_deref())? else {
         println!("Link Dump request rejected");
         return write_json_response(
             stream,
@@ -2920,20 +3156,6 @@ fn handle_add_youtube_link(
     };
 
     let Some(url) = parsed.url.as_deref().and_then(normalize_youtube_url) else {
-        let summary = LinkDumpQueueSummary {
-            received: 1,
-            added: 0,
-            skipped: 0,
-            invalid: 1,
-        };
-        insert_link_dump_request_log(
-            state,
-            Some(&valid_secret.id),
-            endpoint,
-            &summary,
-            "error",
-            Some("Invalid YouTube URL"),
-        );
         return write_json_response(
             stream,
             400,
@@ -2948,28 +3170,12 @@ fn handle_add_youtube_link(
         invalid: 0,
     };
     if add_normalized_youtube_urls_to_queue(app, state, &[url], &mut summary).is_err() {
-        insert_link_dump_request_log(
-            state,
-            Some(&valid_secret.id),
-            endpoint,
-            &summary,
-            "error",
-            Some("Internal server error"),
-        );
         return write_json_response(
             stream,
             500,
             &json!({ "ok": false, "error": "Internal server error" }),
         );
     }
-    insert_link_dump_request_log(
-        state,
-        Some(&valid_secret.id),
-        endpoint,
-        &summary,
-        "ok",
-        None,
-    );
     println!("Link Dump request accepted");
     println!("Added {} links to queue", summary.added);
     write_json_response(
@@ -2990,25 +3196,10 @@ fn handle_add_youtube_links(
     stream: &mut TcpStream,
     body: &[u8],
 ) -> Result<(), String> {
-    let endpoint = "/addYoutubeLinksToQueue/";
     let parsed = serde_json::from_slice::<AddYoutubeLinksRequestBody>(body);
     let parsed = match parsed {
         Ok(parsed) => parsed,
         Err(_) => {
-            let summary = LinkDumpQueueSummary {
-                received: 0,
-                added: 0,
-                skipped: 0,
-                invalid: 0,
-            };
-            insert_link_dump_request_log(
-                state,
-                None,
-                endpoint,
-                &summary,
-                "error",
-                Some("Invalid JSON"),
-            );
             return write_json_response(
                 stream,
                 400,
@@ -3017,14 +3208,7 @@ fn handle_add_youtube_links(
         }
     };
 
-    let Some(valid_secret) = validate_link_dump_secret(state, parsed.secret.as_deref())? else {
-        let summary = LinkDumpQueueSummary {
-            received: parsed.urls.as_ref().map(|urls| urls.len()).unwrap_or(0),
-            added: 0,
-            skipped: 0,
-            invalid: 0,
-        };
-        insert_link_dump_request_log(state, None, endpoint, &summary, "unauthorized", None);
+    let Some(_valid_secret) = validate_link_dump_secret(state, parsed.secret.as_deref())? else {
         println!("Link Dump request rejected");
         return write_json_response(
             stream,
@@ -3035,20 +3219,6 @@ fn handle_add_youtube_links(
 
     let urls = parsed.urls.unwrap_or_default();
     if urls.is_empty() {
-        let summary = LinkDumpQueueSummary {
-            received: 0,
-            added: 0,
-            skipped: 0,
-            invalid: 0,
-        };
-        insert_link_dump_request_log(
-            state,
-            Some(&valid_secret.id),
-            endpoint,
-            &summary,
-            "error",
-            Some("No valid YouTube URLs"),
-        );
         return write_json_response(
             stream,
             400,
@@ -3082,14 +3252,6 @@ fn handle_add_youtube_links(
     }
 
     if normalized_urls.is_empty() {
-        insert_link_dump_request_log(
-            state,
-            Some(&valid_secret.id),
-            endpoint,
-            &summary,
-            "error",
-            Some("No valid YouTube URLs"),
-        );
         return write_json_response(
             stream,
             400,
@@ -3098,14 +3260,6 @@ fn handle_add_youtube_links(
     }
 
     if add_normalized_youtube_urls_to_queue(app, state, &normalized_urls, &mut summary).is_err() {
-        insert_link_dump_request_log(
-            state,
-            Some(&valid_secret.id),
-            endpoint,
-            &summary,
-            "error",
-            Some("Internal server error"),
-        );
         return write_json_response(
             stream,
             500,
@@ -3113,14 +3267,6 @@ fn handle_add_youtube_links(
         );
     }
 
-    insert_link_dump_request_log(
-        state,
-        Some(&valid_secret.id),
-        endpoint,
-        &summary,
-        "ok",
-        None,
-    );
     println!("Link Dump request accepted");
     println!("Added {} links to queue", summary.added);
     write_json_response(
@@ -3152,19 +3298,7 @@ fn add_normalized_youtube_urls_to_queue(
             continue;
         }
 
-        let request = DownloadRequest {
-            url: normalized.url.clone(),
-            format: LINK_DUMP_DEFAULT_FORMAT.to_string(),
-            output_dir: None,
-            extract_audio: false,
-            audio_format: None,
-            transcribe_text: false,
-            cut_at_timestamp_enabled: true,
-            cut_start_time: None,
-            filename_suffix: Some(LINK_DUMP_DEFAULT_FILENAME_SUFFIX.to_string()),
-            title: None,
-            thumbnail: youtube_thumbnail_url_from_normalized(normalized),
-        };
+        let request = build_link_dump_download_request(state, normalized)?;
         jobs.push(build_download_job(state, request)?);
     }
 
@@ -3172,6 +3306,34 @@ fn add_normalized_youtube_urls_to_queue(
     enqueue_download_jobs(app, state, jobs)?;
     summary.added += added_count;
     Ok(())
+}
+
+fn build_link_dump_download_request(
+    state: &AppState,
+    normalized: &NormalizedYoutubeUrl,
+) -> Result<DownloadRequest, String> {
+    let (preset, cut_at_timestamp_enabled) = {
+        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        (
+            download_preset_for_key(cfg.selected_preset_key.as_deref()),
+            cfg.cut_at_timestamp_enabled,
+        )
+    };
+
+    Ok(DownloadRequest {
+        url: normalized.url.clone(),
+        format: preset.format.to_string(),
+        output_dir: None,
+        extract_audio: preset.extract_audio,
+        audio_format: preset.audio_format.map(str::to_string),
+        transcribe_text: preset.transcribe_text,
+        cut_at_timestamp_enabled,
+        cut_start_time: None,
+        filename_suffix: preset.filename_suffix.map(str::to_string),
+        title: None,
+        thumbnail: youtube_thumbnail_url_from_normalized(normalized),
+        upload_date: None,
+    })
 }
 
 fn queued_youtube_keys(state: &AppState) -> Result<std::collections::HashSet<String>, String> {
@@ -3261,8 +3423,8 @@ fn main() {
             let config = load_config(&app.handle());
             let db = open_link_dump_db(&app.handle())?;
             let state = AppState::new(config, db);
-            // Load history from disk
-            let history = load_history(&app.handle());
+            migrate_legacy_history_json(&app.handle(), &state)?;
+            let history = list_history_entries_from_db(&state)?;
             *state.history.lock().map_err(|_| "History lock failed")? = history;
             app.manage(state);
             let state = app.state::<AppState>();
@@ -3272,6 +3434,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             set_config,
+            set_selected_preset_key,
             cache_last_download_url,
             pick_output_dir,
             pick_txt_file,
@@ -3309,10 +3472,14 @@ fn main() {
 mod tests {
     use super::*;
 
-    fn link_dump_test_state() -> AppState {
+    fn link_dump_test_state_with_config(config: AppConfig) -> AppState {
         let conn = Connection::open_in_memory().unwrap();
         run_link_dump_migrations(&conn).unwrap();
-        AppState::new(AppConfig::default(), conn)
+        AppState::new(config, conn)
+    }
+
+    fn link_dump_test_state() -> AppState {
+        link_dump_test_state_with_config(AppConfig::default())
     }
 
     #[test]
@@ -3405,6 +3572,37 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_unknown_selected_preset_to_best() {
+        let config = normalize_app_config(AppConfig {
+            selected_preset_key: Some("missing".to_string()),
+            ..AppConfig::default()
+        });
+
+        assert_eq!(
+            config.selected_preset_key.as_deref(),
+            Some(DEFAULT_DOWNLOAD_PRESET_KEY)
+        );
+    }
+
+    #[test]
+    fn link_dump_request_uses_selected_preset() {
+        let state = link_dump_test_state_with_config(AppConfig {
+            selected_preset_key: Some("audio_mp3".to_string()),
+            ..AppConfig::default()
+        });
+        let normalized = normalize_youtube_url("https://youtu.be/abc123").unwrap();
+
+        let request = build_link_dump_download_request(&state, &normalized).unwrap();
+
+        assert_eq!(request.url, "https://www.youtube.com/watch?v=abc123");
+        assert_eq!(request.format, "ba/b");
+        assert!(request.extract_audio);
+        assert_eq!(request.audio_format.as_deref(), Some("mp3"));
+        assert!(!request.transcribe_text);
+        assert_eq!(request.filename_suffix, None);
+    }
+
+    #[test]
     fn appends_timestamp_suffix_to_cut_output_path() {
         let path = build_timestamp_cut_output_path(
             Path::new("/tmp/Title - Uploader - id_best.webm"),
@@ -3439,6 +3637,55 @@ mod tests {
             })
             .unwrap();
         assert_eq!(secret_count, 0);
+    }
+
+    #[test]
+    fn link_dump_migration_does_not_create_request_log() {
+        let state = link_dump_test_state();
+        let conn = state.db.lock().unwrap();
+        let table_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'link_dump_request_log'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(table_count, 0);
+    }
+
+    #[test]
+    fn history_entries_are_stored_in_sqlite_with_file_metadata() {
+        let state = link_dump_test_state();
+        let entry = HistoryEntry {
+            id: "history-1".to_string(),
+            url: "https://www.youtube.com/watch?v=abc123".to_string(),
+            title: Some("Example title".to_string()),
+            filename: Some("Example title - Uploader - abc123.mp4".to_string()),
+            thumbnail: Some("https://i.ytimg.com/vi/abc123/mqdefault.jpg".to_string()),
+            upload_date: Some("20240501".to_string()),
+            platform: Some("youtube".to_string()),
+            output_path: Some("/tmp/Example title - Uploader - abc123.mp4".to_string()),
+            created_at: 1_700_000_000_000,
+            completed_at: Some(1_700_000_000_100),
+        };
+
+        insert_history_entry_in_db(&state, &entry).unwrap();
+        let entries = list_history_entries_from_db(&state).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "history-1");
+        assert_eq!(entries[0].title.as_deref(), Some("Example title"));
+        assert_eq!(
+            entries[0].filename.as_deref(),
+            Some("Example title - Uploader - abc123.mp4")
+        );
+        assert_eq!(entries[0].url, "https://www.youtube.com/watch?v=abc123");
+        assert_eq!(
+            entries[0].thumbnail.as_deref(),
+            Some("https://i.ytimg.com/vi/abc123/mqdefault.jpg")
+        );
+        assert_eq!(entries[0].upload_date.as_deref(), Some("20240501"));
     }
 
     #[test]

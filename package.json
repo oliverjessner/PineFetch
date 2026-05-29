@@ -1,6 +1,6 @@
 {
     "name": "pinefetch",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "private": true,
     "scripts": {
         "dev": "tauri dev",
@@ -21,11 +21,9 @@
             "name": "Oliver Jessner",
             "url": "https://github.com/oliverjessner",
             "hireable": true
-        },
-        {
-            "name": "Muhammed Kaan Akman",
-            "url": "https://github.com/MukaanDE",
-            "hireable": true
         }
-    ]
+    ],
+    "dependencies": {
+        "pinefetch-designsystem": "^0.0.3"
+    }
 }

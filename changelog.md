@@ -1,3 +1,8 @@
+# 1.4.0
+
+- using https://github.com/oliverjessner/PineFetch-Designsystem
+- Send to PineFetch from https://github.com/oliverjessner/PineFetch-Link-Dump
+
 # 1.3.0
 
 - adding a txt import

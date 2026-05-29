@@ -1,6 +1,7 @@
 const tauriGlobal = window.__TAURI__;
 const invoke = tauriGlobal?.tauri?.invoke;
 const listen = tauriGlobal?.event?.listen;
+const shellOpen = tauriGlobal?.shell?.open;
 const state = Object.seal({
     jobs: new Map(),
     queueIds: [],
@@ -13,6 +14,8 @@ const state = Object.seal({
     info: null,
     infoUrl: null,
     config: null,
+    linkDump: null,
+    generatedLinkDumpSecret: null,
     activeView: 'download',
 });
 const els = Object.seal({
@@ -31,6 +34,22 @@ const els = Object.seal({
     ytDlpPath: document.getElementById('ytDlpPath'),
     ytDlpInstalledVersion: document.getElementById('ytDlpInstalledVersion'),
     ytDlpLatestVersion: document.getElementById('ytDlpLatestVersion'),
+    linkDumpServerStatusBadge: document.getElementById('linkDumpServerStatusBadge'),
+    linkDumpServerHint: document.getElementById('linkDumpServerHint'),
+    linkDumpServerUrl: document.getElementById('linkDumpServerUrl'),
+    linkDumpPort: document.getElementById('linkDumpPort'),
+    linkDumpServerEnabled: document.getElementById('linkDumpServerEnabled'),
+    saveLinkDumpServerBtn: document.getElementById('saveLinkDumpServerBtn'),
+    restartLinkDumpServerBtn: document.getElementById('restartLinkDumpServerBtn'),
+    linkDumpServerStatusText: document.getElementById('linkDumpServerStatusText'),
+    linkDumpSecretName: document.getElementById('linkDumpSecretName'),
+    generateLinkDumpSecretBtn: document.getElementById('generateLinkDumpSecretBtn'),
+    generatedLinkDumpSecretPanel: document.getElementById('generatedLinkDumpSecretPanel'),
+    generatedLinkDumpSecret: document.getElementById('generatedLinkDumpSecret'),
+    copyGeneratedLinkDumpSecretBtn: document.getElementById('copyGeneratedLinkDumpSecretBtn'),
+    linkDumpSecretList: document.getElementById('linkDumpSecretList'),
+    linkDumpSecretHint: document.getElementById('linkDumpSecretHint'),
+    linkDumpSecretStatus: document.getElementById('linkDumpSecretStatus'),
     presetSelect: document.getElementById('presetSelect'),
     infoTitle: document.getElementById('infoTitle'),
     infoUploader: document.getElementById('infoUploader'),
@@ -52,11 +71,15 @@ const els = Object.seal({
     historyList: document.getElementById('historyList'),
     historyHint: document.getElementById('historyHint'),
     settingsView: document.getElementById('settingsView'),
+    linkDumpView: document.getElementById('linkDumpView'),
     queueProgressView: document.getElementById('queueProgressView'),
     settingsSideView: document.getElementById('settingsSideView'),
+    linkDumpSideView: document.getElementById('linkDumpSideView'),
     viewDownloadBtn: document.getElementById('viewDownloadBtn'),
     viewHistoryBtn: document.getElementById('viewHistoryBtn'),
+    viewLinkDumpBtn: document.getElementById('viewLinkDumpBtn'),
     viewSettingsBtn: document.getElementById('viewSettingsBtn'),
+    linkDumpExtensionRepoLink: document.getElementById('linkDumpExtensionRepoLink'),
     clearHistoryBtn: document.getElementById('clearHistoryBtn'),
     queueContextMenu: document.getElementById('queueContextMenu'),
     queueContextDownloads: document.getElementById('queueContextDownloads'),
@@ -64,6 +87,7 @@ const els = Object.seal({
     queueContextRemoveBtn: document.getElementById('queueContextRemoveBtn'),
 });
 const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
+const linkDumpExtensionRepoUrl = 'https://github.com/oliverjessner/PineFetch-Link-Dump';
 const presetOptions = Object.freeze([
     {
         key: 'best',
@@ -351,12 +375,12 @@ const shakeUrlInput = () => {
         clearTimeout(urlShakeTimer);
         urlShakeTimer = null;
     }
-    els.urlInput.classList.remove('invalid-shake');
+    els.urlInput.classList.remove('pf-is-invalid', 'pf-invalid-shake');
     void els.urlInput.offsetWidth;
-    els.urlInput.classList.add('invalid-shake');
+    els.urlInput.classList.add('pf-is-invalid', 'pf-invalid-shake');
     els.urlInput.focus();
     urlShakeTimer = setTimeout(() => {
-        els.urlInput.classList.remove('invalid-shake');
+        els.urlInput.classList.remove('pf-is-invalid', 'pf-invalid-shake');
         urlShakeTimer = null;
     }, 420);
 };
@@ -601,25 +625,32 @@ const refreshYtDlpVersions = async () => {
 const setActiveView = view => {
     const isDownload = view === 'download';
     const isHistory = view === 'history';
+    const isLinkDump = view === 'linkDump';
     const isSettings = view === 'settings';
     state.activeView = view;
 
     els.downloadView.hidden = !isDownload;
     els.historyView.hidden = !isHistory;
     els.settingsView.hidden = !isSettings;
-    els.queueProgressView.hidden = isSettings;
+    els.linkDumpView.hidden = !isLinkDump;
+    els.queueProgressView.hidden = isSettings || isLinkDump;
     els.settingsSideView.hidden = !isSettings;
-    els.downloadView.classList.toggle('active', isDownload);
-    els.historyView.classList.toggle('active', isHistory);
-    els.settingsView.classList.toggle('active', isSettings);
-    els.queueProgressView.classList.toggle('active', !isSettings);
-    els.settingsSideView.classList.toggle('active', isSettings);
+    els.linkDumpSideView.hidden = !isLinkDump;
+    els.downloadView.classList.toggle('pf-is-active', isDownload);
+    els.historyView.classList.toggle('pf-is-active', isHistory);
+    els.settingsView.classList.toggle('pf-is-active', isSettings);
+    els.linkDumpView.classList.toggle('pf-is-active', isLinkDump);
+    els.queueProgressView.classList.toggle('pf-is-active', !isSettings && !isLinkDump);
+    els.settingsSideView.classList.toggle('pf-is-active', isSettings);
+    els.linkDumpSideView.classList.toggle('pf-is-active', isLinkDump);
 
-    els.viewDownloadBtn.classList.toggle('active', isDownload);
+    els.viewDownloadBtn.classList.toggle('pf-is-active', isDownload);
     els.viewDownloadBtn.setAttribute('aria-pressed', String(isDownload));
-    els.viewHistoryBtn.classList.toggle('active', isHistory);
+    els.viewHistoryBtn.classList.toggle('pf-is-active', isHistory);
     els.viewHistoryBtn.setAttribute('aria-pressed', String(isHistory));
-    els.viewSettingsBtn.classList.toggle('active', isSettings);
+    els.viewLinkDumpBtn.classList.toggle('pf-is-active', isLinkDump);
+    els.viewLinkDumpBtn.setAttribute('aria-pressed', String(isLinkDump));
+    els.viewSettingsBtn.classList.toggle('pf-is-active', isSettings);
     els.viewSettingsBtn.setAttribute('aria-pressed', String(isSettings));
 
     if (isDownload) {
@@ -633,6 +664,12 @@ const setActiveView = view => {
         els.queueBadge.style.display = 'inline-flex';
         els.infoBadge.style.display = 'none';
         void renderHistory();
+    } else if (isLinkDump) {
+        els.leftPanelTitle.textContent = 'Link Dump';
+        els.rightPanelTitle.textContent = 'Connections';
+        els.queueBadge.style.display = 'none';
+        els.infoBadge.style.display = 'none';
+        void syncLinkDumpOverview();
     } else {
         els.leftPanelTitle.textContent = 'Settings';
         els.rightPanelTitle.textContent = 'Options';
@@ -660,7 +697,7 @@ const renderQueueContextMenu = () => {
     els.queueContextDownloads.replaceChildren();
     presetOptions.forEach(preset => {
         const button = document.createElement('button');
-        button.className = 'queue-context-menu-btn';
+        button.className = 'pf-queue-context-menu-btn';
         button.type = 'button';
         button.dataset.action = 'download';
         button.dataset.presetKey = preset.key;
@@ -782,7 +819,7 @@ const renderQueue = () => {
     els.queueList.replaceChildren();
     items.forEach(job => {
         const item = document.createElement('div');
-        item.className = `queue-item ${job.id === state.selectedId ? 'active' : ''}`;
+        item.className = `pf-queue-item ${job.id === state.selectedId ? 'pf-is-active' : ''}`;
         item.oncontextmenu = event => {
             event.preventDefault();
             state.selectedId = job.id;
@@ -803,14 +840,14 @@ const renderQueue = () => {
         };
 
         const header = document.createElement('div');
-        header.className = 'queue-header';
+        header.className = 'pf-queue-header';
 
         const title = document.createElement('div');
-        title.className = 'queue-title';
+        title.className = 'pf-queue-title';
         const platform = detectPlatform(job.url || '');
         if (platform) {
             const platformIcon = document.createElement('span');
-            platformIcon.className = `queue-platform-icon ${platform}`;
+            platformIcon.className = `pf-queue-platform-icon pf-platform-${platform}`;
             const icon = getPlatformIconElement(platform);
             if (icon) {
                 platformIcon.appendChild(icon);
@@ -818,44 +855,44 @@ const renderQueue = () => {
             }
         }
         const titleText = document.createElement('span');
-        titleText.className = 'queue-title-text';
+        titleText.className = 'pf-queue-title-text';
         titleText.textContent = job.label || job.url;
         title.appendChild(titleText);
 
         const badge = document.createElement('div');
-        badge.className = 'queue-badge';
+        badge.className = 'pf-badge pf-badge-muted pf-queue-badge';
         badge.textContent = job.state || 'queued';
 
         header.append(title, badge);
 
         const progress = document.createElement('div');
-        progress.className = 'progress';
+        progress.className = 'pf-progress';
         const bar = document.createElement('span');
         bar.style.width = `${job.percent || 0}%`;
         progress.appendChild(bar);
 
         const meta = document.createElement('div');
-        meta.className = 'queue-meta';
+        meta.className = 'pf-queue-meta';
         const metaItems = [job.speed || '-', job.eta || '-', job.formatLabel || ''];
         const cutStartLabel = formatCutStartLabel(job.cutStartTime);
         if (cutStartLabel) metaItems.push(cutStartLabel);
         appendTextSpans(meta, metaItems);
         const main = document.createElement('div');
-        main.className = 'queue-main';
+        main.className = 'pf-queue-main';
 
         const content = document.createElement('div');
-        content.className = 'queue-content';
+        content.className = 'pf-queue-content';
         content.append(header, progress, meta);
         main.appendChild(content);
 
         const thumbUrl = job.thumbnail || resolveYouTubeThumbnail(job.url);
         if (thumbUrl) {
             const thumb = document.createElement('div');
-            thumb.className = 'queue-thumb';
+            thumb.className = 'pf-queue-thumb';
             thumb.style.backgroundImage = `url('${thumbUrl}')`;
             main.appendChild(thumb);
         } else {
-            main.classList.add('no-thumb');
+            main.classList.add('pf-no-thumb');
         }
 
         item.append(main);
@@ -911,7 +948,7 @@ const renderHistory = async () => {
 
         sorted.forEach(entry => {
             const item = document.createElement('div');
-            item.className = `history-item ${entry.thumbnail ? '' : 'no-thumb'}`;
+            item.className = `pf-history-item ${entry.thumbnail ? '' : 'pf-no-thumb'}`;
 
             item.onclick = async () => {
                 // Rust uses snake_case: output_path, not outputPath
@@ -929,15 +966,15 @@ const renderHistory = async () => {
             };
 
             const content = document.createElement('div');
-            content.className = 'history-content';
+            content.className = 'pf-history-content';
 
             const title = document.createElement('div');
-            title.className = 'history-title';
+            title.className = 'pf-history-title';
             title.textContent = entry.title || entry.url;
             content.appendChild(title);
 
             const meta = document.createElement('div');
-            meta.className = 'history-meta';
+            meta.className = 'pf-history-meta';
             const dateStr = formatHistoryDate(entry.completed_at);
             const platform = entry.platform || detectPlatform(entry.url) || 'unknown';
             appendTextSpans(meta, [platform, dateStr]);
@@ -947,14 +984,14 @@ const renderHistory = async () => {
 
             if (entry.thumbnail) {
                 const thumb = document.createElement('div');
-                thumb.className = 'history-thumb';
+                thumb.className = 'pf-history-thumb';
                 thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
                 item.appendChild(thumb);
             }
 
             // Add remove button (top-right corner)
             const removeBtn = document.createElement('button');
-            removeBtn.className = 'history-item-remove-btn';
+            removeBtn.className = 'pf-history-item-remove-btn';
             removeBtn.textContent = '×';
             removeBtn.title = 'Remove from history';
             removeBtn.onclick = async event => {
@@ -978,7 +1015,7 @@ const renderHistory = async () => {
 const appendLog = (text, isError) => {
     state.logs.push(text);
     const line = document.createElement('div');
-    line.className = `log-line ${isError ? 'err' : ''}`;
+    line.className = `pf-log-line ${isError ? 'pf-status-error' : ''}`;
     line.textContent = text;
     els.logBody.appendChild(line);
     els.logBody.scrollTop = els.logBody.scrollHeight;
@@ -1046,6 +1083,260 @@ const syncQueueStatus = async () => {
     }
 };
 
+const formatDateTime = value => {
+    if (!value) return '-';
+    const date = new Date(`${value.replace(' ', 'T')}Z`);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString([], {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+};
+
+const statusLabel = value => {
+    const normalized = `${value || ''}`.trim().toLowerCase();
+    return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Stopped';
+};
+
+const setLinkDumpStatusText = (message, isError = false) => {
+    if (!els.linkDumpServerStatusText) return;
+    els.linkDumpServerStatusText.textContent = message || '';
+    els.linkDumpServerStatusText.classList.toggle('pf-status-error', Boolean(message && isError));
+    els.linkDumpServerStatusText.classList.toggle('pf-status-success', Boolean(message && !isError));
+};
+
+const setLinkDumpSecretStatus = (message, isError = false) => {
+    if (!els.linkDumpSecretStatus) return;
+    els.linkDumpSecretStatus.textContent = message || '';
+    els.linkDumpSecretStatus.classList.toggle('pf-status-error', Boolean(message && isError));
+    els.linkDumpSecretStatus.classList.toggle('pf-status-success', Boolean(message && !isError));
+};
+
+const applyLinkDumpServerStatus = serverStatus => {
+    if (!serverStatus || !els.linkDumpServerStatusBadge) return;
+    const status = `${serverStatus.status || 'stopped'}`.toLowerCase();
+    els.linkDumpServerStatusBadge.textContent = statusLabel(status);
+    els.linkDumpServerStatusBadge.classList.toggle('pf-badge-danger', status === 'error');
+    els.linkDumpServerStatusBadge.classList.toggle('pf-badge-warning', status === 'stopped');
+    els.linkDumpServerStatusBadge.classList.toggle('pf-badge-muted', status !== 'running' && status !== 'error');
+    els.linkDumpServerStatusBadge.classList.toggle('pf-badge', true);
+
+    if (status === 'running') {
+        setLinkDumpStatusText('Browser extensions can send YouTube links to this PineFetch instance.');
+    } else if (status === 'error') {
+        setLinkDumpStatusText(serverStatus.error_message || 'Link Dump Server could not start.', true);
+    } else {
+        setLinkDumpStatusText('Link Dump Server is stopped.', false);
+    }
+};
+
+const renderLinkDumpSecrets = secrets => {
+    if (!els.linkDumpSecretList) return;
+    els.linkDumpSecretList.replaceChildren();
+    const visibleSecrets = Array.isArray(secrets)
+        ? secrets.filter(connection => `${connection.status || ''}`.toLowerCase() !== 'deleted')
+        : [];
+    els.linkDumpSecretHint.hidden = visibleSecrets.length > 0;
+
+    visibleSecrets.forEach(connection => {
+        const item = document.createElement('div');
+        item.className = 'pf-link-dump-secret-item';
+
+        const content = document.createElement('div');
+        content.className = 'pf-link-dump-secret-content';
+
+        const title = document.createElement('div');
+        title.className = 'pf-link-dump-secret-title';
+        title.textContent = connection.name || 'Link Dump Connection';
+
+        const meta = document.createElement('div');
+        meta.className = 'pf-link-dump-secret-meta';
+        appendTextSpans(meta, [
+            `Created ${formatDateTime(connection.created_at)}`,
+            `Last used ${formatDateTime(connection.last_used_at)}`,
+        ]);
+
+        content.append(title, meta);
+
+        const actions = document.createElement('div');
+        actions.className = 'pf-row pf-link-dump-secret-actions';
+
+        const badge = document.createElement('span');
+        const status = `${connection.status || 'active'}`.toLowerCase();
+        badge.className = `pf-badge ${
+            status === 'active' ? '' : status === 'revoked' ? 'pf-badge-warning' : 'pf-badge-muted'
+        }`;
+        badge.textContent = statusLabel(status);
+        actions.appendChild(badge);
+
+        if (status === 'active') {
+            const revokeBtn = document.createElement('button');
+            revokeBtn.className = 'pf-btn pf-btn-ghost';
+            revokeBtn.type = 'button';
+            revokeBtn.textContent = 'Revoke';
+            revokeBtn.onclick = () => {
+                if (!window.confirm('Revoke this connection? Extensions using this secret will no longer be able to send links.')) {
+                    return;
+                }
+                void revokeLinkDumpSecret(connection.id);
+            };
+            actions.appendChild(revokeBtn);
+        }
+
+        if (status !== 'deleted') {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'pf-btn pf-btn-danger';
+            deleteBtn.type = 'button';
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.onclick = () => {
+                if (!window.confirm('Delete this connection? Extensions using this secret will no longer be able to send links.')) {
+                    return;
+                }
+                void deleteLinkDumpSecret(connection.id);
+            };
+            actions.appendChild(deleteBtn);
+        }
+
+        item.append(content, actions);
+        els.linkDumpSecretList.appendChild(item);
+    });
+};
+
+const renderLinkDumpOverview = overview => {
+    state.linkDump = overview;
+    const settings = overview?.settings || {};
+    const serverStatus = overview?.server_status || {};
+    if (els.linkDumpServerUrl) {
+        els.linkDumpServerUrl.value =
+            serverStatus.url || `http://${settings.host || '127.0.0.1'}:${settings.port || 2255}`;
+    }
+    if (els.linkDumpPort) {
+        els.linkDumpPort.value = settings.port || 2255;
+    }
+    if (els.linkDumpServerEnabled) {
+        els.linkDumpServerEnabled.checked = settings.server_enabled !== false;
+    }
+    applyLinkDumpServerStatus(serverStatus);
+    renderLinkDumpSecrets(overview?.secrets || []);
+};
+
+const syncLinkDumpOverview = async () => {
+    if (!invoke) return;
+    try {
+        renderLinkDumpOverview(await invoke('get_link_dump_overview'));
+    } catch (err) {
+        setLinkDumpStatusText(`Link Dump settings unavailable: ${err}`, true);
+        appendLog(`[link-dump] ${err}`, true);
+    }
+};
+
+const openLinkDumpExtensionRepo = async event => {
+    event.preventDefault();
+    const url = els.linkDumpExtensionRepoLink?.href || linkDumpExtensionRepoUrl;
+    if (shellOpen) {
+        try {
+            await shellOpen(url);
+            return;
+        } catch (err) {
+            appendLog(`[link-dump] Could not open extension repository: ${err}`, true);
+        }
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+};
+
+const saveLinkDumpServer = async () => {
+    if (!invoke) return;
+    const port = Number(els.linkDumpPort.value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        setLinkDumpStatusText('Port must be between 1 and 65535.', true);
+        return;
+    }
+
+    try {
+        const overview = await invoke('update_link_dump_settings', {
+            patch: {
+                server_enabled: Boolean(els.linkDumpServerEnabled.checked),
+                port,
+            },
+        });
+        renderLinkDumpOverview(overview);
+        appendLog('[link-dump] server settings saved', false);
+    } catch (err) {
+        setLinkDumpStatusText(`${err}`, true);
+        appendLog(`[link-dump] ${err}`, true);
+    }
+};
+
+const restartLinkDumpServer = async () => {
+    if (!invoke) return;
+    try {
+        applyLinkDumpServerStatus(await invoke('restart_link_dump_server'));
+        appendLog('[link-dump] server restarted', false);
+    } catch (err) {
+        setLinkDumpStatusText(`${err}`, true);
+        appendLog(`[link-dump] ${err}`, true);
+    }
+};
+
+const generateLinkDumpSecret = async () => {
+    if (!invoke) return;
+    try {
+        const generated = await invoke('create_link_dump_secret', {
+            name: els.linkDumpSecretName.value.trim() || null,
+        });
+        state.generatedLinkDumpSecret = generated.secret;
+        els.generatedLinkDumpSecret.value = generated.secret;
+        els.generatedLinkDumpSecretPanel.hidden = false;
+        els.linkDumpSecretName.value = '';
+        setLinkDumpSecretStatus('Secret generated.');
+        renderLinkDumpOverview(await invoke('get_link_dump_overview'));
+    } catch (err) {
+        setLinkDumpSecretStatus(`${err}`, true);
+        appendLog(`[link-dump] ${err}`, true);
+    }
+};
+
+const copyGeneratedLinkDumpSecret = async () => {
+    if (!state.generatedLinkDumpSecret) return;
+    try {
+        await navigator.clipboard.writeText(state.generatedLinkDumpSecret);
+        state.generatedLinkDumpSecret = null;
+        els.generatedLinkDumpSecret.value = '';
+        els.generatedLinkDumpSecretPanel.hidden = true;
+        setLinkDumpSecretStatus('Secret copied.');
+    } catch (err) {
+        setLinkDumpSecretStatus(`Copy failed: ${err}`, true);
+        appendLog(`[copy] ${err}`, true);
+    }
+};
+
+const revokeLinkDumpSecret = async id => {
+    if (!invoke) return;
+    try {
+        const secrets = await invoke('revoke_link_dump_secret', { id });
+        renderLinkDumpSecrets(secrets);
+        setLinkDumpSecretStatus('Connection revoked.');
+    } catch (err) {
+        setLinkDumpSecretStatus(`${err}`, true);
+        appendLog(`[link-dump] ${err}`, true);
+    }
+};
+
+const deleteLinkDumpSecret = async id => {
+    if (!invoke) return;
+    try {
+        const secrets = await invoke('delete_link_dump_secret', { id });
+        renderLinkDumpSecrets(secrets);
+        setLinkDumpSecretStatus('Connection deleted.');
+    } catch (err) {
+        setLinkDumpSecretStatus(`${err}`, true);
+        appendLog(`[link-dump] ${err}`, true);
+    }
+};
+
 let loadInfoInFlight = false;
 let loadInfoPending = false;
 let loadInfoRequestId = 0;
@@ -1067,7 +1358,7 @@ const loadInfo = async () => {
     const requestUrl = url;
     const requestId = ++loadInfoRequestId;
     loadInfoInFlight = true;
-    els.loadInfoBtn.classList.add('loading');
+    els.loadInfoBtn.classList.add('pf-btn-loading');
     els.loadInfoBtn.disabled = true;
     setInfoBadge('Loading...');
     try {
@@ -1092,7 +1383,7 @@ const loadInfo = async () => {
         appendLog(`[info] ${err}`, true);
     } finally {
         loadInfoInFlight = false;
-        els.loadInfoBtn.classList.remove('loading');
+        els.loadInfoBtn.classList.remove('pf-btn-loading');
         els.loadInfoBtn.disabled = false;
 
         const nextUrl = els.urlInput.value.trim();
@@ -1316,8 +1607,8 @@ const setTxtImportStatus = (message, isError = false) => {
     if (!els.txtImportStatus) return;
     els.txtImportStatus.textContent = message;
     els.txtImportStatus.hidden = !message;
-    els.txtImportStatus.classList.toggle('err', Boolean(message && isError));
-    els.txtImportStatus.classList.toggle('success', Boolean(message && !isError));
+    els.txtImportStatus.classList.toggle('pf-status-error', Boolean(message && isError));
+    els.txtImportStatus.classList.toggle('pf-status-success', Boolean(message && !isError));
 };
 
 const setTxtImportBusy = isBusy => {
@@ -1502,7 +1793,7 @@ const bindEvents = () => {
             state.infoUrl = null;
             renderInfo();
             setInfoBadge('Idle');
-            els.loadInfoBtn.classList.remove('loading');
+            els.loadInfoBtn.classList.remove('pf-btn-loading');
             els.loadInfoBtn.disabled = false;
             els.urlInput.focus();
             return;
@@ -1511,6 +1802,18 @@ const bindEvents = () => {
     els.saveSettingsBtn.addEventListener('click', saveSettings);
     els.pickDirBtn.addEventListener('click', pickDir);
     els.openFolderBtn.addEventListener('click', openFolder);
+    els.saveLinkDumpServerBtn.addEventListener('click', () => {
+        void saveLinkDumpServer();
+    });
+    els.restartLinkDumpServerBtn.addEventListener('click', () => {
+        void restartLinkDumpServer();
+    });
+    els.generateLinkDumpSecretBtn.addEventListener('click', () => {
+        void generateLinkDumpSecret();
+    });
+    els.copyGeneratedLinkDumpSecretBtn.addEventListener('click', () => {
+        void copyGeneratedLinkDumpSecret();
+    });
     els.clearQueueBtn.addEventListener('click', () => {
         void clearQueue();
     });
@@ -1519,7 +1822,11 @@ const bindEvents = () => {
     });
     els.viewDownloadBtn.addEventListener('click', () => setActiveView('download'));
     els.viewHistoryBtn.addEventListener('click', () => setActiveView('history'));
+    els.viewLinkDumpBtn.addEventListener('click', () => setActiveView('linkDump'));
     els.viewSettingsBtn.addEventListener('click', () => setActiveView('settings'));
+    els.linkDumpExtensionRepoLink.addEventListener('click', event => {
+        void openLinkDumpExtensionRepo(event);
+    });
     els.clearHistoryBtn.addEventListener('click', () => {
         if (invoke) {
             void invoke('clear_history');
@@ -1581,7 +1888,7 @@ const bindEvents = () => {
             event.preventDefault();
             return;
         }
-        if (!target?.closest('.queue-item')) hideQueueContextMenu();
+        if (!target?.closest('.pf-queue-item')) hideQueueContextMenu();
     });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape') hideQueueContextMenu();
@@ -1600,6 +1907,10 @@ const bindEvents = () => {
 };
 
 const bindBackendEvents = async () => {
+    await listen('link-dump:server-status', event => {
+        applyLinkDumpServerStatus(event.payload);
+    });
+
     await listen('queue:status', event => {
         state.queueAutoStartEnabled = event.payload?.auto_start ?? true;
         state.queueWorkerRunning = Boolean(event.payload?.worker_running);
@@ -1672,6 +1983,7 @@ const init = async () => {
         return;
     }
     await syncConfig();
+    await syncLinkDumpOverview();
     await syncQueueStatus();
     await bindBackendEvents();
     renderQueue();

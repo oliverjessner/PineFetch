@@ -4,193 +4,337 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>PineFetch</title>
+        <link rel="icon" href="images/logo.png" />
+        <link rel="stylesheet" href="vendor/pinefetch.css" />
         <link rel="stylesheet" href="styles.css" />
     </head>
     <body>
-        <div class="app-shell">
-            <header class="top-bar">
+        <div class="pf-app-shell pf-pinefetch-shell">
+            <header class="pf-toolbar pf-pinefetch-top-bar">
                 <div
                     id="magicImportTrigger"
-                    class="brand"
+                    class="pf-pinefetch-brand"
                     role="button"
                     tabindex="0"
                     aria-label="Magic import from clipboard"
                 >
-                    <img class="brand-logo" src="images/logo.png" alt="PineFetch logo" />
-                    <div>
-                        <h1>PineFetch</h1>
-                    </div>
+                    <img class="pf-pinefetch-brand-logo" src="images/logo.png" alt="PineFetch logo" />
+                    <h1 class="pf-title">PineFetch</h1>
                 </div>
-                <div class="top-actions">
-                    <div class="view-toggle" role="tablist" aria-label="Main view">
-                        <button id="viewDownloadBtn" class="view-toggle-btn active" type="button" aria-pressed="true">
+                <div class="pf-pinefetch-top-actions">
+                    <div class="pf-segmented" role="tablist" aria-label="Main view">
+                        <button
+                            id="viewDownloadBtn"
+                            class="pf-segmented-btn pf-is-active"
+                            type="button"
+                            aria-pressed="true"
+                        >
                             Download
                         </button>
-                        <button id="viewHistoryBtn" class="view-toggle-btn" type="button" aria-pressed="false">
+                        <button id="viewHistoryBtn" class="pf-segmented-btn" type="button" aria-pressed="false">
                             History
                         </button>
-                        <button id="viewSettingsBtn" class="view-toggle-btn" type="button" aria-pressed="false">
+                        <button id="viewLinkDumpBtn" class="pf-segmented-btn" type="button" aria-pressed="false">
+                            Link Dump
+                        </button>
+                        <button id="viewSettingsBtn" class="pf-segmented-btn" type="button" aria-pressed="false">
                             Settings
                         </button>
                     </div>
                 </div>
             </header>
 
-            <main class="split">
-                <section class="panel left">
-                    <div class="panel-header">
-                        <h2 id="leftPanelTitle">Download</h2>
-                        <span class="badge" id="infoBadge">Idle</span>
+            <main class="pf-pinefetch-split">
+                <section class="pf-panel pf-pinefetch-panel pf-pinefetch-panel-left">
+                    <div class="pf-panel-header">
+                        <div class="pf-panel-heading">
+                            <h2 class="pf-section-title" id="leftPanelTitle">Download</h2>
+                        </div>
+                        <span class="pf-badge" id="infoBadge">Idle</span>
                     </div>
 
-                    <div id="downloadView" class="panel-view active">
-                        <div class="field">
-                            <label for="urlInput">URL</label>
-                            <input id="urlInput" type="text" placeholder="https://..." />
-                        </div>
+                    <div id="downloadView" class="pf-panel-view pf-stack">
+                        <label class="pf-field" for="urlInput">
+                            <span class="pf-label">URL</span>
+                            <input id="urlInput" class="pf-input" type="text" placeholder="https://..." />
+                        </label>
 
-                        <div class="field">
-                            <label for="presetSelect">Preset format</label>
-                            <select id="presetSelect"></select>
-                        </div>
+                        <label class="pf-field" for="presetSelect">
+                            <span class="pf-label">Preset format</span>
+                            <select id="presetSelect" class="pf-select"></select>
+                        </label>
 
-                        <div class="field-row download-actions">
-                            <button id="startDownloadBtn" class="btn primary">Queue</button>
-                            <button id="loadInfoBtn" class="btn"><span class="btn-label">Load info</span></button>
-                            <button id="importTxtBtn" class="btn ghost" type="button">Import TXT</button>
+                        <div class="pf-field-row pf-pinefetch-download-actions">
+                            <button id="startDownloadBtn" class="pf-btn pf-btn-primary">Queue</button>
+                            <button id="loadInfoBtn" class="pf-btn">
+                                <span class="pf-pinefetch-btn-label">Load info</span>
+                            </button>
+                            <button id="importTxtBtn" class="pf-btn pf-btn-ghost" type="button">Import TXT</button>
                         </div>
-                        <p id="txtImportStatus" class="txt-import-status" role="status" aria-live="polite" hidden></p>
+                        <p id="txtImportStatus" class="pf-status" role="status" aria-live="polite" hidden></p>
 
-                        <div class="info-card" id="infoCard">
-                            <div class="info-meta">
+                        <div class="pf-panel-soft pf-pinefetch-info-card" id="infoCard">
+                            <div class="pf-pinefetch-info-meta">
                                 <div>
-                                    <p class="label">Title</p>
-                                    <p id="infoTitle">-</p>
+                                    <p class="pf-label">Title</p>
+                                    <p class="pf-text pf-truncate" id="infoTitle">-</p>
                                 </div>
                                 <div>
-                                    <p class="label">Uploader</p>
-                                    <p id="infoUploader">-</p>
+                                    <p class="pf-label">Uploader</p>
+                                    <p class="pf-text pf-truncate" id="infoUploader">-</p>
                                 </div>
                                 <div>
-                                    <p class="label">Duration</p>
-                                    <p id="infoDuration">-</p>
+                                    <p class="pf-label">Duration</p>
+                                    <p class="pf-text pf-truncate" id="infoDuration">-</p>
                                 </div>
                             </div>
-                            <div class="info-thumb" id="infoThumb"></div>
+                            <div class="pf-pinefetch-info-thumb" id="infoThumb"></div>
                         </div>
 
-                        <div class="divider"></div>
+                        <div class="pf-divider"></div>
 
-                        <p class="hint">Please only download content you have the rights or permission to access.</p>
+                        <p class="pf-hint">Please only download content you have the rights or permission to access.</p>
                     </div>
 
-                    <div id="historyView" class="panel-view" hidden>
-                        <div id="historyList" class="history-list"></div>
-                        <div class="history-actions">
-                            <button id="clearHistoryBtn" class="btn ghost" type="button">Clear History</button>
+                    <div id="historyView" class="pf-panel-view pf-stack" hidden>
+                        <div id="historyList" class="pf-scroll-area pf-pinefetch-history-list"></div>
+                        <div class="pf-pinefetch-history-actions">
+                            <button id="clearHistoryBtn" class="pf-btn pf-btn-ghost" type="button">Clear History</button>
                         </div>
-                        <p class="hint" id="historyHint" hidden>No history yet. Downloaded items will appear here.</p>
+                        <p class="pf-hint" id="historyHint" hidden>No history yet. Downloaded items will appear here.</p>
                     </div>
 
-                    <div id="settingsView" class="panel-view" hidden>
-                        <div class="field">
-                            <label for="outputDir">Output folder</label>
-                            <div class="field-row">
-                                <input id="outputDir" type="text" placeholder="/Users/..." />
-                                <button id="pickDirBtn" class="btn ghost">Choose</button>
+                    <div id="settingsView" class="pf-panel-view pf-stack" hidden>
+                        <div class="pf-field">
+                            <label class="pf-label" for="outputDir">Output folder</label>
+                            <div class="pf-field-row">
+                                <input id="outputDir" class="pf-input" type="text" placeholder="/Users/..." />
+                                <button id="pickDirBtn" class="pf-btn pf-btn-ghost">Choose</button>
                             </div>
                         </div>
 
-                        <div class="field">
-                            <label for="ytDlpPath">yt-dlp path</label>
-                            <input id="ytDlpPath" type="text" placeholder="/opt/homebrew/bin/yt-dlp" />
-                        </div>
+                        <label class="pf-field" for="ytDlpPath">
+                            <span class="pf-label">yt-dlp path</span>
+                            <input
+                                id="ytDlpPath"
+                                class="pf-input"
+                                type="text"
+                                placeholder="/opt/homebrew/bin/yt-dlp"
+                            />
+                        </label>
 
-                        <div class="field">
-                            <label>yt-dlp versions</label>
-                            <div class="version-info">
+                        <div class="pf-field">
+                            <span class="pf-label">yt-dlp versions</span>
+                            <div class="pf-panel-soft pf-pinefetch-version-info">
                                 <p id="ytDlpInstalledVersion">Installed: -</p>
                                 <p id="ytDlpLatestVersion">Latest: -</p>
                             </div>
                         </div>
 
-                        <div class="field-row">
-                            <button id="saveSettingsBtn" class="btn">Save settings</button>
-                            <button id="openFolderBtn" class="btn ghost">Open folder</button>
+                        <div class="pf-row">
+                            <button id="saveSettingsBtn" class="pf-btn">Save settings</button>
+                            <button id="openFolderBtn" class="pf-btn pf-btn-ghost">Open folder</button>
                         </div>
 
-                        <section class="log-panel" id="logPanel">
-                            <div class="log-header">
-                                <div>
-                                    <h3>Terminal Log</h3>
-                                    <p id="logHint">stdout / stderr</p>
+                        <section class="pf-panel-soft pf-pinefetch-log-panel" id="logPanel">
+                            <div class="pf-panel-header pf-pinefetch-log-header">
+                                <div class="pf-panel-heading">
+                                    <h3 class="pf-section-title">Terminal Log</h3>
+                                    <p class="pf-subtitle" id="logHint">stdout / stderr</p>
                                 </div>
-                                <div class="log-actions">
-                                    <button id="copyLogsBtn" class="btn ghost">Copy</button>
+                                <div class="pf-row">
+                                    <button id="copyLogsBtn" class="pf-btn pf-btn-ghost">Copy</button>
                                 </div>
                             </div>
-                            <div id="logBody" class="log-body"></div>
+                            <div id="logBody" class="pf-pinefetch-log-body"></div>
                         </section>
 
-                        <p class="hint">These settings are used for all new downloads.</p>
+                        <p class="pf-hint">These settings are used for all new downloads.</p>
+                    </div>
+
+                    <div id="linkDumpView" class="pf-panel-view pf-stack" hidden>
+                        <section class="pf-panel-soft pf-link-dump-section" id="linkDumpServerPanel">
+                            <header class="pf-panel-header">
+                                <div class="pf-panel-heading">
+                                    <h3 class="pf-section-title">Local Link Dump Server</h3>
+                                    <p class="pf-subtitle" id="linkDumpServerHint">
+                                        Browser extensions can send YouTube links to this PineFetch instance.
+                                    </p>
+                                </div>
+                                <span class="pf-badge pf-badge-muted" id="linkDumpServerStatusBadge">Stopped</span>
+                            </header>
+
+                            <div class="pf-grid">
+                                <label class="pf-field" for="linkDumpServerUrl">
+                                    <span class="pf-label">Server URL</span>
+                                    <input id="linkDumpServerUrl" class="pf-input" type="text" readonly />
+                                </label>
+
+                                <label class="pf-field" for="linkDumpPort">
+                                    <span class="pf-label">Port</span>
+                                    <input id="linkDumpPort" class="pf-input" type="number" min="1" max="65535" />
+                                </label>
+                            </div>
+
+                            <label class="pf-toggle" for="linkDumpServerEnabled">
+                                <span class="pf-toggle-copy">
+                                    <span class="pf-toggle-title">Enable server</span>
+                                    <span class="pf-toggle-hint">Listen on local loopback only.</span>
+                                </span>
+                                <input id="linkDumpServerEnabled" class="pf-toggle-input" type="checkbox" checked />
+                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                            </label>
+
+                            <div class="pf-row">
+                                <button id="saveLinkDumpServerBtn" class="pf-btn" type="button">Save Server</button>
+                                <button id="restartLinkDumpServerBtn" class="pf-btn pf-btn-ghost" type="button">
+                                    Restart Server
+                                </button>
+                            </div>
+                            <p id="linkDumpServerStatusText" class="pf-status" role="status" aria-live="polite"></p>
+                        </section>
+
+                        <section class="pf-panel-soft pf-link-dump-section">
+                            <header class="pf-panel-header">
+                                <div class="pf-panel-heading">
+                                    <h3 class="pf-section-title">Browser Extension</h3>
+                                    <p class="pf-subtitle">
+                                        Install or inspect the Chrome extension that sends YouTube links to PineFetch.
+                                    </p>
+                                </div>
+                            </header>
+                            <a
+                                id="linkDumpExtensionRepoLink"
+                                class="pf-btn pf-btn-ghost pf-link-dump-repo-link"
+                                href="https://github.com/oliverjessner/PineFetch-Link-Dump"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                Open PineFetch-Link-Dump on GitHub
+                            </a>
+                        </section>
                     </div>
                 </section>
 
-                <section class="panel right">
-                    <div class="panel-header">
-                        <h2 id="rightPanelTitle">Queue / Progress</h2>
-                        <div class="badge" id="queueBadge">0 queued</div>
+                <section class="pf-panel pf-pinefetch-panel pf-pinefetch-panel-right">
+                    <div class="pf-panel-header">
+                        <div class="pf-panel-heading">
+                            <h2 class="pf-section-title" id="rightPanelTitle">Queue / Progress</h2>
+                        </div>
+                        <div class="pf-badge" id="queueBadge">0 queued</div>
                     </div>
 
-                    <div id="queueProgressView" class="right-panel-view active">
-                        <div id="queueList" class="queue-list"></div>
-                        <div class="queue-actions">
-                            <div class="queue-mode-actions">
-                                <button id="queueAutoStartBtn" class="btn ghost" type="button" aria-pressed="true">
+                    <div id="queueProgressView" class="pf-pinefetch-right-panel-view">
+                        <div id="queueList" class="pf-scroll-area pf-pinefetch-queue-list"></div>
+                        <div class="pf-pinefetch-queue-actions">
+                            <div class="pf-row">
+                                <button
+                                    id="queueAutoStartBtn"
+                                    class="pf-btn pf-btn-ghost"
+                                    type="button"
+                                    aria-pressed="true"
+                                >
                                     Auto-start: on
                                 </button>
-                                <button id="startQueueBtn" class="btn" type="button">Start queue</button>
+                                <button id="startQueueBtn" class="pf-btn" type="button">Start queue</button>
                             </div>
-                            <button id="clearQueueBtn" class="btn ghost" type="button">Clear</button>
+                            <button id="clearQueueBtn" class="pf-btn pf-btn-ghost" type="button">Clear</button>
                         </div>
                     </div>
 
-                    <div id="settingsSideView" class="right-panel-view settings-side-view" hidden>
-                        <div class="field">
-                            <label class="toggle-field" for="magicImportEnabled">
-                                <span class="toggle-copy">
-                                    <span class="toggle-title">Magic import</span>
-                                    <span class="toggle-hint"
+                    <div id="settingsSideView" class="pf-pinefetch-right-panel-view pf-pinefetch-settings-side-view" hidden>
+                        <div class="pf-stack">
+                            <label class="pf-toggle" for="magicImportEnabled">
+                                <span class="pf-toggle-copy">
+                                    <span class="pf-toggle-title">Magic import</span>
+                                    <span class="pf-toggle-hint"
                                         >Click PineFetch with an empty URL field to import a URL from the
                                         clipboard.</span
                                     >
                                 </span>
-                                <input id="magicImportEnabled" type="checkbox" checked />
+                                <input id="magicImportEnabled" class="pf-toggle-input" type="checkbox" checked />
+                                <span class="pf-toggle-track" aria-hidden="true"></span>
                             </label>
-                        </div>
 
-                        <div class="field">
-                            <label class="toggle-field" for="cutAtTimestampEnabled">
-                                <span class="toggle-copy">
-                                    <span class="toggle-title">Cut at timestamp</span>
-                                    <span class="toggle-hint"
+                            <label class="pf-toggle" for="cutAtTimestampEnabled">
+                                <span class="pf-toggle-copy">
+                                    <span class="pf-toggle-title">Cut at timestamp</span>
+                                    <span class="pf-toggle-hint"
                                         >Links with a timestamp such as t=61 start the download at that second.</span
                                     >
                                 </span>
-                                <input id="cutAtTimestampEnabled" type="checkbox" checked />
+                                <input id="cutAtTimestampEnabled" class="pf-toggle-input" type="checkbox" checked />
+                                <span class="pf-toggle-track" aria-hidden="true"></span>
                             </label>
+                        </div>
+                    </div>
+
+                    <div
+                        id="linkDumpSideView"
+                        class="pf-pinefetch-right-panel-view pf-pinefetch-link-dump-side-view"
+                        hidden
+                    >
+                        <div class="pf-stack">
+                            <section class="pf-panel-soft pf-link-dump-section" id="linkDumpConnectionsPanel">
+                                <header class="pf-panel-header">
+                                    <div class="pf-panel-heading">
+                                        <h3 class="pf-section-title">Link Dump Connections</h3>
+                                        <p class="pf-subtitle">
+                                            Connect one or more browser extensions to this PineFetch instance.
+                                        </p>
+                                    </div>
+                                </header>
+
+                                <div class="pf-field-row pf-link-dump-generate-row">
+                                    <label class="pf-field pf-grow" for="linkDumpSecretName">
+                                        <span class="pf-label">Connection name</span>
+                                        <input
+                                            id="linkDumpSecretName"
+                                            class="pf-input"
+                                            type="text"
+                                            placeholder="Chrome Extension on MacBook"
+                                        />
+                                    </label>
+                                    <button id="generateLinkDumpSecretBtn" class="pf-btn pf-btn-primary" type="button">
+                                        Generate Secret
+                                    </button>
+                                </div>
+
+                                <div
+                                    id="generatedLinkDumpSecretPanel"
+                                    class="pf-panel-soft pf-link-dump-secret-panel"
+                                    hidden
+                                >
+                                    <label class="pf-field" for="generatedLinkDumpSecret">
+                                        <span class="pf-label">New secret</span>
+                                        <input id="generatedLinkDumpSecret" class="pf-input" type="text" readonly />
+                                    </label>
+                                    <div class="pf-row">
+                                        <button id="copyGeneratedLinkDumpSecretBtn" class="pf-btn" type="button">
+                                            Copy Secret
+                                        </button>
+                                    </div>
+                                    <p class="pf-hint">Copy this secret now. It will not be shown again.</p>
+                                </div>
+
+                                <div id="linkDumpSecretList" class="pf-link-dump-secret-list"></div>
+                                <p id="linkDumpSecretHint" class="pf-hint" hidden>
+                                    Generate a secret to connect a browser extension.
+                                </p>
+                                <p id="linkDumpSecretStatus" class="pf-status" role="status" aria-live="polite"></p>
+                            </section>
                         </div>
                     </div>
                 </section>
             </main>
 
-            <div id="queueContextMenu" class="queue-context-menu" hidden>
-                <button class="queue-context-menu-btn" type="button" data-action="copy-link">Copy link</button>
-                <div class="queue-context-divider" role="separator" aria-hidden="true"></div>
-                <div id="queueContextDownloads" class="queue-context-downloads"></div>
+            <div id="queueContextMenu" class="pf-queue-context-menu" hidden>
+                <button class="pf-queue-context-menu-btn" type="button" data-action="copy-link">Copy link</button>
+                <div class="pf-queue-context-divider" role="separator" aria-hidden="true"></div>
+                <div id="queueContextDownloads" class="pf-queue-context-downloads"></div>
                 <button
                     id="queueContextCancelBtn"
-                    class="queue-context-menu-btn queue-context-menu-btn-danger"
+                    class="pf-queue-context-menu-btn pf-queue-context-menu-btn-danger"
                     type="button"
                     data-action="cancel"
                     hidden
@@ -199,7 +343,7 @@
                 </button>
                 <button
                     id="queueContextRemoveBtn"
-                    class="queue-context-menu-btn"
+                    class="pf-queue-context-menu-btn"
                     type="button"
                     data-action="remove"
                     hidden

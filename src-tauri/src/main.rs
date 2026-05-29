@@ -1,13 +1,21 @@
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use regex::Regex;
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::{
     collections::VecDeque,
     fs,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read, Write},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
-    thread,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread::{self, JoinHandle},
     time::Duration,
 };
 use tauri::{AppHandle, ClipboardManager, Manager, State};
@@ -154,6 +162,123 @@ struct TxtImportFile {
     content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LinkDumpSettings {
+    server_enabled: bool,
+    host: String,
+    port: u16,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LinkDumpSecretView {
+    id: String,
+    name: String,
+    created_at: String,
+    last_used_at: Option<String>,
+    revoked_at: Option<String>,
+    deleted_at: Option<String>,
+    status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GeneratedLinkDumpSecret {
+    secret: String,
+    connection: LinkDumpSecretView,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LinkDumpServerStatus {
+    status: String,
+    url: String,
+    error_message: Option<String>,
+}
+
+impl Default for LinkDumpServerStatus {
+    fn default() -> Self {
+        Self {
+            status: "stopped".to_string(),
+            url: format!(
+                "http://{}:{}",
+                LINK_DUMP_DEFAULT_HOST, LINK_DUMP_DEFAULT_PORT
+            ),
+            error_message: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LinkDumpOverview {
+    settings: LinkDumpSettings,
+    secrets: Vec<LinkDumpSecretView>,
+    server_status: LinkDumpServerStatus,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LinkDumpSettingsPatch {
+    server_enabled: Option<bool>,
+    host: Option<String>,
+    port: Option<u16>,
+}
+
+#[derive(Debug, Clone)]
+struct ValidSecretResult {
+    id: String,
+    #[allow(dead_code)]
+    name: String,
+}
+
+#[derive(Debug, Clone)]
+struct NormalizedYoutubeUrl {
+    url: String,
+    key: String,
+}
+
+#[derive(Debug, Clone)]
+struct LinkDumpQueueSummary {
+    received: usize,
+    added: usize,
+    skipped: usize,
+    invalid: usize,
+}
+
+#[derive(Debug)]
+struct LinkDumpServerRuntime {
+    status: LinkDumpServerStatus,
+    shutdown: Option<Arc<AtomicBool>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl Default for LinkDumpServerRuntime {
+    fn default() -> Self {
+        Self {
+            status: LinkDumpServerStatus::default(),
+            shutdown: None,
+            handle: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AddYoutubeLinkRequestBody {
+    url: Option<String>,
+    secret: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddYoutubeLinksRequestBody {
+    urls: Option<Vec<String>>,
+    secret: Option<String>,
+}
+
+#[derive(Debug)]
+struct HttpRequest {
+    method: String,
+    path: String,
+    body: Vec<u8>,
+}
+
 #[derive(Debug, Clone)]
 struct DownloadRunResult {
     exit_code: i32,
@@ -189,8 +314,17 @@ output_path.write_text(content, encoding="utf-8")
 print(str(output_path))
 "#;
 
+const LINK_DUMP_DEFAULT_HOST: &str = "127.0.0.1";
+const LINK_DUMP_DEFAULT_PORT: u16 = 2255;
+const LINK_DUMP_MAX_BATCH_SIZE: usize = 500;
+const LINK_DUMP_MAX_BODY_BYTES: usize = 1024 * 1024;
+const LINK_DUMP_DEFAULT_FORMAT: &str = "bestvideo+bestaudio/best";
+const LINK_DUMP_DEFAULT_FILENAME_SUFFIX: &str = "_best";
+
 struct AppState {
     config: Mutex<AppConfig>,
+    db: Mutex<Connection>,
+    link_dump_server: Mutex<LinkDumpServerRuntime>,
     queue: Mutex<VecDeque<DownloadJob>>,
     queue_auto_start: Mutex<bool>,
     worker_running: Mutex<bool>,
@@ -201,9 +335,11 @@ struct AppState {
 }
 
 impl AppState {
-    fn new(config: AppConfig) -> Self {
+    fn new(config: AppConfig, db: Connection) -> Self {
         Self {
             config: Mutex::new(config),
+            db: Mutex::new(db),
+            link_dump_server: Mutex::new(LinkDumpServerRuntime::default()),
             queue: Mutex::new(VecDeque::new()),
             queue_auto_start: Mutex::new(true),
             worker_running: Mutex::new(false),
@@ -488,18 +624,33 @@ fn enqueue_download(
     state: State<AppState>,
     request: DownloadRequest,
 ) -> Result<String, String> {
+    enqueue_download_request(&app, state.inner(), request)
+}
+
+fn enqueue_download_request(
+    app: &AppHandle,
+    state: &AppState,
+    request: DownloadRequest,
+) -> Result<String, String> {
+    let job = build_download_job(state, request)?;
+    let id = job.id.clone();
+    enqueue_download_jobs(app, state, vec![job])?;
+    Ok(id)
+}
+
+fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<DownloadJob, String> {
     if !is_valid_url(&request.url) {
         return Err("URL must start with http:// or https://".to_string());
     }
 
-    let output_dir = resolve_output_dir(&state, request.output_dir.clone())?;
+    let output_dir = resolve_output_dir(state, request.output_dir.clone())?;
     let cut_start_time = resolve_cut_start_time(
         request.cut_at_timestamp_enabled,
         request.cut_start_time,
         &request.url,
     );
     let id = Uuid::new_v4().to_string();
-    let job = DownloadJob {
+    Ok(DownloadJob {
         id: id.clone(),
         url: request.url,
         format: request.format,
@@ -511,18 +662,30 @@ fn enqueue_download(
         thumbnail: request.thumbnail,
         cut_start_time,
         filename_suffix: normalize_filename_suffix(request.filename_suffix.as_deref()),
-    };
+    })
+}
+
+fn enqueue_download_jobs(
+    app: &AppHandle,
+    state: &AppState,
+    jobs: Vec<DownloadJob>,
+) -> Result<Vec<String>, String> {
+    if jobs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let ids = jobs.iter().map(|job| job.id.clone()).collect::<Vec<_>>();
 
     {
         let mut queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
-        queue.push_back(job);
+        queue.extend(jobs);
     }
 
-    emit_queue(&app, &state)?;
-    if is_queue_auto_start_enabled(state.inner())? {
-        ensure_worker(&app, state.inner())?;
+    emit_queue(app, state)?;
+    if is_queue_auto_start_enabled(state)? {
+        ensure_worker(app, state)?;
     }
-    Ok(id)
+    Ok(ids)
 }
 
 #[tauri::command]
@@ -1904,15 +2067,1206 @@ fn save_config(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
     fs::write(path, data).map_err(|e| format!("Config write failed: {e}"))
 }
 
+fn link_dump_db_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = tauri::api::path::app_data_dir(&app.config()).ok_or("Data directory unavailable")?;
+    fs::create_dir_all(&dir).map_err(|e| format!("Data dir create failed: {e}"))?;
+    Ok(dir.join("pinefetch.sqlite"))
+}
+
+fn open_link_dump_db(app: &AppHandle) -> Result<Connection, String> {
+    let path = link_dump_db_path(app)?;
+    let conn = Connection::open(path).map_err(|e| format!("SQLite open failed: {e}"))?;
+    run_link_dump_migrations(&conn)
+        .map_err(|e| format!("Link Dump SQLite migration failed: {e}"))?;
+    println!("Link Dump SQLite migration completed");
+    Ok(conn)
+}
+
+fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS link_dump_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            server_enabled INTEGER NOT NULL DEFAULT 1,
+            host TEXT NOT NULL DEFAULT '127.0.0.1',
+            port INTEGER NOT NULL DEFAULT 2255,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        INSERT OR IGNORE INTO link_dump_settings (
+            id,
+            server_enabled,
+            host,
+            port,
+            created_at,
+            updated_at
+        ) VALUES (
+            1,
+            1,
+            '127.0.0.1',
+            2255,
+            datetime('now'),
+            datetime('now')
+        );
+
+        CREATE TABLE IF NOT EXISTS link_dump_secrets (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            secret_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT,
+            revoked_at TEXT,
+            deleted_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS link_dump_request_log (
+            id TEXT PRIMARY KEY,
+            secret_id TEXT,
+            endpoint TEXT NOT NULL,
+            received_count INTEGER NOT NULL DEFAULT 0,
+            added_count INTEGER NOT NULL DEFAULT 0,
+            skipped_count INTEGER NOT NULL DEFAULT 0,
+            invalid_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (secret_id) REFERENCES link_dump_secrets(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_link_dump_secrets_active
+            ON link_dump_secrets(revoked_at, deleted_at);
+
+        CREATE INDEX IF NOT EXISTS idx_link_dump_request_log_created_at
+            ON link_dump_request_log(created_at);
+        "#,
+    )
+}
+
+fn get_link_dump_settings_from_conn(conn: &Connection) -> rusqlite::Result<LinkDumpSettings> {
+    conn.query_row(
+        "SELECT server_enabled, host, port, created_at, updated_at FROM link_dump_settings WHERE id = 1",
+        [],
+        |row| {
+            Ok(LinkDumpSettings {
+                server_enabled: row.get::<_, i64>(0)? != 0,
+                host: row.get(1)?,
+                port: row.get::<_, i64>(2)? as u16,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        },
+    )
+}
+
+fn get_link_dump_settings(state: &AppState) -> Result<LinkDumpSettings, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    get_link_dump_settings_from_conn(&conn)
+        .map_err(|e| format!("Link Dump settings read failed: {e}"))
+}
+
+fn update_link_dump_settings_in_db(
+    state: &AppState,
+    patch: LinkDumpSettingsPatch,
+) -> Result<LinkDumpSettings, String> {
+    let mut current = get_link_dump_settings(state)?;
+    if let Some(enabled) = patch.server_enabled {
+        current.server_enabled = enabled;
+    }
+    if let Some(host) = patch.host {
+        let trimmed = host.trim();
+        if !trimmed.is_empty() {
+            current.host = normalize_link_dump_host(trimmed);
+        }
+    }
+    if let Some(port) = patch.port {
+        if port == 0 {
+            return Err("Port must be between 1 and 65535".to_string());
+        }
+        current.port = port;
+    }
+
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.execute(
+        "UPDATE link_dump_settings
+         SET server_enabled = ?1, host = ?2, port = ?3, updated_at = datetime('now')
+         WHERE id = 1",
+        params![
+            if current.server_enabled { 1 } else { 0 },
+            current.host,
+            i64::from(current.port)
+        ],
+    )
+    .map_err(|e| format!("Link Dump settings update failed: {e}"))?;
+    get_link_dump_settings_from_conn(&conn)
+        .map_err(|e| format!("Link Dump settings read failed: {e}"))
+}
+
+fn list_link_dump_secrets_from_conn(
+    conn: &Connection,
+) -> rusqlite::Result<Vec<LinkDumpSecretView>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, created_at, last_used_at, revoked_at, deleted_at
+         FROM link_dump_secrets
+         WHERE deleted_at IS NULL
+         ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let revoked_at: Option<String> = row.get(4)?;
+        let deleted_at: Option<String> = row.get(5)?;
+        let status = if deleted_at.is_some() {
+            "deleted"
+        } else if revoked_at.is_some() {
+            "revoked"
+        } else {
+            "active"
+        };
+        Ok(LinkDumpSecretView {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            created_at: row.get(2)?,
+            last_used_at: row.get(3)?,
+            revoked_at,
+            deleted_at,
+            status: status.to_string(),
+        })
+    })?;
+
+    rows.collect()
+}
+
+fn list_link_dump_secrets(state: &AppState) -> Result<Vec<LinkDumpSecretView>, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    list_link_dump_secrets_from_conn(&conn)
+        .map_err(|e| format!("Link Dump secrets read failed: {e}"))
+}
+
+fn next_link_dump_secret_name(conn: &Connection) -> rusqlite::Result<String> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM link_dump_secrets WHERE deleted_at IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(format!("Link Dump Connection {}", count + 1))
+}
+
+fn generate_link_dump_secret_value() -> Result<String, String> {
+    let mut bytes = [0_u8; 32];
+    getrandom::getrandom(&mut bytes).map_err(|e| format!("Secret generation failed: {e}"))?;
+    Ok(format!("pfld_{}", URL_SAFE_NO_PAD.encode(bytes)))
+}
+
+fn hash_link_dump_secret(secret: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(secret.as_bytes());
+    bytes_to_hex(&hasher.finalize())
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn constant_time_eq_str(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let max_len = left.len().max(right.len());
+    let mut diff = left.len() ^ right.len();
+
+    for index in 0..max_len {
+        let left_byte = left.get(index).copied().unwrap_or(0);
+        let right_byte = right.get(index).copied().unwrap_or(0);
+        diff |= usize::from(left_byte ^ right_byte);
+    }
+
+    diff == 0
+}
+
+fn create_link_dump_secret_in_db(
+    state: &AppState,
+    name: Option<String>,
+) -> Result<GeneratedLinkDumpSecret, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let clean_name = name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .map(Ok)
+        .unwrap_or_else(|| next_link_dump_secret_name(&conn))
+        .map_err(|e| format!("Link Dump name generation failed: {e}"))?;
+
+    let secret = generate_link_dump_secret_value()?;
+    let secret_hash = hash_link_dump_secret(&secret);
+    let id = Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO link_dump_secrets (id, name, secret_hash, created_at)
+         VALUES (?1, ?2, ?3, datetime('now'))",
+        params![id, clean_name, secret_hash],
+    )
+    .map_err(|e| format!("Link Dump secret create failed: {e}"))?;
+
+    let connection = conn
+        .query_row(
+            "SELECT id, name, created_at, last_used_at, revoked_at, deleted_at
+             FROM link_dump_secrets
+             WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(LinkDumpSecretView {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    created_at: row.get(2)?,
+                    last_used_at: row.get(3)?,
+                    revoked_at: row.get(4)?,
+                    deleted_at: row.get(5)?,
+                    status: "active".to_string(),
+                })
+            },
+        )
+        .map_err(|e| format!("Link Dump secret read failed: {e}"))?;
+
+    Ok(GeneratedLinkDumpSecret { secret, connection })
+}
+
+fn revoke_link_dump_secret_in_db(state: &AppState, id: &str) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.execute(
+        "UPDATE link_dump_secrets
+         SET revoked_at = COALESCE(revoked_at, datetime('now'))
+         WHERE id = ?1 AND deleted_at IS NULL",
+        params![id],
+    )
+    .map_err(|e| format!("Link Dump secret revoke failed: {e}"))?;
+    Ok(())
+}
+
+fn delete_link_dump_secret_in_db(state: &AppState, id: &str) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.execute(
+        "UPDATE link_dump_secrets
+         SET deleted_at = COALESCE(deleted_at, datetime('now'))
+         WHERE id = ?1",
+        params![id],
+    )
+    .map_err(|e| format!("Link Dump secret delete failed: {e}"))?;
+    Ok(())
+}
+
+fn validate_link_dump_secret(
+    state: &AppState,
+    secret: Option<&str>,
+) -> Result<Option<ValidSecretResult>, String> {
+    let Some(secret) = secret.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+
+    let candidate_hash = hash_link_dump_secret(secret);
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, secret_hash
+             FROM link_dump_secrets
+             WHERE revoked_at IS NULL AND deleted_at IS NULL",
+        )
+        .map_err(|e| format!("Link Dump secret validation failed: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| format!("Link Dump secret validation failed: {e}"))?;
+
+    let mut matched: Option<ValidSecretResult> = None;
+    for row in rows {
+        let (id, name, stored_hash) =
+            row.map_err(|e| format!("Link Dump secret validation failed: {e}"))?;
+        if constant_time_eq_str(&candidate_hash, &stored_hash) {
+            matched = Some(ValidSecretResult { id, name });
+        }
+    }
+
+    if let Some(valid) = matched.as_ref() {
+        conn.execute(
+            "UPDATE link_dump_secrets SET last_used_at = datetime('now') WHERE id = ?1",
+            params![valid.id],
+        )
+        .map_err(|e| format!("Link Dump secret last-used update failed: {e}"))?;
+    }
+
+    Ok(matched)
+}
+
+fn insert_link_dump_request_log(
+    state: &AppState,
+    secret_id: Option<&str>,
+    endpoint: &str,
+    summary: &LinkDumpQueueSummary,
+    status: &str,
+    error_message: Option<&str>,
+) {
+    let Ok(conn) = state.db.lock() else {
+        return;
+    };
+    let _ = conn.execute(
+        "INSERT INTO link_dump_request_log (
+            id,
+            secret_id,
+            endpoint,
+            received_count,
+            added_count,
+            skipped_count,
+            invalid_count,
+            status,
+            error_message,
+            created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))",
+        params![
+            Uuid::new_v4().to_string(),
+            secret_id,
+            endpoint,
+            summary.received as i64,
+            summary.added as i64,
+            summary.skipped as i64,
+            summary.invalid as i64,
+            status,
+            error_message
+        ],
+    );
+}
+
+fn snapshot_link_dump_server_status(state: &AppState) -> LinkDumpServerStatus {
+    state
+        .link_dump_server
+        .lock()
+        .map(|runtime| runtime.status.clone())
+        .unwrap_or_default()
+}
+
+fn emit_link_dump_server_status(app: &AppHandle, state: &AppState) {
+    let _ = app.emit_all(
+        "link-dump:server-status",
+        snapshot_link_dump_server_status(state),
+    );
+}
+
+#[tauri::command]
+fn get_link_dump_overview(state: State<AppState>) -> Result<LinkDumpOverview, String> {
+    Ok(LinkDumpOverview {
+        settings: get_link_dump_settings(state.inner())?,
+        secrets: list_link_dump_secrets(state.inner())?,
+        server_status: snapshot_link_dump_server_status(state.inner()),
+    })
+}
+
+#[tauri::command]
+fn update_link_dump_settings(
+    app: AppHandle,
+    state: State<AppState>,
+    patch: LinkDumpSettingsPatch,
+) -> Result<LinkDumpOverview, String> {
+    let settings = update_link_dump_settings_in_db(state.inner(), patch)?;
+    let server_status = restart_link_dump_server_internal(&app, state.inner())?;
+    Ok(LinkDumpOverview {
+        settings,
+        secrets: list_link_dump_secrets(state.inner())?,
+        server_status,
+    })
+}
+
+#[tauri::command]
+fn create_link_dump_secret(
+    state: State<AppState>,
+    name: Option<String>,
+) -> Result<GeneratedLinkDumpSecret, String> {
+    create_link_dump_secret_in_db(state.inner(), name)
+}
+
+#[tauri::command]
+fn revoke_link_dump_secret(
+    state: State<AppState>,
+    id: String,
+) -> Result<Vec<LinkDumpSecretView>, String> {
+    revoke_link_dump_secret_in_db(state.inner(), &id)?;
+    list_link_dump_secrets(state.inner())
+}
+
+#[tauri::command]
+fn delete_link_dump_secret(
+    state: State<AppState>,
+    id: String,
+) -> Result<Vec<LinkDumpSecretView>, String> {
+    delete_link_dump_secret_in_db(state.inner(), &id)?;
+    list_link_dump_secrets(state.inner())
+}
+
+#[tauri::command]
+fn restart_link_dump_server(
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<LinkDumpServerStatus, String> {
+    restart_link_dump_server_internal(&app, state.inner())
+}
+
+fn normalize_link_dump_host(host: &str) -> String {
+    if host.trim() == "127.0.1" {
+        return LINK_DUMP_DEFAULT_HOST.to_string();
+    }
+    host.trim().to_string()
+}
+
+fn is_allowed_link_dump_host(host: &str) -> bool {
+    let normalized = normalize_link_dump_host(host);
+    if normalized.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    normalized
+        .parse::<std::net::IpAddr>()
+        .map(|addr| addr.is_loopback())
+        .unwrap_or(false)
+}
+
+fn link_dump_server_url(settings: &LinkDumpSettings) -> String {
+    format!("http://{}:{}", settings.host, settings.port)
+}
+
+fn restart_link_dump_server_internal(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<LinkDumpServerStatus, String> {
+    stop_link_dump_server(state);
+    start_link_dump_server_from_settings(app, state)
+}
+
+fn stop_link_dump_server(state: &AppState) {
+    let handle = {
+        let Ok(mut runtime) = state.link_dump_server.lock() else {
+            return;
+        };
+        if let Some(shutdown) = runtime.shutdown.take() {
+            shutdown.store(true, Ordering::SeqCst);
+        }
+        runtime.handle.take()
+    };
+
+    if let Some(handle) = handle {
+        let _ = handle.join();
+    }
+
+    if let Ok(mut runtime) = state.link_dump_server.lock() {
+        runtime.status.status = "stopped".to_string();
+        runtime.status.error_message = None;
+    }
+}
+
+fn set_link_dump_server_status(
+    app: &AppHandle,
+    state: &AppState,
+    status: LinkDumpServerStatus,
+) -> LinkDumpServerStatus {
+    if let Ok(mut runtime) = state.link_dump_server.lock() {
+        runtime.status = status.clone();
+    }
+    emit_link_dump_server_status(app, state);
+    status
+}
+
+fn start_link_dump_server_from_settings(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<LinkDumpServerStatus, String> {
+    let mut settings = get_link_dump_settings(state)?;
+    settings.host = normalize_link_dump_host(&settings.host);
+    let url = link_dump_server_url(&settings);
+
+    if !settings.server_enabled {
+        let status = LinkDumpServerStatus {
+            status: "stopped".to_string(),
+            url,
+            error_message: None,
+        };
+        return Ok(set_link_dump_server_status(app, state, status));
+    }
+
+    if !is_allowed_link_dump_host(&settings.host) {
+        let status = LinkDumpServerStatus {
+            status: "error".to_string(),
+            url,
+            error_message: Some("Link Dump Server only supports loopback hosts.".to_string()),
+        };
+        return Ok(set_link_dump_server_status(app, state, status));
+    }
+
+    let bind_addr = format!("{}:{}", settings.host, settings.port);
+    let listener = match TcpListener::bind(&bind_addr) {
+        Ok(listener) => listener,
+        Err(err) => {
+            let message = if err.kind() == std::io::ErrorKind::AddrInUse {
+                format!(
+                    "Link Dump Server could not start. Port {} is already in use.",
+                    settings.port
+                )
+            } else {
+                format!("Link Dump Server could not start: {err}")
+            };
+            let status = LinkDumpServerStatus {
+                status: "error".to_string(),
+                url,
+                error_message: Some(message),
+            };
+            return Ok(set_link_dump_server_status(app, state, status));
+        }
+    };
+
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("Link Dump listener setup failed: {e}"))?;
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_thread = shutdown.clone();
+    let app_handle = app.clone();
+    let url_for_thread = url.clone();
+    let handle = thread::spawn(move || {
+        println!("Server started on {bind_addr}");
+        while !shutdown_thread.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let request_app = app_handle.clone();
+                    thread::spawn(move || {
+                        if let Err(err) = handle_link_dump_stream(stream, request_app) {
+                            eprintln!("Link Dump request rejected: {err}");
+                        }
+                    });
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Err(err) => {
+                    let state = app_handle.state::<AppState>();
+                    let status = LinkDumpServerStatus {
+                        status: "error".to_string(),
+                        url: url_for_thread.clone(),
+                        error_message: Some(format!("Link Dump Server stopped: {err}")),
+                    };
+                    let _ = set_link_dump_server_status(&app_handle, &state, status);
+                    break;
+                }
+            }
+        }
+    });
+
+    let status = LinkDumpServerStatus {
+        status: "running".to_string(),
+        url,
+        error_message: None,
+    };
+    {
+        let mut runtime = state
+            .link_dump_server
+            .lock()
+            .map_err(|_| "Link Dump server lock poisoned")?;
+        runtime.status = status.clone();
+        runtime.shutdown = Some(shutdown);
+        runtime.handle = Some(handle);
+    }
+    emit_link_dump_server_status(app, state);
+    Ok(status)
+}
+
+fn handle_link_dump_stream(mut stream: TcpStream, app: AppHandle) -> Result<(), String> {
+    let request = match read_http_request(&mut stream) {
+        Ok(request) => request,
+        Err(err) => {
+            let _ = write_json_response(
+                &mut stream,
+                400,
+                &json!({ "ok": false, "error": "Bad request" }),
+            );
+            return Err(err);
+        }
+    };
+
+    let path = request.path.split('?').next().unwrap_or("").to_string();
+    if request.method == "OPTIONS" {
+        if is_link_dump_endpoint(&path) {
+            return write_options_response(&mut stream);
+        }
+        return write_json_response(
+            &mut stream,
+            404,
+            &json!({ "ok": false, "error": "Not found" }),
+        );
+    }
+
+    if request.method != "POST" {
+        return write_json_response(
+            &mut stream,
+            405,
+            &json!({ "ok": false, "error": "Method not allowed" }),
+        );
+    }
+
+    let state = app.state::<AppState>();
+    match path.as_str() {
+        "/addYoutubeLinkToQueue/" | "/addYoutubeLinkToQueue" => {
+            handle_add_youtube_link(&app, state.inner(), &mut stream, &request.body)
+        }
+        "/addYoutubeLinksToQueue/" | "/addYoutubeLinksToQueue" => {
+            handle_add_youtube_links(&app, state.inner(), &mut stream, &request.body)
+        }
+        _ => write_json_response(
+            &mut stream,
+            404,
+            &json!({ "ok": false, "error": "Not found" }),
+        ),
+    }
+}
+
+fn is_link_dump_endpoint(path: &str) -> bool {
+    matches!(
+        path,
+        "/addYoutubeLinkToQueue/"
+            | "/addYoutubeLinkToQueue"
+            | "/addYoutubeLinksToQueue/"
+            | "/addYoutubeLinksToQueue"
+    )
+}
+
+fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| format!("Read timeout setup failed: {e}"))?;
+    let mut buffer = Vec::new();
+    let mut temp = [0_u8; 4096];
+    let header_end;
+
+    loop {
+        let read = stream
+            .read(&mut temp)
+            .map_err(|e| format!("HTTP request read failed: {e}"))?;
+        if read == 0 {
+            return Err("HTTP request closed before headers".to_string());
+        }
+        buffer.extend_from_slice(&temp[..read]);
+        if buffer.len() > LINK_DUMP_MAX_BODY_BYTES {
+            return Err("HTTP request too large".to_string());
+        }
+        if let Some(index) = find_header_end(&buffer) {
+            header_end = index;
+            break;
+        }
+    }
+
+    let header_text = std::str::from_utf8(&buffer[..header_end])
+        .map_err(|_| "HTTP headers are not UTF-8".to_string())?;
+    let mut lines = header_text.split("\r\n");
+    let request_line = lines
+        .next()
+        .ok_or_else(|| "Missing HTTP request line".to_string())?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts
+        .next()
+        .ok_or_else(|| "Missing HTTP method".to_string())?
+        .to_string();
+    let path = request_parts
+        .next()
+        .ok_or_else(|| "Missing HTTP path".to_string())?
+        .to_string();
+
+    let mut content_length = 0_usize;
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("content-length") {
+                content_length = value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| "Invalid Content-Length".to_string())?;
+            }
+        }
+    }
+
+    if content_length > LINK_DUMP_MAX_BODY_BYTES {
+        return Err("HTTP body too large".to_string());
+    }
+
+    let body_start = header_end + 4;
+    let mut body = buffer.get(body_start..).unwrap_or_default().to_vec();
+    while body.len() < content_length {
+        let read = stream
+            .read(&mut temp)
+            .map_err(|e| format!("HTTP body read failed: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        body.extend_from_slice(&temp[..read]);
+    }
+    body.truncate(content_length);
+
+    Ok(HttpRequest { method, path, body })
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn write_options_response(stream: &mut TcpStream) -> Result<(), String> {
+    let response = concat!(
+        "HTTP/1.1 204 No Content\r\n",
+        "Access-Control-Allow-Origin: *\r\n",
+        "Access-Control-Allow-Methods: POST, OPTIONS\r\n",
+        "Access-Control-Allow-Headers: Content-Type\r\n",
+        "Access-Control-Max-Age: 86400\r\n",
+        "Content-Length: 0\r\n",
+        "Connection: close\r\n",
+        "\r\n"
+    );
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|e| format!("HTTP response write failed: {e}"))
+}
+
+fn write_json_response(
+    stream: &mut TcpStream,
+    status_code: u16,
+    body: &serde_json::Value,
+) -> Result<(), String> {
+    let status_text = match status_code {
+        200 => "OK",
+        204 => "No Content",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        _ => "OK",
+    };
+    let body = serde_json::to_string(body).map_err(|e| format!("JSON encode failed: {e}"))?;
+    let response = format!(
+        concat!(
+            "HTTP/1.1 {} {}\r\n",
+            "Content-Type: application/json\r\n",
+            "Access-Control-Allow-Origin: *\r\n",
+            "Access-Control-Allow-Methods: POST, OPTIONS\r\n",
+            "Access-Control-Allow-Headers: Content-Type\r\n",
+            "Access-Control-Max-Age: 86400\r\n",
+            "Content-Length: {}\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+            "{}"
+        ),
+        status_code,
+        status_text,
+        body.as_bytes().len(),
+        body
+    );
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|e| format!("HTTP response write failed: {e}"))
+}
+
+fn handle_add_youtube_link(
+    app: &AppHandle,
+    state: &AppState,
+    stream: &mut TcpStream,
+    body: &[u8],
+) -> Result<(), String> {
+    let endpoint = "/addYoutubeLinkToQueue/";
+    let parsed = serde_json::from_slice::<AddYoutubeLinkRequestBody>(body);
+    let parsed = match parsed {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            let summary = LinkDumpQueueSummary {
+                received: 1,
+                added: 0,
+                skipped: 0,
+                invalid: 1,
+            };
+            insert_link_dump_request_log(
+                state,
+                None,
+                endpoint,
+                &summary,
+                "error",
+                Some("Invalid JSON"),
+            );
+            return write_json_response(
+                stream,
+                400,
+                &json!({ "ok": false, "error": "Invalid request body" }),
+            );
+        }
+    };
+
+    let Some(valid_secret) = validate_link_dump_secret(state, parsed.secret.as_deref())? else {
+        let summary = LinkDumpQueueSummary {
+            received: 1,
+            added: 0,
+            skipped: 0,
+            invalid: 0,
+        };
+        insert_link_dump_request_log(state, None, endpoint, &summary, "unauthorized", None);
+        println!("Link Dump request rejected");
+        return write_json_response(
+            stream,
+            401,
+            &json!({ "ok": false, "error": "Unauthorized" }),
+        );
+    };
+
+    let Some(url) = parsed.url.as_deref().and_then(normalize_youtube_url) else {
+        let summary = LinkDumpQueueSummary {
+            received: 1,
+            added: 0,
+            skipped: 0,
+            invalid: 1,
+        };
+        insert_link_dump_request_log(
+            state,
+            Some(&valid_secret.id),
+            endpoint,
+            &summary,
+            "error",
+            Some("Invalid YouTube URL"),
+        );
+        return write_json_response(
+            stream,
+            400,
+            &json!({ "ok": false, "error": "Invalid YouTube URL" }),
+        );
+    };
+
+    let mut summary = LinkDumpQueueSummary {
+        received: 1,
+        added: 0,
+        skipped: 0,
+        invalid: 0,
+    };
+    if add_normalized_youtube_urls_to_queue(app, state, &[url], &mut summary).is_err() {
+        insert_link_dump_request_log(
+            state,
+            Some(&valid_secret.id),
+            endpoint,
+            &summary,
+            "error",
+            Some("Internal server error"),
+        );
+        return write_json_response(
+            stream,
+            500,
+            &json!({ "ok": false, "error": "Internal server error" }),
+        );
+    }
+    insert_link_dump_request_log(
+        state,
+        Some(&valid_secret.id),
+        endpoint,
+        &summary,
+        "ok",
+        None,
+    );
+    println!("Link Dump request accepted");
+    println!("Added {} links to queue", summary.added);
+    write_json_response(
+        stream,
+        200,
+        &json!({
+            "ok": true,
+            "added": summary.added,
+            "skipped": summary.skipped,
+            "message": format!("Added {} YouTube link{} to queue.", summary.added, if summary.added == 1 { "" } else { "s" }),
+        }),
+    )
+}
+
+fn handle_add_youtube_links(
+    app: &AppHandle,
+    state: &AppState,
+    stream: &mut TcpStream,
+    body: &[u8],
+) -> Result<(), String> {
+    let endpoint = "/addYoutubeLinksToQueue/";
+    let parsed = serde_json::from_slice::<AddYoutubeLinksRequestBody>(body);
+    let parsed = match parsed {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            let summary = LinkDumpQueueSummary {
+                received: 0,
+                added: 0,
+                skipped: 0,
+                invalid: 0,
+            };
+            insert_link_dump_request_log(
+                state,
+                None,
+                endpoint,
+                &summary,
+                "error",
+                Some("Invalid JSON"),
+            );
+            return write_json_response(
+                stream,
+                400,
+                &json!({ "ok": false, "error": "Invalid request body" }),
+            );
+        }
+    };
+
+    let Some(valid_secret) = validate_link_dump_secret(state, parsed.secret.as_deref())? else {
+        let summary = LinkDumpQueueSummary {
+            received: parsed.urls.as_ref().map(|urls| urls.len()).unwrap_or(0),
+            added: 0,
+            skipped: 0,
+            invalid: 0,
+        };
+        insert_link_dump_request_log(state, None, endpoint, &summary, "unauthorized", None);
+        println!("Link Dump request rejected");
+        return write_json_response(
+            stream,
+            401,
+            &json!({ "ok": false, "error": "Unauthorized" }),
+        );
+    };
+
+    let urls = parsed.urls.unwrap_or_default();
+    if urls.is_empty() {
+        let summary = LinkDumpQueueSummary {
+            received: 0,
+            added: 0,
+            skipped: 0,
+            invalid: 0,
+        };
+        insert_link_dump_request_log(
+            state,
+            Some(&valid_secret.id),
+            endpoint,
+            &summary,
+            "error",
+            Some("No valid YouTube URLs"),
+        );
+        return write_json_response(
+            stream,
+            400,
+            &json!({ "ok": false, "error": "No valid YouTube URLs" }),
+        );
+    }
+
+    let mut summary = LinkDumpQueueSummary {
+        received: urls.len(),
+        added: 0,
+        skipped: 0,
+        invalid: 0,
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized_urls = Vec::new();
+
+    for raw_url in urls.iter().take(LINK_DUMP_MAX_BATCH_SIZE) {
+        let Some(normalized) = normalize_youtube_url(raw_url) else {
+            summary.invalid += 1;
+            continue;
+        };
+        if !seen.insert(normalized.key.clone()) {
+            summary.skipped += 1;
+            continue;
+        }
+        normalized_urls.push(normalized);
+    }
+
+    if urls.len() > LINK_DUMP_MAX_BATCH_SIZE {
+        summary.skipped += urls.len() - LINK_DUMP_MAX_BATCH_SIZE;
+    }
+
+    if normalized_urls.is_empty() {
+        insert_link_dump_request_log(
+            state,
+            Some(&valid_secret.id),
+            endpoint,
+            &summary,
+            "error",
+            Some("No valid YouTube URLs"),
+        );
+        return write_json_response(
+            stream,
+            400,
+            &json!({ "ok": false, "error": "No valid YouTube URLs" }),
+        );
+    }
+
+    if add_normalized_youtube_urls_to_queue(app, state, &normalized_urls, &mut summary).is_err() {
+        insert_link_dump_request_log(
+            state,
+            Some(&valid_secret.id),
+            endpoint,
+            &summary,
+            "error",
+            Some("Internal server error"),
+        );
+        return write_json_response(
+            stream,
+            500,
+            &json!({ "ok": false, "error": "Internal server error" }),
+        );
+    }
+
+    insert_link_dump_request_log(
+        state,
+        Some(&valid_secret.id),
+        endpoint,
+        &summary,
+        "ok",
+        None,
+    );
+    println!("Link Dump request accepted");
+    println!("Added {} links to queue", summary.added);
+    write_json_response(
+        stream,
+        200,
+        &json!({
+            "ok": true,
+            "received": summary.received,
+            "added": summary.added,
+            "skipped": summary.skipped,
+            "invalid": summary.invalid,
+            "message": format!("Added {} YouTube link{} to queue.", summary.added, if summary.added == 1 { "" } else { "s" }),
+        }),
+    )
+}
+
+fn add_normalized_youtube_urls_to_queue(
+    app: &AppHandle,
+    state: &AppState,
+    normalized_urls: &[NormalizedYoutubeUrl],
+    summary: &mut LinkDumpQueueSummary,
+) -> Result<(), String> {
+    let mut queued_keys = queued_youtube_keys(state)?;
+    let mut jobs = Vec::new();
+
+    for normalized in normalized_urls {
+        if !queued_keys.insert(normalized.key.clone()) {
+            summary.skipped += 1;
+            continue;
+        }
+
+        let request = DownloadRequest {
+            url: normalized.url.clone(),
+            format: LINK_DUMP_DEFAULT_FORMAT.to_string(),
+            output_dir: None,
+            extract_audio: false,
+            audio_format: None,
+            transcribe_text: false,
+            cut_at_timestamp_enabled: true,
+            cut_start_time: None,
+            filename_suffix: Some(LINK_DUMP_DEFAULT_FILENAME_SUFFIX.to_string()),
+            title: None,
+            thumbnail: youtube_thumbnail_url_from_normalized(normalized),
+        };
+        jobs.push(build_download_job(state, request)?);
+    }
+
+    let added_count = jobs.len();
+    enqueue_download_jobs(app, state, jobs)?;
+    summary.added += added_count;
+    Ok(())
+}
+
+fn queued_youtube_keys(state: &AppState) -> Result<std::collections::HashSet<String>, String> {
+    let queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
+    Ok(queue
+        .iter()
+        .filter_map(|job| normalize_youtube_url(&job.url).map(|normalized| normalized.key))
+        .collect())
+}
+
+fn normalize_youtube_url(input: &str) -> Option<NormalizedYoutubeUrl> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parsed = url::Url::parse(trimmed).ok()?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return None;
+    }
+
+    let host = parsed
+        .host_str()?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let host_without_www = host.strip_prefix("www.").unwrap_or(&host);
+    let path_parts = parsed
+        .path_segments()
+        .map(|segments| segments.collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    let video_id = if host_without_www == "youtu.be" {
+        path_parts.first().map(|part| (*part).to_string())
+    } else if matches!(
+        host_without_www,
+        "youtube.com" | "m.youtube.com" | "music.youtube.com"
+    ) {
+        match path_parts
+            .first()
+            .map(|part| part.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("watch") => parsed.query_pairs().find_map(|(name, value)| {
+                if name == "v" {
+                    Some(value.into_owned())
+                } else {
+                    None
+                }
+            }),
+            Some("shorts") | Some("live") | Some("embed") | Some("v") => {
+                path_parts.get(1).map(|part| (*part).to_string())
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }?;
+
+    if !is_plausible_youtube_video_id(&video_id) {
+        return None;
+    }
+
+    Some(NormalizedYoutubeUrl {
+        url: format!("https://www.youtube.com/watch?v={video_id}"),
+        key: format!("youtube:{video_id}"),
+    })
+}
+
+fn is_plausible_youtube_video_id(video_id: &str) -> bool {
+    let len = video_id.len();
+    (6..=64).contains(&len)
+        && video_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn youtube_thumbnail_url_from_normalized(normalized: &NormalizedYoutubeUrl) -> Option<String> {
+    normalized
+        .key
+        .strip_prefix("youtube:")
+        .map(|video_id| format!("https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"))
+}
+
 fn main() {
+    let context = tauri::generate_context!();
     tauri::Builder::default()
         .setup(|app| {
             let config = load_config(&app.handle());
-            let state = AppState::new(config);
+            let db = open_link_dump_db(&app.handle())?;
+            let state = AppState::new(config, db);
             // Load history from disk
             let history = load_history(&app.handle());
             *state.history.lock().map_err(|_| "History lock failed")? = history;
             app.manage(state);
+            let state = app.state::<AppState>();
+            let _ = start_link_dump_server_from_settings(&app.handle(), state.inner());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1933,15 +3287,33 @@ fn main() {
             cancel_download,
             get_history,
             remove_history_entry,
-            clear_history
+            clear_history,
+            get_link_dump_overview,
+            update_link_dump_settings,
+            create_link_dump_secret,
+            revoke_link_dump_secret,
+            delete_link_dump_secret,
+            restart_link_dump_server
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                let state = app_handle.state::<AppState>();
+                stop_link_dump_server(state.inner());
+            }
+        });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn link_dump_test_state() -> AppState {
+        let conn = Connection::open_in_memory().unwrap();
+        run_link_dump_migrations(&conn).unwrap();
+        AppState::new(AppConfig::default(), conn)
+    }
 
     #[test]
     fn rejects_remote_open_targets() {
@@ -2049,5 +3421,148 @@ mod tests {
     #[test]
     fn sanitizes_decimal_timestamp_suffix() {
         assert_eq!(format_timestamp_filename_suffix(13.5), "_t13_5");
+    }
+
+    #[test]
+    fn link_dump_migration_creates_default_settings() {
+        let state = link_dump_test_state();
+        let settings = get_link_dump_settings(&state).unwrap();
+
+        assert!(settings.server_enabled);
+        assert_eq!(settings.host, "127.0.0.1");
+        assert_eq!(settings.port, 2255);
+
+        let conn = state.db.lock().unwrap();
+        let secret_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM link_dump_secrets", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(secret_count, 0);
+    }
+
+    #[test]
+    fn link_dump_secret_is_hashed_and_validates() {
+        let state = link_dump_test_state();
+        let generated =
+            create_link_dump_secret_in_db(&state, Some("Chrome Extension on MacBook".to_string()))
+                .unwrap();
+
+        assert!(generated.secret.starts_with("pfld_"));
+        assert_eq!(generated.connection.status, "active");
+
+        {
+            let conn = state.db.lock().unwrap();
+            let stored_hash: String = conn
+                .query_row(
+                    "SELECT secret_hash FROM link_dump_secrets WHERE id = ?1",
+                    params![generated.connection.id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_ne!(stored_hash, generated.secret);
+            assert_eq!(stored_hash, hash_link_dump_secret(&generated.secret));
+        }
+
+        let valid = validate_link_dump_secret(&state, Some(&generated.secret))
+            .unwrap()
+            .unwrap();
+        assert_eq!(valid.id, generated.connection.id);
+
+        let conn = state.db.lock().unwrap();
+        let last_used_at: Option<String> = conn
+            .query_row(
+                "SELECT last_used_at FROM link_dump_secrets WHERE id = ?1",
+                params![generated.connection.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(last_used_at.is_some());
+    }
+
+    #[test]
+    fn link_dump_secret_rejects_wrong_revoked_and_deleted_values() {
+        let state = link_dump_test_state();
+        let generated =
+            create_link_dump_secret_in_db(&state, Some("Profile A".to_string())).unwrap();
+
+        assert!(validate_link_dump_secret(&state, Some("pfld_wrong"))
+            .unwrap()
+            .is_none());
+
+        revoke_link_dump_secret_in_db(&state, &generated.connection.id).unwrap();
+        assert!(validate_link_dump_secret(&state, Some(&generated.secret))
+            .unwrap()
+            .is_none());
+
+        let second = create_link_dump_secret_in_db(&state, Some("Profile B".to_string())).unwrap();
+        delete_link_dump_secret_in_db(&state, &second.connection.id).unwrap();
+        assert!(validate_link_dump_secret(&state, Some(&second.secret))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn link_dump_secret_list_hides_deleted_connections() {
+        let state = link_dump_test_state();
+        let first = create_link_dump_secret_in_db(&state, Some("Profile A".to_string())).unwrap();
+        let second = create_link_dump_secret_in_db(&state, Some("Profile B".to_string())).unwrap();
+
+        delete_link_dump_secret_in_db(&state, &second.connection.id).unwrap();
+
+        let secrets = list_link_dump_secrets(&state).unwrap();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].id, first.connection.id);
+        assert_eq!(secrets[0].status, "active");
+
+        let conn = state.db.lock().unwrap();
+        let deleted_at: Option<String> = conn
+            .query_row(
+                "SELECT deleted_at FROM link_dump_secrets WHERE id = ?1",
+                params![second.connection.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(deleted_at.is_some());
+    }
+
+    #[test]
+    fn normalizes_youtube_watch_url() {
+        let normalized =
+            normalize_youtube_url("https://www.youtube.com/watch?v=abc123&t=42s&feature=share")
+                .unwrap();
+
+        assert_eq!(normalized.url, "https://www.youtube.com/watch?v=abc123");
+        assert_eq!(normalized.key, "youtube:abc123");
+    }
+
+    #[test]
+    fn normalizes_youtu_be_url() {
+        let normalized = normalize_youtube_url("https://youtu.be/def456?si=tracking").unwrap();
+
+        assert_eq!(normalized.url, "https://www.youtube.com/watch?v=def456");
+        assert_eq!(normalized.key, "youtube:def456");
+    }
+
+    #[test]
+    fn rejects_non_youtube_domains() {
+        assert!(normalize_youtube_url("https://example.com/watch?v=abc123").is_none());
+        assert!(normalize_youtube_url("https://youtube.example.com/watch?v=abc123").is_none());
+    }
+
+    #[test]
+    fn normalizes_shorts_and_live_urls() {
+        assert_eq!(
+            normalize_youtube_url("https://www.youtube.com/shorts/short1")
+                .unwrap()
+                .url,
+            "https://www.youtube.com/watch?v=short1"
+        );
+        assert_eq!(
+            normalize_youtube_url("https://www.youtube.com/live/live99")
+                .unwrap()
+                .url,
+            "https://www.youtube.com/watch?v=live99"
+        );
     }
 }

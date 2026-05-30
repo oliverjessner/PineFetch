@@ -1,6 +1,7 @@
-# 1.4.4
+# 1.4.5
 
 - pagination on the history
+- all settings in history
 
 # 1.4.3
 

@@ -110,9 +110,10 @@
                     <div id="settingsView" class="pf-panel-view pf-stack" hidden>
                         <div class="pf-field">
                             <label class="pf-label" for="outputDir">Output folder</label>
-                            <div class="pf-field-row">
+                            <div class="pf-field-row pf-pinefetch-output-row">
                                 <input id="outputDir" class="pf-input" type="text" placeholder="/Users/..." />
                                 <button id="pickDirBtn" class="pf-btn pf-btn-ghost">Choose</button>
+                                <button id="openFolderBtn" class="pf-btn pf-btn-ghost">Open folder</button>
                             </div>
                         </div>
 
@@ -126,17 +127,16 @@
                             />
                         </label>
 
+                        <div class="pf-row">
+                            <button id="saveSettingsBtn" class="pf-btn">Save settings</button>
+                        </div>
+
                         <div class="pf-field">
                             <span class="pf-label">yt-dlp versions</span>
                             <div class="pf-panel-soft pf-pinefetch-version-info">
                                 <p id="ytDlpInstalledVersion">Installed: -</p>
                                 <p id="ytDlpLatestVersion">Latest: -</p>
                             </div>
-                        </div>
-
-                        <div class="pf-row">
-                            <button id="saveSettingsBtn" class="pf-btn">Save settings</button>
-                            <button id="openFolderBtn" class="pf-btn pf-btn-ghost">Open folder</button>
                         </div>
 
                         <section class="pf-panel-soft pf-pinefetch-log-panel" id="logPanel">

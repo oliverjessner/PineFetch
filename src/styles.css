@@ -142,6 +142,11 @@ body {
     min-width: 140px;
 }
 
+.pf-pinefetch-output-row .pf-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
 .pf-pinefetch-btn-label {
     display: inline-block;
     transition: opacity var(--pf-duration-normal) var(--pf-ease-standard);

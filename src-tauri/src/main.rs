@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use regex::Regex;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -28,6 +28,8 @@ fn default_magic_import_enabled() -> bool {
 fn default_cut_at_timestamp_enabled() -> bool {
     true
 }
+
+const LEGACY_CONFIG_MIGRATION_KEY: &str = "legacy_config_json_migrated";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppConfig {
@@ -453,50 +455,57 @@ fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-fn set_config(app: AppHandle, state: State<AppState>, config: AppConfig) -> Result<(), String> {
+fn set_config(state: State<AppState>, config: AppConfig) -> Result<(), String> {
     let config = normalize_app_config(config);
+    save_config_to_db(state.inner(), &config)?;
     {
         let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
         *cfg = config.clone();
     }
-    save_config(&app, &config)
+    Ok(())
 }
 
 #[tauri::command]
 fn set_selected_preset_key(
-    app: AppHandle,
     state: State<AppState>,
     preset_key: String,
 ) -> Result<AppConfig, String> {
     let selected_preset_key = normalize_download_preset_key(Some(&preset_key));
     let next_config = {
-        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        let mut cfg = cfg.clone();
         cfg.selected_preset_key = Some(selected_preset_key);
         cfg.clone()
     };
 
-    save_config(&app, &next_config)?;
+    save_config_to_db(state.inner(), &next_config)?;
+    {
+        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        *cfg = next_config.clone();
+    }
     Ok(next_config)
 }
 
 #[tauri::command]
-fn cache_last_download_url(
-    app: AppHandle,
-    state: State<AppState>,
-    url: String,
-) -> Result<(), String> {
+fn cache_last_download_url(state: State<AppState>, url: String) -> Result<(), String> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
         return Ok(());
     }
 
     let next_config = {
-        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        let mut cfg = cfg.clone();
         cfg.last_download_url = Some(trimmed.to_string());
         cfg.clone()
     };
 
-    save_config(&app, &next_config)
+    save_config_to_db(state.inner(), &next_config)?;
+    {
+        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        *cfg = next_config;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2366,22 +2375,129 @@ fn migrate_legacy_history_json(app: &AppHandle, state: &AppState) -> Result<(), 
     Ok(())
 }
 
-fn load_config(app: &AppHandle) -> AppConfig {
+fn load_legacy_config_json(app: &AppHandle) -> Option<AppConfig> {
     if let Ok(path) = config_path(app) {
         if let Ok(raw) = fs::read_to_string(path) {
             if let Ok(cfg) = serde_json::from_str::<AppConfig>(&raw) {
-                return normalize_app_config(cfg);
+                return Some(normalize_app_config(cfg));
             }
         }
     }
-    AppConfig::default()
+    None
 }
 
-fn save_config(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
-    let path = config_path(app)?;
-    let data = serde_json::to_string_pretty(config)
-        .map_err(|e| format!("Config serialize failed: {e}"))?;
-    fs::write(path, data).map_err(|e| format!("Config write failed: {e}"))
+fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
+    conn.query_row(
+        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, magic_import_enabled, cut_at_timestamp_enabled, last_download_url
+         FROM app_config
+         WHERE id = 1",
+        [],
+        |row| {
+            Ok(normalize_app_config(AppConfig {
+                yt_dlp_path: row.get(0)?,
+                default_output_dir: row.get(1)?,
+                selected_preset_key: row.get(2)?,
+                magic_import_enabled: row.get::<_, i64>(3)? != 0,
+                cut_at_timestamp_enabled: row.get::<_, i64>(4)? != 0,
+                last_download_url: row.get(5)?,
+            }))
+        },
+    )
+}
+
+fn load_config_from_db(conn: &Connection) -> Result<AppConfig, String> {
+    get_app_config_from_conn(conn).map_err(|e| format!("Config read failed: {e}"))
+}
+
+fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite::Result<()> {
+    let config = normalize_app_config(config.clone());
+    conn.execute(
+        "INSERT INTO app_config (
+            id,
+            yt_dlp_path,
+            default_output_dir,
+            selected_preset_key,
+            magic_import_enabled,
+            cut_at_timestamp_enabled,
+            last_download_url,
+            created_at,
+            updated_at
+        ) VALUES (
+            1,
+            ?1,
+            ?2,
+            ?3,
+            ?4,
+            ?5,
+            ?6,
+            datetime('now'),
+            datetime('now')
+        )
+        ON CONFLICT(id) DO UPDATE SET
+            yt_dlp_path = excluded.yt_dlp_path,
+            default_output_dir = excluded.default_output_dir,
+            selected_preset_key = excluded.selected_preset_key,
+            magic_import_enabled = excluded.magic_import_enabled,
+            cut_at_timestamp_enabled = excluded.cut_at_timestamp_enabled,
+            last_download_url = excluded.last_download_url,
+            updated_at = datetime('now')",
+        params![
+            config.yt_dlp_path,
+            config.default_output_dir,
+            config.selected_preset_key,
+            if config.magic_import_enabled { 1 } else { 0 },
+            if config.cut_at_timestamp_enabled {
+                1
+            } else {
+                0
+            },
+            config.last_download_url,
+        ],
+    )?;
+    Ok(())
+}
+
+fn save_config_to_db(state: &AppState, config: &AppConfig) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    upsert_app_config_in_conn(&conn, config).map_err(|e| format!("Config write failed: {e}"))
+}
+
+fn get_app_meta_value(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT value FROM app_meta WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+fn set_app_meta_value(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO app_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+fn migrate_legacy_config_json(app: &AppHandle, conn: &Connection) -> Result<(), String> {
+    let already_migrated = get_app_meta_value(conn, LEGACY_CONFIG_MIGRATION_KEY)
+        .map_err(|e| format!("Config migration check failed: {e}"))?
+        .as_deref()
+        == Some("1");
+
+    if already_migrated {
+        return Ok(());
+    }
+
+    if let Some(config) = load_legacy_config_json(app) {
+        upsert_app_config_in_conn(conn, &config)
+            .map_err(|e| format!("Config migration failed: {e}"))?;
+    }
+
+    set_app_meta_value(conn, LEGACY_CONFIG_MIGRATION_KEY, "1")
+        .map_err(|e| format!("Config migration marker failed: {e}"))?;
+    Ok(())
 }
 
 fn link_dump_db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -2395,7 +2511,7 @@ fn open_link_dump_db(app: &AppHandle) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|e| format!("SQLite open failed: {e}"))?;
     run_link_dump_migrations(&conn)
         .map_err(|e| format!("Link Dump SQLite migration failed: {e}"))?;
-    println!("Link Dump SQLite migration completed");
+    println!("SQLite migration completed");
     Ok(conn)
 }
 
@@ -2425,6 +2541,45 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             2255,
             datetime('now'),
             datetime('now')
+        );
+
+        CREATE TABLE IF NOT EXISTS app_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            yt_dlp_path TEXT,
+            default_output_dir TEXT,
+            selected_preset_key TEXT,
+            magic_import_enabled INTEGER NOT NULL DEFAULT 1,
+            cut_at_timestamp_enabled INTEGER NOT NULL DEFAULT 1,
+            last_download_url TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        INSERT OR IGNORE INTO app_config (
+            id,
+            yt_dlp_path,
+            default_output_dir,
+            selected_preset_key,
+            magic_import_enabled,
+            cut_at_timestamp_enabled,
+            last_download_url,
+            created_at,
+            updated_at
+        ) VALUES (
+            1,
+            NULL,
+            NULL,
+            'best',
+            1,
+            1,
+            NULL,
+            datetime('now'),
+            datetime('now')
+        );
+
+        CREATE TABLE IF NOT EXISTS app_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS link_dump_secrets (
@@ -3442,8 +3597,9 @@ fn main() {
     let context = tauri::generate_context!();
     tauri::Builder::default()
         .setup(|app| {
-            let config = load_config(&app.handle());
             let db = open_link_dump_db(&app.handle())?;
+            migrate_legacy_config_json(&app.handle(), &db)?;
+            let config = load_config_from_db(&db)?;
             let state = AppState::new(config, db);
             migrate_legacy_history_json(&app.handle(), &state)?;
             app.manage(state);
@@ -3601,6 +3757,54 @@ mod tests {
         assert_eq!(
             config.selected_preset_key.as_deref(),
             Some(DEFAULT_DOWNLOAD_PRESET_KEY)
+        );
+    }
+
+    #[test]
+    fn app_config_defaults_are_loaded_from_sqlite() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_link_dump_migrations(&conn).unwrap();
+
+        let config = load_config_from_db(&conn).unwrap();
+
+        assert_eq!(
+            config.selected_preset_key.as_deref(),
+            Some(DEFAULT_DOWNLOAD_PRESET_KEY)
+        );
+        assert!(config.magic_import_enabled);
+        assert!(config.cut_at_timestamp_enabled);
+        assert!(config.yt_dlp_path.is_none());
+        assert!(config.default_output_dir.is_none());
+        assert!(config.last_download_url.is_none());
+    }
+
+    #[test]
+    fn app_config_is_stored_in_sqlite() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_link_dump_migrations(&conn).unwrap();
+        let config = AppConfig {
+            yt_dlp_path: Some("/opt/pinefetch/yt-dlp".to_string()),
+            default_output_dir: Some("/Users/example/Downloads".to_string()),
+            selected_preset_key: Some("audio_mp3".to_string()),
+            magic_import_enabled: false,
+            cut_at_timestamp_enabled: false,
+            last_download_url: Some("https://example.com/watch".to_string()),
+        };
+
+        upsert_app_config_in_conn(&conn, &config).unwrap();
+        let loaded = load_config_from_db(&conn).unwrap();
+
+        assert_eq!(loaded.yt_dlp_path.as_deref(), Some("/opt/pinefetch/yt-dlp"));
+        assert_eq!(
+            loaded.default_output_dir.as_deref(),
+            Some("/Users/example/Downloads")
+        );
+        assert_eq!(loaded.selected_preset_key.as_deref(), Some("audio_mp3"));
+        assert!(!loaded.magic_import_enabled);
+        assert!(!loaded.cut_at_timestamp_enabled);
+        assert_eq!(
+            loaded.last_download_url.as_deref(),
+            Some("https://example.com/watch")
         );
     }
 

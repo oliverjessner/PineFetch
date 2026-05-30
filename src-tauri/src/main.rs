@@ -160,6 +160,12 @@ struct HistoryEntry {
     completed_at: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct HistoryPage {
+    entries: Vec<HistoryEntry>,
+    has_more: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct InstalledYtDlpVersion {
     version: String,
@@ -399,7 +405,6 @@ struct AppState {
     current_job_id: Mutex<Option<String>>,
     current_child: Mutex<Option<Arc<Mutex<Child>>>>,
     cancel_requested: Mutex<Option<String>>,
-    history: Mutex<Vec<HistoryEntry>>,
 }
 
 impl AppState {
@@ -414,7 +419,6 @@ impl AppState {
             current_job_id: Mutex::new(None),
             current_child: Mutex::new(None),
             cancel_requested: Mutex::new(None),
-            history: Mutex::new(Vec::new()),
         }
     }
 }
@@ -875,8 +879,14 @@ fn cancel_download(app: AppHandle, state: State<AppState>, id: String) -> Result
 }
 
 #[tauri::command]
-fn get_history(state: State<AppState>) -> Result<Vec<HistoryEntry>, String> {
-    list_history_entries_from_db(state.inner())
+fn get_history(
+    state: State<AppState>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<HistoryPage, String> {
+    let limit = limit.unwrap_or(50).clamp(1, 100);
+    let offset = offset.unwrap_or(0);
+    list_history_page_from_db(state.inner(), limit, offset)
 }
 
 fn detect_platform(url: &str) -> Option<String> {
@@ -1001,30 +1011,17 @@ fn add_history_entry_on_success(
         completed_at: Some(now),
     };
 
-    let mut history = match state.history.lock() {
-        Ok(h) => h,
-        Err(_) => return,
-    };
-
-    history.push(entry.clone());
-    drop(history);
     let _ = insert_history_entry_in_db(state, &entry);
 }
 
 #[tauri::command]
 fn remove_history_entry(state: State<AppState>, id: String) -> Result<(), String> {
-    let mut history = state.history.lock().map_err(|_| "History lock poisoned")?;
-    history.retain(|entry| entry.id != id);
-    drop(history);
     delete_history_entry_from_db(state.inner(), &id)?;
     Ok(())
 }
 
 #[tauri::command]
 fn clear_history(state: State<AppState>) -> Result<(), String> {
-    let mut history = state.history.lock().map_err(|_| "History lock poisoned")?;
-    history.clear();
-    drop(history);
     clear_history_entries_in_db(state.inner())?;
     Ok(())
 }
@@ -2248,18 +2245,34 @@ fn optional_i64_to_millis(value: Option<i64>) -> Option<u64> {
     value.map(i64_to_millis)
 }
 
-fn list_history_entries_from_db(state: &AppState) -> Result<Vec<HistoryEntry>, String> {
+fn count_history_entries_in_db(state: &AppState) -> Result<u64, String> {
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM history_entries", [], |row| row.get(0))
+        .map_err(|e| format!("History read failed: {e}"))?;
+    Ok(count.max(0) as u64)
+}
+
+fn list_history_page_from_db(
+    state: &AppState,
+    limit: u32,
+    offset: u32,
+) -> Result<HistoryPage, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM history_entries", [], |row| row.get(0))
+        .map_err(|e| format!("History read failed: {e}"))?;
     let mut stmt = conn
         .prepare(
             "SELECT id, url, title, filename, thumbnail, upload_date, platform, output_path, created_at, completed_at
              FROM history_entries
-             ORDER BY COALESCE(completed_at, created_at) DESC",
+             ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC, id DESC
+             LIMIT ?1 OFFSET ?2",
         )
         .map_err(|e| format!("History read failed: {e}"))?;
 
     let rows = stmt
-        .query_map([], |row| {
+        .query_map(params![i64::from(limit), i64::from(offset)], |row| {
             let created_at: i64 = row.get(8)?;
             let completed_at: Option<i64> = row.get(9)?;
             Ok(HistoryEntry {
@@ -2283,7 +2296,16 @@ fn list_history_entries_from_db(state: &AppState) -> Result<Vec<HistoryEntry>, S
             row.map_err(|e| format!("History read failed: {e}"))?,
         ));
     }
-    Ok(entries)
+
+    let loaded_count = u64::from(offset).saturating_add(entries.len() as u64);
+    Ok(HistoryPage {
+        entries,
+        has_more: loaded_count < total.max(0) as u64,
+    })
+}
+
+fn list_history_entries_from_db(state: &AppState) -> Result<Vec<HistoryEntry>, String> {
+    Ok(list_history_page_from_db(state, u32::MAX, 0)?.entries)
 }
 
 fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<(), String> {
@@ -2334,7 +2356,7 @@ fn clear_history_entries_in_db(state: &AppState) -> Result<(), String> {
 }
 
 fn migrate_legacy_history_json(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    if !list_history_entries_from_db(state)?.is_empty() {
+    if count_history_entries_in_db(state)? > 0 {
         return Ok(());
     }
 
@@ -3424,8 +3446,6 @@ fn main() {
             let db = open_link_dump_db(&app.handle())?;
             let state = AppState::new(config, db);
             migrate_legacy_history_json(&app.handle(), &state)?;
-            let history = list_history_entries_from_db(&state)?;
-            *state.history.lock().map_err(|_| "History lock failed")? = history;
             app.manage(state);
             let state = app.state::<AppState>();
             let _ = start_link_dump_server_from_settings(&app.handle(), state.inner());
@@ -3686,6 +3706,40 @@ mod tests {
             Some("https://i.ytimg.com/vi/abc123/mqdefault.jpg")
         );
         assert_eq!(entries[0].upload_date.as_deref(), Some("20240501"));
+    }
+
+    #[test]
+    fn history_entries_are_paged_newest_first() {
+        let state = link_dump_test_state();
+
+        for index in 0..55 {
+            let timestamp = 1_700_000_000_000 + index;
+            let entry = HistoryEntry {
+                id: format!("history-{index:02}"),
+                url: format!("https://example.com/video/{index}"),
+                title: Some(format!("Example {index}")),
+                filename: Some(format!("example-{index}.mp4")),
+                thumbnail: None,
+                upload_date: None,
+                platform: Some("example".to_string()),
+                output_path: None,
+                created_at: timestamp,
+                completed_at: Some(timestamp),
+            };
+            insert_history_entry_in_db(&state, &entry).unwrap();
+        }
+
+        let first_page = list_history_page_from_db(&state, 50, 0).unwrap();
+        let second_page = list_history_page_from_db(&state, 50, 50).unwrap();
+
+        assert_eq!(first_page.entries.len(), 50);
+        assert!(first_page.has_more);
+        assert_eq!(first_page.entries[0].id, "history-54");
+        assert_eq!(first_page.entries[49].id, "history-05");
+        assert_eq!(second_page.entries.len(), 5);
+        assert!(!second_page.has_more);
+        assert_eq!(second_page.entries[0].id, "history-04");
+        assert_eq!(second_page.entries[4].id, "history-00");
     }
 
     #[test]

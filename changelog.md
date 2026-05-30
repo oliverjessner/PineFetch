@@ -1,3 +1,7 @@
+# 1.4.4
+
+- pagination on the history
+
 # 1.4.3
 
 - fix presets for sent pinefect-link-dump links

@@ -17,6 +17,9 @@ const state = Object.seal({
     linkDump: null,
     generatedLinkDumpSecret: null,
     activeView: 'download',
+    historyOffset: 0,
+    historyHasMore: false,
+    historyLoading: false,
 });
 const els = Object.seal({
     magicImportTrigger: document.getElementById('magicImportTrigger'),
@@ -80,6 +83,7 @@ const els = Object.seal({
     viewLinkDumpBtn: document.getElementById('viewLinkDumpBtn'),
     viewSettingsBtn: document.getElementById('viewSettingsBtn'),
     linkDumpExtensionRepoLink: document.getElementById('linkDumpExtensionRepoLink'),
+    loadMoreHistoryBtn: document.getElementById('loadMoreHistoryBtn'),
     clearHistoryBtn: document.getElementById('clearHistoryBtn'),
     queueContextMenu: document.getElementById('queueContextMenu'),
     queueContextDownloads: document.getElementById('queueContextDownloads'),
@@ -158,6 +162,7 @@ const findPresetForDownloadJob = job =>
             (job?.filename_suffix ?? null) === (preset.filenameSuffix ?? null)
     ) || null;
 const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
+const historyPageSize = 50;
 const cancellableJobStates = new Set(['downloading', 'transcribing']);
 const queueBusyJobStates = new Set(['downloading', 'transcribing', 'cancelling']);
 const removableJobStates = new Set(['queued', 'success', 'error', 'cancelled']);
@@ -951,96 +956,132 @@ const formatUploadDate = uploadDate => {
     return raw;
 };
 
-const renderHistory = async () => {
+const setHistoryLoading = isLoading => {
+    state.historyLoading = isLoading;
+    els.loadMoreHistoryBtn.disabled = isLoading;
+    els.clearHistoryBtn.disabled = isLoading;
+    els.loadMoreHistoryBtn.textContent = isLoading ? 'Loading...' : 'Load more';
+};
+
+const updateHistoryActions = () => {
+    els.loadMoreHistoryBtn.hidden = !state.historyHasMore;
+};
+
+const createHistoryItem = entry => {
+    const item = document.createElement('div');
+    item.className = `pf-history-item ${entry.thumbnail ? '' : 'pf-no-thumb'}`;
+
+    item.onclick = async () => {
+        // Rust uses snake_case: output_path, not outputPath
+        const outputPath = entry.output_path || entry.outputPath;
+        if (outputPath && invoke) {
+            try {
+                const exists = await invoke('open_file_path', { path: outputPath });
+                if (!exists) {
+                    appendLog(`[history] File not found: ${outputPath}`, true);
+                }
+            } catch (err) {
+                appendLog(`[open] ${err}`, true);
+            }
+        }
+    };
+
+    const content = document.createElement('div');
+    content.className = 'pf-history-content';
+
+    const title = document.createElement('div');
+    title.className = 'pf-history-title';
+    title.textContent = entry.title || entry.filename || entry.url;
+    content.appendChild(title);
+
+    const meta = document.createElement('div');
+    meta.className = 'pf-history-meta';
+    const dateStr = formatHistoryDate(entry.completed_at);
+    const platform = entry.platform || detectPlatform(entry.url) || 'unknown';
+    const uploadDate = formatUploadDate(entry.upload_date);
+    appendTextSpans(meta, [
+        platform,
+        entry.filename || '',
+        uploadDate ? `uploaded ${uploadDate}` : '',
+        dateStr,
+    ]);
+    content.appendChild(meta);
+
+    item.appendChild(content);
+
+    if (entry.thumbnail) {
+        const thumb = document.createElement('div');
+        thumb.className = 'pf-history-thumb';
+        thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
+        item.appendChild(thumb);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'pf-history-item-remove-btn';
+    removeBtn.textContent = '×';
+    removeBtn.title = 'Remove from history';
+    removeBtn.onclick = async event => {
+        event.stopPropagation();
+        try {
+            await invoke('remove_history_entry', { id: entry.id });
+            void renderHistory();
+        } catch (err) {
+            appendLog(`[history] ${err}`, true);
+        }
+    };
+    item.appendChild(removeBtn);
+
+    return item;
+};
+
+const renderHistory = async ({ append = false } = {}) => {
     if (!invoke) {
         els.historyList.replaceChildren();
         els.historyHint.hidden = true;
+        state.historyHasMore = false;
+        updateHistoryActions();
         return;
     }
 
-    try {
-        const history = await invoke('get_history');
-        els.historyList.replaceChildren();
+    if (state.historyLoading) return;
 
-        if (history.length === 0) {
+    const offset = append ? state.historyOffset : 0;
+    if (!append) {
+        state.historyOffset = 0;
+        state.historyHasMore = false;
+        els.historyList.replaceChildren();
+        els.historyHint.hidden = true;
+        updateHistoryActions();
+    }
+
+    setHistoryLoading(true);
+
+    try {
+        const page = await invoke('get_history', { limit: historyPageSize, offset });
+        const entries = Array.isArray(page) ? page : page?.entries || [];
+        const hasMore = Array.isArray(page)
+            ? entries.length === historyPageSize
+            : Boolean(page?.has_more ?? page?.hasMore);
+
+        if (!append && entries.length === 0) {
             els.historyHint.hidden = false;
+            state.historyOffset = 0;
+            state.historyHasMore = false;
             return;
         }
 
         els.historyHint.hidden = true;
 
-        // Sort by completed_at descending (newest first)
-        const sorted = [...history].sort((a, b) => (b.completed_at || 0) - (a.completed_at || 0));
-
-        sorted.forEach(entry => {
-            const item = document.createElement('div');
-            item.className = `pf-history-item ${entry.thumbnail ? '' : 'pf-no-thumb'}`;
-
-            item.onclick = async () => {
-                // Rust uses snake_case: output_path, not outputPath
-                const outputPath = entry.output_path || entry.outputPath;
-                if (outputPath && invoke) {
-                    try {
-                        const exists = await invoke('open_file_path', { path: outputPath });
-                        if (!exists) {
-                            appendLog(`[history] File not found: ${outputPath}`, true);
-                        }
-                    } catch (err) {
-                        appendLog(`[open] ${err}`, true);
-                    }
-                }
-            };
-
-            const content = document.createElement('div');
-            content.className = 'pf-history-content';
-
-            const title = document.createElement('div');
-            title.className = 'pf-history-title';
-            title.textContent = entry.title || entry.filename || entry.url;
-            content.appendChild(title);
-
-            const meta = document.createElement('div');
-            meta.className = 'pf-history-meta';
-            const dateStr = formatHistoryDate(entry.completed_at);
-            const platform = entry.platform || detectPlatform(entry.url) || 'unknown';
-            const uploadDate = formatUploadDate(entry.upload_date);
-            appendTextSpans(meta, [
-                platform,
-                entry.filename || '',
-                uploadDate ? `uploaded ${uploadDate}` : '',
-                dateStr,
-            ]);
-            content.appendChild(meta);
-
-            item.appendChild(content);
-
-            if (entry.thumbnail) {
-                const thumb = document.createElement('div');
-                thumb.className = 'pf-history-thumb';
-                thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
-                item.appendChild(thumb);
-            }
-
-            // Add remove button (top-right corner)
-            const removeBtn = document.createElement('button');
-            removeBtn.className = 'pf-history-item-remove-btn';
-            removeBtn.textContent = '×';
-            removeBtn.title = 'Remove from history';
-            removeBtn.onclick = async event => {
-                event.stopPropagation();
-                try {
-                    await invoke('remove_history_entry', { id: entry.id });
-                    void renderHistory();
-                } catch (err) {
-                    appendLog(`[history] ${err}`, true);
-                }
-            };
-            item.appendChild(removeBtn);
-
-            els.historyList.appendChild(item);
+        entries.forEach(entry => {
+            els.historyList.appendChild(createHistoryItem(entry));
         });
+        state.historyOffset = offset + entries.length;
+        state.historyHasMore = hasMore;
     } catch (err) {
         appendLog(`[history] ${err}`, true);
+    } finally {
+        setHistoryLoading(false);
+        updateHistoryActions();
     }
 };
 
@@ -1884,10 +1925,17 @@ const bindEvents = () => {
     els.linkDumpExtensionRepoLink.addEventListener('click', event => {
         void openLinkDumpExtensionRepo(event);
     });
-    els.clearHistoryBtn.addEventListener('click', () => {
-        if (invoke) {
-            void invoke('clear_history');
-            void renderHistory();
+    els.loadMoreHistoryBtn.addEventListener('click', () => {
+        void renderHistory({ append: true });
+    });
+    els.clearHistoryBtn.addEventListener('click', async () => {
+        if (!invoke) return;
+
+        try {
+            await invoke('clear_history');
+            await renderHistory();
+        } catch (err) {
+            appendLog(`[history] ${err}`, true);
         }
     });
     els.queueContextMenu.addEventListener('contextmenu', event => {

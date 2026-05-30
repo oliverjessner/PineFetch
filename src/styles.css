@@ -276,6 +276,10 @@ body {
     gap: var(--pf-space-xl);
 }
 
+.pf-pinefetch-history-load-more {
+    margin-right: auto;
+}
+
 .pf-pinefetch-queue-actions {
     display: flex;
     justify-content: space-between;

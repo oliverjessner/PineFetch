@@ -1,3 +1,7 @@
+# 1.4.6
+
+- fix for time stamps
+
 # 1.4.5
 
 - pagination on the history

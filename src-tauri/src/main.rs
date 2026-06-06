@@ -76,6 +76,8 @@ struct DownloadRequest {
     thumbnail: Option<String>,
     #[serde(default)]
     upload_date: Option<String>,
+    #[serde(default)]
+    timestamp: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +92,7 @@ struct DownloadJob {
     title: Option<String>,
     thumbnail: Option<String>,
     upload_date: Option<String>,
+    timestamp: Option<i64>,
     cut_start_time: Option<f64>,
     filename_suffix: Option<String>,
 }
@@ -136,6 +139,7 @@ struct InfoResponse {
     duration: Option<i64>,
     thumbnail: Option<String>,
     upload_date: Option<String>,
+    timestamp: Option<i64>,
     formats: Option<Vec<InfoFormat>>,
     description: Option<String>,
     id: Option<String>,
@@ -153,6 +157,8 @@ struct HistoryEntry {
     thumbnail: Option<String>,
     #[serde(default)]
     upload_date: Option<String>,
+    #[serde(default)]
+    timestamp: Option<i64>,
     #[serde(default)]
     platform: Option<String>,
     #[serde(default)]
@@ -594,7 +600,7 @@ fn load_info_with_yt_dlp(
     deno: Option<String>,
     url: String,
 ) -> Result<InfoResponse, String> {
-    let mut command = Command::new(yt_dlp);
+    let mut command = Command::new(&yt_dlp);
     command.args(["--dump-json", "--no-playlist", "--no-warnings"]);
     if let Some(deno) = deno {
         command.arg("--js-runtimes");
@@ -659,6 +665,10 @@ fn load_info_with_yt_dlp(
             .or_else(|| value.get("release_date"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        timestamp: value
+            .get("timestamp")
+            .or_else(|| value.get("release_timestamp"))
+            .and_then(json_value_to_i64),
         formats,
         description: value
             .get("description")
@@ -669,6 +679,19 @@ fn load_info_with_yt_dlp(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     })
+}
+
+fn json_value_to_i64(value: &serde_json::Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .map(|value| value.trunc() as i64)
+        })
+        .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
 }
 
 #[tauri::command]
@@ -788,6 +811,7 @@ fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<Down
         title: request.title,
         thumbnail: request.thumbnail,
         upload_date: request.upload_date,
+        timestamp: request.timestamp,
         cut_start_time,
         filename_suffix: normalize_filename_suffix(request.filename_suffix.as_deref()),
     })
@@ -968,12 +992,13 @@ fn hydrate_history_metadata(
     state: &AppState,
     job: &DownloadJob,
     filename: Option<&str>,
-) -> (Option<String>, Option<String>, Option<String>) {
+) -> (Option<String>, Option<String>, Option<String>, Option<i64>) {
     let mut title = trim_optional_string(job.title.clone());
     let mut thumbnail = trim_optional_string(job.thumbnail.clone());
     let mut upload_date = trim_optional_string(job.upload_date.clone());
+    let mut timestamp = job.timestamp;
 
-    if title.is_none() || thumbnail.is_none() || upload_date.is_none() {
+    if title.is_none() || thumbnail.is_none() || upload_date.is_none() || timestamp.is_none() {
         if let Ok(yt_dlp) = resolve_yt_dlp(app, state) {
             let deno = resolve_deno_executable(app);
             if let Ok(info) = load_info_with_yt_dlp(yt_dlp, deno, job.url.clone()) {
@@ -986,6 +1011,9 @@ fn hydrate_history_metadata(
                 if upload_date.is_none() {
                     upload_date = trim_optional_string(info.upload_date);
                 }
+                if timestamp.is_none() {
+                    timestamp = info.timestamp;
+                }
             }
         }
     }
@@ -994,7 +1022,7 @@ fn hydrate_history_metadata(
         title = title_from_filename(filename);
     }
 
-    (title, thumbnail, upload_date)
+    (title, thumbnail, upload_date, timestamp)
 }
 
 fn add_history_entry_on_success(
@@ -1004,7 +1032,7 @@ fn add_history_entry_on_success(
     output_path: Option<&str>,
 ) {
     let filename = filename_from_path(output_path);
-    let (title, thumbnail, upload_date) =
+    let (title, thumbnail, upload_date, timestamp) =
         hydrate_history_metadata(app, state, job, filename.as_deref());
     let now = current_timestamp_millis();
     let entry = HistoryEntry {
@@ -1014,6 +1042,7 @@ fn add_history_entry_on_success(
         filename,
         thumbnail,
         upload_date,
+        timestamp,
         platform: detect_platform(&job.url),
         output_path: output_path.map(|s| s.to_string()),
         created_at: now,
@@ -1199,7 +1228,7 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
                                     &app_handle,
                                     &state_handle,
                                     &job,
-                                    Some(transcript_path.as_str()),
+                                    run_result.output_path.as_deref(),
                                 );
                             }
                             Err(err) => {
@@ -1265,6 +1294,7 @@ fn run_download_job(
     let ffmpeg_location = resolve_ffmpeg_location(app, &yt_dlp);
     let deno_path = resolve_deno_executable(app);
     let output_template = build_output_template(&job.output_dir, job.filename_suffix.as_deref());
+    let output_template_for_fallback = output_template.clone();
 
     let mut args = vec![
         "--no-playlist".to_string(),
@@ -1273,6 +1303,8 @@ fn run_download_job(
         "--no-color".to_string(),
         "--print".to_string(),
         "after_move:filepath".to_string(),
+        "--print".to_string(),
+        "after_video:filepath".to_string(),
         "-f".to_string(),
         job.format.clone(),
         "-o".to_string(),
@@ -1320,7 +1352,7 @@ fn run_download_job(
 
     args.push(job.url.clone());
 
-    let mut command = Command::new(yt_dlp);
+    let mut command = Command::new(&yt_dlp);
     command.args(args);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -1342,7 +1374,7 @@ fn run_download_job(
 
     let progress_re = Regex::new(r"\[download\]\s+([\d\.]+)%.*?at\s+([^\s]+).*?ETA\s+([^\s]+)")
         .map_err(|e| format!("Regex error: {e}"))?;
-    let output_path_capture: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let output_path_capture: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
     let app_stdout = app.clone();
     let id_stdout = job.id.clone();
@@ -1375,9 +1407,9 @@ fn run_download_job(
                     );
                 }
 
-                if let Some(path_line) = parse_after_move_filepath(&line) {
+                if let Some(path_line) = parse_yt_dlp_filepath(&line) {
                     if let Ok(mut slot) = output_path_for_stdout.lock() {
-                        *slot = Some(path_line);
+                        slot.push(path_line);
                     }
                 }
             }
@@ -1427,10 +1459,18 @@ fn run_download_job(
     let mut output_path = output_path_capture
         .lock()
         .ok()
-        .and_then(|guard| guard.clone())
-        .filter(|candidate| Path::new(candidate).exists());
+        .and_then(|guard| select_existing_output_path(&guard));
 
     if status.success() {
+        if output_path.is_none() {
+            output_path = resolve_existing_output_path_fallback(
+                job,
+                &yt_dlp,
+                deno_path.as_deref(),
+                &output_template_for_fallback,
+            );
+        }
+
         if let Some(cut_start_time) = job.cut_start_time {
             let trimmed_path = trim_downloaded_file(
                 app,
@@ -1630,15 +1670,209 @@ fn format_timestamp_filename_suffix(seconds: f64) -> String {
     format!("_t{timestamp}")
 }
 
-fn parse_after_move_filepath(line: &str) -> Option<String> {
+fn select_existing_output_path(candidates: &[String]) -> Option<String> {
+    let existing = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, candidate)| {
+            let path = Path::new(candidate.as_str());
+            let metadata = path.metadata().ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            Some((index, candidate, metadata.len(), is_format_part_path(path)))
+        })
+        .collect::<Vec<_>>();
+
+    if let Some((_, candidate, _, _)) = existing.iter().rev().find(|(_, _, _, is_part)| !*is_part) {
+        return Some((*candidate).clone());
+    }
+
+    existing
+        .into_iter()
+        .max_by(|left, right| left.2.cmp(&right.2).then_with(|| left.0.cmp(&right.0)))
+        .map(|(_, candidate, _, _)| candidate.clone())
+}
+
+fn is_format_part_path(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .and_then(|stem| stem.rsplit_once(".f"))
+        .map(|(_, suffix)| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+        .unwrap_or(false)
+}
+
+fn parse_yt_dlp_filepath(line: &str) -> Option<String> {
     let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('[') {
+    if trimmed.is_empty() {
         return None;
     }
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+
+    for prefix in [
+        "[download] Destination:",
+        "[ExtractAudio] Destination:",
+        "[Metadata] Writing metadata to:",
+    ] {
+        if let Some(candidate) = trimmed.strip_prefix(prefix) {
+            return normalize_filepath_candidate(candidate);
+        }
+    }
+
+    if let Some(candidate) = trimmed.strip_prefix("[Merger] Merging formats into ") {
+        return normalize_filepath_candidate(candidate);
+    }
+
+    if let Some(candidate) = trimmed
+        .strip_prefix("[download] ")
+        .and_then(|value| value.strip_suffix(" has already been downloaded"))
+    {
+        return normalize_filepath_candidate(candidate);
+    }
+
+    if trimmed.starts_with('[') {
         return None;
     }
-    Some(trimmed.to_string())
+
+    normalize_filepath_candidate(trimmed)
+}
+
+fn normalize_filepath_candidate(raw: &str) -> Option<String> {
+    let mut candidate = raw.trim();
+    if candidate.len() >= 2 {
+        let bytes = candidate.as_bytes();
+        if (bytes[0] == b'"' && bytes[candidate.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[candidate.len() - 1] == b'\'')
+        {
+            candidate = &candidate[1..candidate.len() - 1];
+        }
+    }
+    let candidate = candidate.trim();
+    if matches!(candidate, "" | "NA" | "N/A" | "None" | "null") {
+        return None;
+    }
+    if candidate.starts_with("http://") || candidate.starts_with("https://") {
+        return None;
+    }
+    Some(candidate.to_string())
+}
+
+fn resolve_existing_output_path_fallback(
+    job: &DownloadJob,
+    yt_dlp: &str,
+    deno_path: Option<&str>,
+    output_template: &str,
+) -> Option<String> {
+    let expected_path =
+        probe_expected_output_filename(job, yt_dlp, deno_path, output_template).ok()??;
+    let candidates = existing_output_candidates_from_expected(&expected_path, job);
+    select_existing_output_path(&candidates)
+}
+
+fn probe_expected_output_filename(
+    job: &DownloadJob,
+    yt_dlp: &str,
+    deno_path: Option<&str>,
+    output_template: &str,
+) -> Result<Option<String>, String> {
+    let mut command = Command::new(yt_dlp);
+    command.args([
+        "--simulate",
+        "--no-playlist",
+        "--no-warnings",
+        "--print",
+        "filename",
+        "-f",
+    ]);
+    command.arg(&job.format);
+    command.arg("-o");
+    command.arg(output_template);
+
+    if let Some(deno) = deno_path {
+        command.arg("--js-runtimes");
+        command.arg(format!("deno:{deno}"));
+    }
+
+    if job.extract_audio {
+        command.arg("--extract-audio");
+        if let Some(fmt) = job.audio_format.as_ref() {
+            command.arg("--audio-format");
+            command.arg(fmt);
+        }
+    }
+
+    command.arg(&job.url);
+
+    let output = command
+        .output()
+        .map_err(|e| format!("Failed to probe output filename with yt-dlp: {e}"))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rev()
+        .find_map(parse_yt_dlp_filepath))
+}
+
+fn existing_output_candidates_from_expected(expected_path: &str, job: &DownloadJob) -> Vec<String> {
+    let mut candidates = vec![expected_path.to_string()];
+    let expected = Path::new(expected_path);
+
+    if job.extract_audio {
+        if let Some(audio_format) = job.audio_format.as_deref() {
+            candidates.push(
+                expected
+                    .with_extension(audio_format)
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
+    }
+
+    if let Some(cut_start_time) = job.cut_start_time {
+        for candidate in candidates.clone() {
+            if let Ok(cut_path) =
+                build_timestamp_cut_output_path(Path::new(&candidate), cut_start_time)
+            {
+                candidates.push(cut_path.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    candidates.extend(related_existing_output_paths(expected));
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn related_existing_output_paths(expected: &Path) -> Vec<String> {
+    let Some(parent) = expected.parent() else {
+        return Vec::new();
+    };
+    let Some(expected_stem) = expected.file_stem().and_then(|value| value.to_str()) else {
+        return Vec::new();
+    };
+    let format_part_prefix = format!("{expected_stem}.f");
+
+    fs::read_dir(parent)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.flatten())
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_file() {
+                return None;
+            }
+            let stem = path.file_stem().and_then(|value| value.to_str())?;
+            if stem == expected_stem || stem.starts_with(&format_part_prefix) {
+                Some(path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn ffmpeg_tool_name() -> &'static str {
@@ -2230,6 +2464,7 @@ fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
         .or_else(|| filename_from_path(entry.output_path.as_deref()));
     entry.thumbnail = trim_optional_string(entry.thumbnail);
     entry.upload_date = trim_optional_string(entry.upload_date);
+    entry.timestamp = entry.timestamp.filter(|timestamp| *timestamp >= 0);
     entry.platform = trim_optional_string(entry.platform).or_else(|| detect_platform(&entry.url));
     entry.output_path = trim_optional_string(entry.output_path);
     if entry.title.is_none() {
@@ -2273,7 +2508,7 @@ fn list_history_page_from_db(
         .map_err(|e| format!("History read failed: {e}"))?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, url, title, filename, thumbnail, upload_date, platform, output_path, created_at, completed_at
+            "SELECT id, url, title, filename, thumbnail, upload_date, timestamp, platform, output_path, created_at, completed_at
              FROM history_entries
              ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC, id DESC
              LIMIT ?1 OFFSET ?2",
@@ -2282,8 +2517,8 @@ fn list_history_page_from_db(
 
     let rows = stmt
         .query_map(params![i64::from(limit), i64::from(offset)], |row| {
-            let created_at: i64 = row.get(8)?;
-            let completed_at: Option<i64> = row.get(9)?;
+            let created_at: i64 = row.get(9)?;
+            let completed_at: Option<i64> = row.get(10)?;
             Ok(HistoryEntry {
                 id: row.get(0)?,
                 url: row.get(1)?,
@@ -2291,8 +2526,9 @@ fn list_history_page_from_db(
                 filename: row.get(3)?,
                 thumbnail: row.get(4)?,
                 upload_date: row.get(5)?,
-                platform: row.get(6)?,
-                output_path: row.get(7)?,
+                timestamp: row.get(6)?,
+                platform: row.get(7)?,
+                output_path: row.get(8)?,
                 created_at: i64_to_millis(created_at),
                 completed_at: optional_i64_to_millis(completed_at),
             })
@@ -2328,11 +2564,12 @@ fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<
             filename,
             thumbnail,
             upload_date,
+            timestamp,
             platform,
             output_path,
             created_at,
             completed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             entry.id,
             entry.url,
@@ -2340,6 +2577,7 @@ fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<
             entry.filename,
             entry.thumbnail,
             entry.upload_date,
+            entry.timestamp,
             entry.platform,
             entry.output_path,
             millis_to_i64(entry.created_at),
@@ -2601,6 +2839,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             filename TEXT,
             thumbnail TEXT,
             upload_date TEXT,
+            timestamp INTEGER,
             platform TEXT,
             output_path TEXT,
             created_at INTEGER NOT NULL,
@@ -2613,7 +2852,26 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_history_entries_completed_at
             ON history_entries(completed_at, created_at);
         "#,
-    )
+    )?;
+
+    ensure_history_entries_timestamp_column(conn)?;
+    Ok(())
+}
+
+fn ensure_history_entries_timestamp_column(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(history_entries)")?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == "timestamp" {
+            return Ok(());
+        }
+    }
+
+    conn.execute(
+        "ALTER TABLE history_entries ADD COLUMN timestamp INTEGER",
+        [],
+    )?;
+    Ok(())
 }
 
 fn get_link_dump_settings_from_conn(conn: &Connection) -> rusqlite::Result<LinkDumpSettings> {
@@ -3510,6 +3768,7 @@ fn build_link_dump_download_request(
         title: None,
         thumbnail: youtube_thumbnail_url_from_normalized(normalized),
         upload_date: None,
+        timestamp: None,
     })
 }
 
@@ -3738,6 +3997,89 @@ mod tests {
     }
 
     #[test]
+    fn parses_yt_dlp_filepath_output() {
+        assert_eq!(
+            parse_yt_dlp_filepath("/tmp/pinefetch/video.mp4").as_deref(),
+            Some("/tmp/pinefetch/video.mp4")
+        );
+        assert_eq!(
+            parse_yt_dlp_filepath("[download] Destination: /tmp/pinefetch/video.f398.mp4")
+                .as_deref(),
+            Some("/tmp/pinefetch/video.f398.mp4")
+        );
+        assert_eq!(
+            parse_yt_dlp_filepath("[Merger] Merging formats into \"/tmp/pinefetch/video.webm\"")
+                .as_deref(),
+            Some("/tmp/pinefetch/video.webm")
+        );
+        assert_eq!(parse_yt_dlp_filepath("[download] 100% of 1MiB"), None);
+        assert_eq!(parse_yt_dlp_filepath("NA"), None);
+        assert_eq!(parse_yt_dlp_filepath("https://example.com/video"), None);
+    }
+
+    #[test]
+    fn selects_last_existing_output_path() {
+        let dir = std::env::temp_dir().join(format!("pinefetch-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let first_path = dir.join("first.mp4");
+        let final_path = dir.join("final.mp3");
+        fs::write(&first_path, b"first").unwrap();
+        fs::write(&final_path, b"final").unwrap();
+
+        let candidates = vec![
+            first_path.to_string_lossy().to_string(),
+            dir.join("missing.webm").to_string_lossy().to_string(),
+            final_path.to_string_lossy().to_string(),
+        ];
+        let expected = final_path.to_string_lossy().to_string();
+
+        assert_eq!(
+            select_existing_output_path(&candidates).as_deref(),
+            Some(expected.as_str())
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn selects_largest_format_part_when_final_output_is_missing() {
+        let dir = std::env::temp_dir().join(format!("pinefetch-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let audio_part = dir.join("Example - Uploader - id__max.f251.webm");
+        let video_part = dir.join("Example - Uploader - id__max.f398.mp4");
+        fs::write(&audio_part, b"audio").unwrap();
+        fs::write(&video_part, b"larger video part").unwrap();
+
+        let candidates = vec![
+            audio_part.to_string_lossy().to_string(),
+            video_part.to_string_lossy().to_string(),
+        ];
+        let expected = video_part.to_string_lossy().to_string();
+
+        assert_eq!(
+            select_existing_output_path(&candidates).as_deref(),
+            Some(expected.as_str())
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn finds_related_format_parts_from_expected_output_path() {
+        let dir = std::env::temp_dir().join(format!("pinefetch-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let expected = dir.join("Example - Uploader - id__max.webm");
+        let video_part = dir.join("Example - Uploader - id__max.f398.mp4");
+        fs::write(&video_part, b"video").unwrap();
+
+        let related = related_existing_output_paths(&expected);
+
+        assert_eq!(related, vec![video_part.to_string_lossy().to_string()]);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn rejects_unsafe_filename_suffix() {
         assert_eq!(
             normalize_filename_suffix(Some("__max")),
@@ -3879,6 +4221,39 @@ mod tests {
     }
 
     #[test]
+    fn link_dump_migration_adds_history_timestamp_to_existing_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE history_entries (
+                id TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                title TEXT,
+                filename TEXT,
+                thumbnail TEXT,
+                upload_date TEXT,
+                platform TEXT,
+                output_path TEXT,
+                created_at INTEGER NOT NULL,
+                completed_at INTEGER
+            );
+            "#,
+        )
+        .unwrap();
+
+        run_link_dump_migrations(&conn).unwrap();
+        let timestamp_column_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('history_entries') WHERE name = 'timestamp'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(timestamp_column_count, 1);
+    }
+
+    #[test]
     fn history_entries_are_stored_in_sqlite_with_file_metadata() {
         let state = link_dump_test_state();
         let entry = HistoryEntry {
@@ -3888,6 +4263,7 @@ mod tests {
             filename: Some("Example title - Uploader - abc123.mp4".to_string()),
             thumbnail: Some("https://i.ytimg.com/vi/abc123/mqdefault.jpg".to_string()),
             upload_date: Some("20240501".to_string()),
+            timestamp: Some(1_714_560_000),
             platform: Some("youtube".to_string()),
             output_path: Some("/tmp/Example title - Uploader - abc123.mp4".to_string()),
             created_at: 1_700_000_000_000,
@@ -3910,6 +4286,7 @@ mod tests {
             Some("https://i.ytimg.com/vi/abc123/mqdefault.jpg")
         );
         assert_eq!(entries[0].upload_date.as_deref(), Some("20240501"));
+        assert_eq!(entries[0].timestamp, Some(1_714_560_000));
     }
 
     #[test]
@@ -3925,6 +4302,7 @@ mod tests {
                 filename: Some(format!("example-{index}.mp4")),
                 thumbnail: None,
                 upload_date: None,
+                timestamp: None,
                 platform: Some("example".to_string()),
                 output_path: None,
                 created_at: timestamp,

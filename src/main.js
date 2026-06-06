@@ -956,6 +956,22 @@ const formatUploadDate = uploadDate => {
     return raw;
 };
 
+const formatUploadTimestamp = timestamp => {
+    const seconds = Number(timestamp);
+    if (!Number.isFinite(seconds) || seconds <= 0) return null;
+
+    const date = new Date(seconds * 1000);
+    if (Number.isNaN(date.getTime())) return null;
+
+    return date.toLocaleString([], {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+};
+
 const setHistoryLoading = isLoading => {
     state.historyLoading = isLoading;
     els.loadMoreHistoryBtn.disabled = isLoading;
@@ -998,7 +1014,7 @@ const createHistoryItem = entry => {
     meta.className = 'pf-history-meta';
     const dateStr = formatHistoryDate(entry.completed_at);
     const platform = entry.platform || detectPlatform(entry.url) || 'unknown';
-    const uploadDate = formatUploadDate(entry.upload_date);
+    const uploadDate = formatUploadTimestamp(entry.timestamp) || formatUploadDate(entry.upload_date);
     appendTextSpans(meta, [
         platform,
         entry.filename || '',
@@ -1524,6 +1540,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     const titleForRequest = hasLoadedInfo ? state.info?.title || null : null;
     const thumbnailForRequest = hasLoadedInfo ? state.info?.thumbnail || null : (options.thumbnail ?? null);
     const uploadDateForRequest = hasLoadedInfo ? state.info?.upload_date || null : null;
+    const timestampForRequest = hasLoadedInfo ? state.info?.timestamp ?? null : null;
 
     try {
         const id = await invoke('enqueue_download', {
@@ -1540,6 +1557,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
                 title: titleForRequest,
                 thumbnail: thumbnailForRequest,
                 upload_date: uploadDateForRequest,
+                timestamp: timestampForRequest,
             },
         });
 

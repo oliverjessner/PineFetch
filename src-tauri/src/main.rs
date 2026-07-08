@@ -1891,13 +1891,29 @@ fn ffprobe_tool_name() -> &'static str {
     }
 }
 
-fn has_ffmpeg_tools_in_dir(dir: &Path) -> bool {
-    dir.join(ffmpeg_tool_name()).exists() && dir.join(ffprobe_tool_name()).exists()
+fn ffmpeg_tool_is_usable(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+
+    Command::new(path)
+        .arg("-version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn has_usable_ffmpeg_tools_in_dir(dir: &Path) -> bool {
+    ffmpeg_tool_is_usable(&dir.join(ffmpeg_tool_name()))
+        && ffmpeg_tool_is_usable(&dir.join(ffprobe_tool_name()))
 }
 
 fn normalize_ffmpeg_location(path: &Path) -> Option<String> {
     if path.is_dir() {
-        if has_ffmpeg_tools_in_dir(path) {
+        if has_usable_ffmpeg_tools_in_dir(path) {
             return Some(path.to_string_lossy().to_string());
         }
         return None;
@@ -1905,7 +1921,7 @@ fn normalize_ffmpeg_location(path: &Path) -> Option<String> {
 
     if path.is_file() {
         if let Some(parent) = path.parent() {
-            if has_ffmpeg_tools_in_dir(parent) {
+            if has_usable_ffmpeg_tools_in_dir(parent) {
                 return Some(parent.to_string_lossy().to_string());
             }
         }
@@ -3933,6 +3949,36 @@ mod tests {
             .unwrap();
 
         assert_eq!(resolved, canonical.to_string_lossy());
+    }
+
+    #[cfg(unix)]
+    fn write_fake_ffmpeg_tool(path: &Path, exit_code: i32) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::write(path, format!("#!/bin/sh\nexit {exit_code}\n")).unwrap();
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalizes_only_usable_ffmpeg_locations() {
+        let dir = std::env::temp_dir().join(format!("pinefetch-ffmpeg-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        write_fake_ffmpeg_tool(&dir.join(ffmpeg_tool_name()), 0);
+        write_fake_ffmpeg_tool(&dir.join(ffprobe_tool_name()), 0);
+
+        assert_eq!(
+            normalize_ffmpeg_location(&dir).as_deref(),
+            Some(dir.to_string_lossy().as_ref())
+        );
+
+        write_fake_ffmpeg_tool(&dir.join(ffprobe_tool_name()), 1);
+
+        assert!(normalize_ffmpeg_location(&dir).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

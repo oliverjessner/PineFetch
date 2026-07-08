@@ -1,6 +1,7 @@
 # 1.5.0
 
 - fix for time stamps
+- fix bundled ffmpeg runtime for postprocessing
 
 # 1.4.5
 

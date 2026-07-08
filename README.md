@@ -51,7 +51,8 @@ npm run build:windows
 
 - If `yt-dlp` is in your PATH, the app will find it automatically.
 - Otherwise, set the full path in **Settings → yt-dlp Pfad**.
-- PineFetch automatically tries to use `ffmpeg`/`ffprobe` from the same directory as `yt-dlp`.
+- Release builds bundle `ffmpeg`/`ffprobe` for postprocessing.
+- PineFetch also tries `ffmpeg`/`ffprobe` from the same directory as `yt-dlp`, Homebrew paths, and PATH.
 
 ## Legal/Use-Case Notes
 

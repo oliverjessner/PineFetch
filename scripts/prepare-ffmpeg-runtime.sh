@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DIR="$ROOT_DIR/src-tauri/resources/ffmpeg-runtime"
 RUNTIME_BIN_DIR="$RUNTIME_DIR/bin"
+RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
 
 cleanup_stale_target_resources() {
   local candidate=""
@@ -44,14 +45,119 @@ if [[ ! -x "$FFMPEG_BIN" || ! -x "$FFPROBE_BIN" ]]; then
   exit 1
 fi
 
+is_macos_system_dependency() {
+  case "$1" in
+    /System/Library/*|/usr/lib/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+list_macos_dylib_dependencies() {
+  local target="$1"
+
+  otool -L "$target" \
+    | awk 'NR > 1 { print $1 }' \
+    | while IFS= read -r dependency; do
+        if [[ -z "$dependency" ]]; then
+          continue
+        fi
+
+        if is_macos_system_dependency "$dependency"; then
+          continue
+        fi
+
+        case "$dependency" in
+          @executable_path/*|@loader_path/*|@rpath/*)
+            continue
+            ;;
+        esac
+
+        if [[ -f "$dependency" ]]; then
+          printf '%s\n' "$dependency"
+        fi
+      done
+}
+
+remove_macos_signature() {
+  codesign --remove-signature "$1" >/dev/null 2>&1 || true
+}
+
+bundle_macos_dylibs() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 0
+  fi
+
+  for tool in otool install_name_tool codesign; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "$tool is required to bundle a portable macOS ffmpeg runtime."
+      exit 1
+    fi
+  done
+
+  mkdir -p "$RUNTIME_LIB_DIR"
+
+  local machos=("$RUNTIME_BIN_DIR/ffmpeg" "$RUNTIME_BIN_DIR/ffprobe")
+  remove_macos_signature "$RUNTIME_BIN_DIR/ffmpeg"
+  remove_macos_signature "$RUNTIME_BIN_DIR/ffprobe"
+
+  local index=0
+
+  while [[ "$index" -lt "${#machos[@]}" ]]; do
+    local macho="${machos[$index]}"
+    index=$((index + 1))
+
+    while IFS= read -r dependency; do
+      local dependency_name
+      dependency_name="$(basename "$dependency")"
+      local bundled_dependency="$RUNTIME_LIB_DIR/$dependency_name"
+
+      if [[ ! -e "$bundled_dependency" ]]; then
+        cp -L "$dependency" "$bundled_dependency"
+        chmod 755 "$bundled_dependency"
+        remove_macos_signature "$bundled_dependency"
+        machos+=("$bundled_dependency")
+      fi
+    done < <(list_macos_dylib_dependencies "$macho")
+  done
+
+  local binary
+  for binary in "$RUNTIME_BIN_DIR/ffmpeg" "$RUNTIME_BIN_DIR/ffprobe"; do
+    while IFS= read -r dependency; do
+      install_name_tool \
+        -change "$dependency" "@loader_path/../lib/$(basename "$dependency")" \
+        "$binary"
+    done < <(list_macos_dylib_dependencies "$binary")
+  done
+
+  local library
+  for library in "$RUNTIME_LIB_DIR"/*.dylib; do
+    if [[ ! -e "$library" ]]; then
+      continue
+    fi
+
+    install_name_tool -id "@rpath/$(basename "$library")" "$library" 2>/dev/null || true
+    while IFS= read -r dependency; do
+      install_name_tool \
+        -change "$dependency" "@loader_path/$(basename "$dependency")" \
+        "$library"
+    done < <(list_macos_dylib_dependencies "$library")
+  done
+
+  for macho in "${machos[@]}"; do
+    codesign --force --sign - "$macho" >/dev/null 2>&1 || true
+  done
+}
+
 mkdir -p "$ROOT_DIR/src-tauri/resources"
 rm -rf "$RUNTIME_DIR"
 mkdir -p "$RUNTIME_BIN_DIR"
 cleanup_stale_target_resources
 
-cp "$FFMPEG_BIN" "$RUNTIME_BIN_DIR/ffmpeg"
-cp "$FFPROBE_BIN" "$RUNTIME_BIN_DIR/ffprobe"
+cp -L "$FFMPEG_BIN" "$RUNTIME_BIN_DIR/ffmpeg"
+cp -L "$FFPROBE_BIN" "$RUNTIME_BIN_DIR/ffprobe"
 chmod 755 "$RUNTIME_BIN_DIR/ffmpeg" "$RUNTIME_BIN_DIR/ffprobe"
+
+bundle_macos_dylibs
 
 FFMPEG_VERSION="$("$RUNTIME_BIN_DIR/ffmpeg" -version | head -n1 | sed 's/^ffmpeg version //')"
 FFPROBE_VERSION="$("$RUNTIME_BIN_DIR/ffprobe" -version | head -n1 | sed 's/^ffprobe version //')"

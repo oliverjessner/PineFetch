@@ -1,3 +1,7 @@
+# 1.5.1
+
+- ffmpeg bug
+
 # 1.5.0
 
 - fix for time stamps

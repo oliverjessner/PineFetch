@@ -1,3 +1,7 @@
+# 1.6.0
+
+- history view, collect length and size
+
 # 1.5.1
 
 - ffmpeg bug

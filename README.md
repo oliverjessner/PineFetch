@@ -18,6 +18,10 @@ npm run build:windows
 
 > Note: I don't have a Windows Machine
 
+## Version synchronization
+
+`package.json` is the source of truth for the PineFetch version. Before each macOS or Windows build, `npm run sync:version` copies it to `src-tauri/tauri.conf.json` under `package.version`. The publish script performs the same sync before creating its release commit and Git tag.
+
 ## yt-dlp location
 
 - If `yt-dlp` is in your PATH, the app will find it automatically.

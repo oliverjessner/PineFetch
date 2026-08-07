@@ -9,14 +9,16 @@ APP="$BUNDLE_DIR/macos/PineFetch.app"
 DMG_DIR="$BUNDLE_DIR/dmg"
 TMP_CHANGELOG=$(mktemp)
 TMP_RELEASE_NOTES=$(mktemp)
-VERSION=$(node -p 'require("./src-tauri/tauri.conf.json").package.version || "0.0.0"')
-TAG="v$VERSION"
 
 cleanup() {
     rm -f "$TMP_CHANGELOG" "$TMP_RELEASE_NOTES"
 }
 
 trap cleanup EXIT
+
+npm run sync:version
+VERSION=$(node -p 'require("./package.json").version || "0.0.0"')
+TAG="v$VERSION"
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "Committing working tree before release..."

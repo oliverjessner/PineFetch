@@ -1,4 +1,4 @@
-# 1.6.1
+# 1.6.2
 
 - dependabot updates
 - medium, source and uploader are now now also tracked

@@ -1,3 +1,9 @@
+# 1.6.1
+
+- dependabot updates
+- medium, source and uploader are now now also tracked
+- clear button in terminal
+
 # 1.6.0
 
 - history view, collect length and size

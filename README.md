@@ -8,39 +8,6 @@ A local-first macOS desktop app that wraps **yt-dlp** with a clean UI: paste lin
 
 **Note:** Please only download content you have the rights or permission to access.
 
-## Features
-
-- Tauri app
-- Minimal dark UI with split view
-- Queue (FIFO), cancel, progress, ETA/speed
-- `yt-dlp` spawned with argument array (no shell strings)
-- Info fetch via `--dump-json` (title/uploader/duration/thumbnail)
-- Persisted config (yt-dlp path + default output directory)
-- SQLite-backed download history with duration and file-size metadata
-- History overview with download count, total data size, and total runtime
-
-### Install
-
-```bash
-brew install yt-dlp ffmpeg
-```
-
-```bash
-npm install
-```
-
-### Run (dev)
-
-```bash
-npm run dev
-```
-
-### Build
-
-```bash
-npm run publish
-```
-
 ### Build Windows
 
 Run this on Windows with the Rust MSVC toolchain, Node.js, ffmpeg/ffprobe, Deno, and Python 3.10+ installed:
@@ -49,12 +16,37 @@ Run this on Windows with the Rust MSVC toolchain, Node.js, ffmpeg/ffprobe, Deno,
 npm run build:windows
 ```
 
+> Note: I don't have a Windows Machine
+
 ## yt-dlp location
 
 - If `yt-dlp` is in your PATH, the app will find it automatically.
 - Otherwise, set the full path in **Settings → yt-dlp Pfad**.
 - Release builds bundle `ffmpeg`/`ffprobe` for postprocessing.
 - PineFetch also tries `ffmpeg`/`ffprobe` from the same directory as `yt-dlp`, Homebrew paths, and PATH.
+
+## Import YouTube links from TXT
+
+Use **Import TXT** on the Download screen to add multiple YouTube videos to the queue at once:
+
+1. Select the preset you want to use.
+2. Click **Import TXT** and choose a `.txt` file.
+3. PineFetch validates the file and queues every new supported link using the selected preset and output folder.
+
+The file expects one YouTube video URL per line. Empty lines and lines beginning with `#` are ignored, so comments and groups can be added freely:
+
+```text
+# Tutorials
+https://www.youtube.com/watch?v=abc123
+https://youtu.be/def456
+
+# Start at 1 minute 30 seconds
+https://www.youtube.com/watch?v=ghi789&t=1m30s
+```
+
+Supported URLs include regular YouTube links as well as `youtu.be`, Shorts, Live, and Embed variants. Invalid lines are skipped. Duplicate video URLs in the same file or already present in the current queue are not added again. The same video with a different start timestamp is treated as a separate queue item. When **Cut at timestamp** is enabled, timestamps in imported URLs are handled like manually queued links.
+
+After the import, PineFetch reports how many links were added, invalid, duplicated, or failed to queue. Imported items follow the current queue auto-start setting.
 
 ## Legal/Use-Case Notes
 
@@ -93,17 +85,6 @@ Preflight:
 
 ```bash
 curl -X OPTIONS http://127.0.0.1:2255/addYoutubeLinksToQueue/ -i
-```
-
-SQLite checks use the app data database, usually `~/Library/Application Support/PineFetch/pinefetch.sqlite` on macOS:
-
-```bash
-sqlite3 "$HOME/Library/Application Support/PineFetch/pinefetch.sqlite" \
-  "SELECT id, server_enabled, host, port FROM link_dump_settings;"
-sqlite3 "$HOME/Library/Application Support/PineFetch/pinefetch.sqlite" \
-  "SELECT id, name, created_at, last_used_at, revoked_at, deleted_at FROM link_dump_secrets;"
-sqlite3 "$HOME/Library/Application Support/PineFetch/pinefetch.sqlite" \
-  "SELECT COUNT(*) AS videos, SUM(duration_seconds) AS total_seconds, SUM(file_size_bytes) AS total_bytes FROM history_entries;"
 ```
 
 ## Features

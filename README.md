@@ -120,7 +120,7 @@ sqlite3 "$HOME/Library/Application Support/PineFetch/pinefetch.sqlite" \
 The Settings screen lets you tune PineFetch for everyday use: default preset, download location, and whether logs are visible.
 ![screenshot of the app](/src/images/settings.png)
 
-History keeps successful downloads in the local SQLite database. Each entry includes the source URL, title, filename, thumbnail, platform, output path, upload date, completion time, duration in seconds, and final file size in bytes when available.
+History keeps successful downloads in the local SQLite database. Each entry includes the source URL, source service, uploader, medium (`video`, `audio`, or `transcript`), title, filename, thumbnail, platform, output path, upload date, completion time, duration in seconds, and final file size in bytes when available. The source service is derived locally from the URL hostname by removing the protocol, subdomain, and TLD; known short domains such as `youtu.be` are normalized to their canonical service name. Sources are also backfilled from the URLs of existing History entries during migration.
 
 The History view also provides an overview of:
 

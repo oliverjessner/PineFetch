@@ -73,6 +73,8 @@ struct DownloadRequest {
     #[serde(default)]
     filename_suffix: Option<String>,
     title: Option<String>,
+    #[serde(default)]
+    uploader: Option<String>,
     thumbnail: Option<String>,
     #[serde(default)]
     upload_date: Option<String>,
@@ -92,6 +94,7 @@ struct DownloadJob {
     audio_format: Option<String>,
     transcribe_text: bool,
     title: Option<String>,
+    uploader: Option<String>,
     thumbnail: Option<String>,
     upload_date: Option<String>,
     timestamp: Option<i64>,
@@ -155,6 +158,8 @@ struct HistoryEntry {
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
+    uploader: Option<String>,
+    #[serde(default)]
     filename: Option<String>,
     #[serde(default)]
     thumbnail: Option<String>,
@@ -166,6 +171,10 @@ struct HistoryEntry {
     duration_seconds: Option<i64>,
     #[serde(default)]
     file_size_bytes: Option<i64>,
+    #[serde(default)]
+    medium: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
     #[serde(default)]
     platform: Option<String>,
     #[serde(default)]
@@ -823,6 +832,7 @@ fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<Down
         audio_format: request.audio_format,
         transcribe_text: request.transcribe_text,
         title: request.title,
+        uploader: request.uploader,
         thumbnail: request.thumbnail,
         upload_date: request.upload_date,
         timestamp: request.timestamp,
@@ -969,6 +979,49 @@ fn detect_platform(url: &str) -> Option<String> {
     None
 }
 
+fn source_from_url(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.domain()?.trim_end_matches('.').to_ascii_lowercase();
+
+    let canonical_short_domain = match host.as_str() {
+        "youtu.be" => Some("youtube"),
+        "fb.watch" => Some("facebook"),
+        "instagr.am" => Some("instagram"),
+        "lnkd.in" => Some("linkedin"),
+        "t.co" => Some("x"),
+        _ => None,
+    };
+    if let Some(source) = canonical_short_domain {
+        return Some(source.to_string());
+    }
+
+    let labels = host
+        .split('.')
+        .filter(|label| !label.is_empty())
+        .collect::<Vec<_>>();
+    if labels.is_empty() {
+        return None;
+    }
+    if labels.len() == 1 {
+        return Some(labels[0].to_string());
+    }
+
+    let common_second_level_tld = matches!(
+        labels[labels.len() - 2],
+        "ac" | "co" | "com" | "edu" | "gov" | "net" | "org"
+    );
+    let source_index = if labels.len() >= 3
+        && labels.last().is_some_and(|tld| tld.len() == 2)
+        && common_second_level_tld
+    {
+        labels.len() - 3
+    } else {
+        labels.len() - 2
+    };
+
+    Some(labels[source_index].to_string())
+}
+
 fn current_timestamp_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1007,25 +1060,31 @@ fn trim_optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[derive(Debug)]
+struct HydratedHistoryMetadata {
+    title: Option<String>,
+    uploader: Option<String>,
+    thumbnail: Option<String>,
+    upload_date: Option<String>,
+    timestamp: Option<i64>,
+    duration_seconds: Option<i64>,
+}
+
 fn hydrate_history_metadata(
     app: &AppHandle,
     state: &AppState,
     job: &DownloadJob,
     filename: Option<&str>,
-) -> (
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<i64>,
-    Option<i64>,
-) {
+) -> HydratedHistoryMetadata {
     let mut title = trim_optional_string(job.title.clone());
+    let mut uploader = trim_optional_string(job.uploader.clone());
     let mut thumbnail = trim_optional_string(job.thumbnail.clone());
     let mut upload_date = trim_optional_string(job.upload_date.clone());
     let mut timestamp = job.timestamp;
     let mut duration_seconds = job.duration_seconds;
 
     if title.is_none()
+        || uploader.is_none()
         || thumbnail.is_none()
         || upload_date.is_none()
         || timestamp.is_none()
@@ -1036,6 +1095,9 @@ fn hydrate_history_metadata(
             if let Ok(info) = load_info_with_yt_dlp(yt_dlp, deno, job.url.clone()) {
                 if title.is_none() {
                     title = trim_optional_string(info.title);
+                }
+                if uploader.is_none() {
+                    uploader = trim_optional_string(info.uploader);
                 }
                 if thumbnail.is_none() {
                     thumbnail = trim_optional_string(info.thumbnail);
@@ -1057,7 +1119,24 @@ fn hydrate_history_metadata(
         title = title_from_filename(filename);
     }
 
-    (title, thumbnail, upload_date, timestamp, duration_seconds)
+    HydratedHistoryMetadata {
+        title,
+        uploader,
+        thumbnail,
+        upload_date,
+        timestamp,
+        duration_seconds,
+    }
+}
+
+fn medium_for_job(job: &DownloadJob) -> &'static str {
+    if job.transcribe_text {
+        "transcript"
+    } else if job.extract_audio {
+        "audio"
+    } else {
+        "video"
+    }
 }
 
 fn file_size_bytes_from_path(path: Option<&str>) -> Option<i64> {
@@ -1072,20 +1151,22 @@ fn add_history_entry_on_success(
     output_path: Option<&str>,
 ) {
     let filename = filename_from_path(output_path);
-    let (title, thumbnail, upload_date, timestamp, duration_seconds) =
-        hydrate_history_metadata(app, state, job, filename.as_deref());
+    let metadata = hydrate_history_metadata(app, state, job, filename.as_deref());
     let file_size_bytes = file_size_bytes_from_path(output_path);
     let now = current_timestamp_millis();
     let entry = HistoryEntry {
         id: Uuid::new_v4().to_string(),
         url: job.url.clone(),
-        title,
+        title: metadata.title,
+        uploader: metadata.uploader,
         filename,
-        thumbnail,
-        upload_date,
-        timestamp,
-        duration_seconds,
+        thumbnail: metadata.thumbnail,
+        upload_date: metadata.upload_date,
+        timestamp: metadata.timestamp,
+        duration_seconds: metadata.duration_seconds,
         file_size_bytes,
+        medium: Some(medium_for_job(job).to_string()),
+        source: source_from_url(&job.url),
         platform: detect_platform(&job.url),
         output_path: output_path.map(|s| s.to_string()),
         created_at: now,
@@ -2519,6 +2600,7 @@ fn load_legacy_history_json(app: &AppHandle) -> Vec<HistoryEntry> {
 
 fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
     entry.title = trim_optional_string(entry.title);
+    entry.uploader = trim_optional_string(entry.uploader);
     entry.filename = trim_optional_string(entry.filename)
         .or_else(|| filename_from_path(entry.output_path.as_deref()));
     entry.thumbnail = trim_optional_string(entry.thumbnail);
@@ -2526,6 +2608,12 @@ fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
     entry.timestamp = entry.timestamp.filter(|timestamp| *timestamp >= 0);
     entry.duration_seconds = entry.duration_seconds.filter(|duration| *duration >= 0);
     entry.file_size_bytes = entry.file_size_bytes.filter(|size| *size >= 0);
+    entry.medium = trim_optional_string(entry.medium)
+        .map(|medium| medium.to_ascii_lowercase())
+        .filter(|medium| matches!(medium.as_str(), "video" | "audio" | "transcript"));
+    entry.source = trim_optional_string(entry.source)
+        .map(|source| source.to_ascii_lowercase())
+        .or_else(|| source_from_url(&entry.url));
     entry.platform = trim_optional_string(entry.platform).or_else(|| detect_platform(&entry.url));
     entry.output_path = trim_optional_string(entry.output_path);
     if entry.title.is_none() {
@@ -2569,7 +2657,7 @@ fn list_history_page_from_db(
         .map_err(|e| format!("History read failed: {e}"))?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, url, title, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, platform, output_path, created_at, completed_at
+            "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, medium, source, platform, output_path, created_at, completed_at
              FROM history_entries
              ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC, id DESC
              LIMIT ?1 OFFSET ?2",
@@ -2578,20 +2666,23 @@ fn list_history_page_from_db(
 
     let rows = stmt
         .query_map(params![i64::from(limit), i64::from(offset)], |row| {
-            let created_at: i64 = row.get(11)?;
-            let completed_at: Option<i64> = row.get(12)?;
+            let created_at: i64 = row.get(14)?;
+            let completed_at: Option<i64> = row.get(15)?;
             Ok(HistoryEntry {
                 id: row.get(0)?,
                 url: row.get(1)?,
                 title: row.get(2)?,
-                filename: row.get(3)?,
-                thumbnail: row.get(4)?,
-                upload_date: row.get(5)?,
-                timestamp: row.get(6)?,
-                duration_seconds: row.get(7)?,
-                file_size_bytes: row.get(8)?,
-                platform: row.get(9)?,
-                output_path: row.get(10)?,
+                uploader: row.get(3)?,
+                filename: row.get(4)?,
+                thumbnail: row.get(5)?,
+                upload_date: row.get(6)?,
+                timestamp: row.get(7)?,
+                duration_seconds: row.get(8)?,
+                file_size_bytes: row.get(9)?,
+                medium: row.get(10)?,
+                source: row.get(11)?,
+                platform: row.get(12)?,
+                output_path: row.get(13)?,
                 created_at: i64_to_millis(created_at),
                 completed_at: optional_i64_to_millis(completed_at),
             })
@@ -2647,27 +2738,33 @@ fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<
             id,
             url,
             title,
+            uploader,
             filename,
             thumbnail,
             upload_date,
             timestamp,
             duration_seconds,
             file_size_bytes,
+            medium,
+            source,
             platform,
             output_path,
             created_at,
             completed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             entry.id,
             entry.url,
             entry.title,
+            entry.uploader,
             entry.filename,
             entry.thumbnail,
             entry.upload_date,
             entry.timestamp,
             entry.duration_seconds,
             entry.file_size_bytes,
+            entry.medium,
+            entry.source,
             entry.platform,
             entry.output_path,
             millis_to_i64(entry.created_at),
@@ -2926,12 +3023,15 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             id TEXT PRIMARY KEY,
             url TEXT NOT NULL,
             title TEXT,
+            uploader TEXT,
             filename TEXT,
             thumbnail TEXT,
             upload_date TEXT,
             timestamp INTEGER,
             duration_seconds INTEGER,
             file_size_bytes INTEGER,
+            medium TEXT,
+            source TEXT,
             platform TEXT,
             output_path TEXT,
             created_at INTEGER NOT NULL,
@@ -2949,6 +3049,33 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_history_entries_timestamp_column(conn)?;
     ensure_history_entries_duration_seconds_column(conn)?;
     ensure_history_entries_file_size_bytes_column(conn)?;
+    ensure_history_entries_text_column(conn, "uploader")?;
+    ensure_history_entries_text_column(conn, "medium")?;
+    ensure_history_entries_text_column(conn, "source")?;
+    backfill_history_sources(conn)?;
+    Ok(())
+}
+
+fn backfill_history_sources(conn: &Connection) -> rusqlite::Result<()> {
+    let entries = {
+        let mut stmt = conn.prepare(
+            "SELECT id, url FROM history_entries WHERE source IS NULL OR TRIM(source) = ''",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    for (id, url) in entries {
+        if let Some(source) = source_from_url(&url) {
+            conn.execute(
+                "UPDATE history_entries SET source = ?1 WHERE id = ?2",
+                params![source, id],
+            )?;
+        }
+    }
+
     Ok(())
 }
 
@@ -2968,6 +3095,21 @@ fn ensure_history_entries_integer_column(
     conn: &Connection,
     column_name: &str,
 ) -> rusqlite::Result<()> {
+    ensure_history_entries_column(conn, column_name, "INTEGER")
+}
+
+fn ensure_history_entries_text_column(
+    conn: &Connection,
+    column_name: &str,
+) -> rusqlite::Result<()> {
+    ensure_history_entries_column(conn, column_name, "TEXT")
+}
+
+fn ensure_history_entries_column(
+    conn: &Connection,
+    column_name: &str,
+    column_type: &str,
+) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(history_entries)")?;
     let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
     for column in columns {
@@ -2978,7 +3120,7 @@ fn ensure_history_entries_integer_column(
     drop(stmt);
 
     conn.execute(
-        &format!("ALTER TABLE history_entries ADD COLUMN {column_name} INTEGER"),
+        &format!("ALTER TABLE history_entries ADD COLUMN {column_name} {column_type}"),
         [],
     )?;
     Ok(())
@@ -3876,6 +4018,7 @@ fn build_link_dump_download_request(
         cut_start_time: None,
         filename_suffix: preset.filename_suffix.map(str::to_string),
         title: None,
+        uploader: None,
         thumbnail: youtube_thumbnail_url_from_normalized(normalized),
         upload_date: None,
         timestamp: None,
@@ -4330,6 +4473,54 @@ mod tests {
     }
 
     #[test]
+    fn extracts_source_from_url_without_subdomain_or_tld() {
+        assert_eq!(
+            source_from_url("https://www.youtube.com/watch?v=abc123").as_deref(),
+            Some("youtube")
+        );
+        assert_eq!(
+            source_from_url("https://media.linkedin.com/posts/123").as_deref(),
+            Some("linkedin")
+        );
+        assert_eq!(
+            source_from_url("https://video.example.co.uk/watch/123").as_deref(),
+            Some("example")
+        );
+        assert_eq!(
+            source_from_url("https://youtu.be/abc123").as_deref(),
+            Some("youtube")
+        );
+        assert_eq!(source_from_url("not-a-url"), None);
+    }
+
+    #[test]
+    fn derives_medium_from_download_job() {
+        let mut job = DownloadJob {
+            id: "job-1".to_string(),
+            url: "https://example.com/video".to_string(),
+            format: "best".to_string(),
+            output_dir: "/tmp".to_string(),
+            extract_audio: false,
+            audio_format: None,
+            transcribe_text: false,
+            title: None,
+            uploader: None,
+            thumbnail: None,
+            upload_date: None,
+            timestamp: None,
+            duration_seconds: None,
+            cut_start_time: None,
+            filename_suffix: None,
+        };
+
+        assert_eq!(medium_for_job(&job), "video");
+        job.extract_audio = true;
+        assert_eq!(medium_for_job(&job), "audio");
+        job.transcribe_text = true;
+        assert_eq!(medium_for_job(&job), "transcript");
+    }
+
+    #[test]
     fn link_dump_migration_creates_default_settings() {
         let state = link_dump_test_state();
         let settings = get_link_dump_settings(&state).unwrap();
@@ -4379,6 +4570,14 @@ mod tests {
                 created_at INTEGER NOT NULL,
                 completed_at INTEGER
             );
+
+            INSERT INTO history_entries (
+                id, url, title, filename, thumbnail, upload_date, platform,
+                output_path, created_at, completed_at
+            ) VALUES (
+                'legacy-1', 'https://media.linkedin.com/posts/123', 'Legacy',
+                NULL, NULL, NULL, NULL, NULL, 1700000000000, 1700000000100
+            );
             "#,
         )
         .unwrap();
@@ -4395,6 +4594,26 @@ mod tests {
 
             assert_eq!(column_count, 1, "missing INTEGER column {column_name}");
         }
+        for column_name in ["uploader", "medium", "source"] {
+            let column_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('history_entries') WHERE name = ?1 AND type = 'TEXT'",
+                    params![column_name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+
+            assert_eq!(column_count, 1, "missing TEXT column {column_name}");
+        }
+
+        let source: Option<String> = conn
+            .query_row(
+                "SELECT source FROM history_entries WHERE id = 'legacy-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source.as_deref(), Some("linkedin"));
     }
 
     #[test]
@@ -4404,12 +4623,15 @@ mod tests {
             id: "history-1".to_string(),
             url: "https://www.youtube.com/watch?v=abc123".to_string(),
             title: Some("Example title".to_string()),
+            uploader: Some("Example uploader".to_string()),
             filename: Some("Example title - Uploader - abc123.mp4".to_string()),
             thumbnail: Some("https://i.ytimg.com/vi/abc123/mqdefault.jpg".to_string()),
             upload_date: Some("20240501".to_string()),
             timestamp: Some(1_714_560_000),
             duration_seconds: Some(754),
             file_size_bytes: Some(42_000_000),
+            medium: Some("video".to_string()),
+            source: Some("youtube".to_string()),
             platform: Some("youtube".to_string()),
             output_path: Some("/tmp/Example title - Uploader - abc123.mp4".to_string()),
             created_at: 1_700_000_000_000,
@@ -4422,6 +4644,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, "history-1");
         assert_eq!(entries[0].title.as_deref(), Some("Example title"));
+        assert_eq!(entries[0].uploader.as_deref(), Some("Example uploader"));
         assert_eq!(
             entries[0].filename.as_deref(),
             Some("Example title - Uploader - abc123.mp4")
@@ -4435,6 +4658,8 @@ mod tests {
         assert_eq!(entries[0].timestamp, Some(1_714_560_000));
         assert_eq!(entries[0].duration_seconds, Some(754));
         assert_eq!(entries[0].file_size_bytes, Some(42_000_000));
+        assert_eq!(entries[0].medium.as_deref(), Some("video"));
+        assert_eq!(entries[0].source.as_deref(), Some("youtube"));
 
         let stats = get_history_stats_from_db(&state).unwrap();
         assert_eq!(stats.video_count, 1);
@@ -4452,12 +4677,15 @@ mod tests {
                 id: format!("history-{index:02}"),
                 url: format!("https://example.com/video/{index}"),
                 title: Some(format!("Example {index}")),
+                uploader: None,
                 filename: Some(format!("example-{index}.mp4")),
                 thumbnail: None,
                 upload_date: None,
                 timestamp: None,
                 duration_seconds: None,
                 file_size_bytes: None,
+                medium: Some("video".to_string()),
+                source: Some("example".to_string()),
                 platform: Some("example".to_string()),
                 output_path: None,
                 created_at: timestamp,

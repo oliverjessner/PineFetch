@@ -67,6 +67,7 @@ const els = Object.seal({
     infoBadge: document.getElementById('infoBadge'),
     logBody: document.getElementById('logBody'),
     copyLogsBtn: document.getElementById('copyLogsBtn'),
+    clearLogsBtn: document.getElementById('clearLogsBtn'),
     leftPanelTitle: document.getElementById('leftPanelTitle'),
     rightPanelTitle: document.getElementById('rightPanelTitle'),
     downloadView: document.getElementById('downloadView'),
@@ -1043,10 +1044,12 @@ const createHistoryItem = entry => {
     const meta = document.createElement('div');
     meta.className = 'pf-history-meta';
     const dateStr = formatHistoryDate(entry.completed_at);
-    const platform = entry.platform || detectPlatform(entry.url) || 'unknown';
+    const source = entry.source || entry.platform || detectPlatform(entry.url) || 'unknown';
     const uploadDate = formatUploadTimestamp(entry.timestamp) || formatUploadDate(entry.upload_date);
     appendTextSpans(meta, [
-        platform,
+        source,
+        entry.medium || '',
+        entry.uploader ? `by ${entry.uploader}` : '',
         entry.filename || '',
         uploadDate ? `uploaded ${uploadDate}` : '',
         dateStr,
@@ -1140,6 +1143,15 @@ const appendLog = (text, isError) => {
     line.textContent = text;
     els.logBody.appendChild(line);
     els.logBody.scrollTop = els.logBody.scrollHeight;
+    els.copyLogsBtn.disabled = false;
+    els.clearLogsBtn.disabled = false;
+};
+
+const clearLogs = () => {
+    state.logs.length = 0;
+    els.logBody.replaceChildren();
+    els.copyLogsBtn.disabled = true;
+    els.clearLogsBtn.disabled = true;
 };
 
 const updateJob = (id, patch) => {
@@ -1570,6 +1582,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     }
     const label = options.label ?? (hasLoadedInfo ? displayLabel || url : url);
     const titleForRequest = hasLoadedInfo ? state.info?.title || null : null;
+    const uploaderForRequest = hasLoadedInfo ? state.info?.uploader || null : null;
     const thumbnailForRequest = hasLoadedInfo ? state.info?.thumbnail || null : (options.thumbnail ?? null);
     const uploadDateForRequest = hasLoadedInfo ? state.info?.upload_date || null : null;
     const timestampForRequest = hasLoadedInfo ? state.info?.timestamp ?? null : null;
@@ -1588,6 +1601,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
                 cut_start_time: cutStartTime,
                 filename_suffix: preset.filenameSuffix,
                 title: titleForRequest,
+                uploader: uploaderForRequest,
                 thumbnail: thumbnailForRequest,
                 upload_date: uploadDateForRequest,
                 timestamp: timestampForRequest,
@@ -2061,6 +2075,7 @@ const bindEvents = () => {
             appendLog(`[copy] ${err}`, true);
         }
     });
+    els.clearLogsBtn.addEventListener('click', clearLogs);
 };
 
 const bindBackendEvents = async () => {

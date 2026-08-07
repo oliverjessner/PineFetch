@@ -16,6 +16,8 @@ A local-first macOS desktop app that wraps **yt-dlp** with a clean UI: paste lin
 - `yt-dlp` spawned with argument array (no shell strings)
 - Info fetch via `--dump-json` (title/uploader/duration/thumbnail)
 - Persisted config (yt-dlp path + default output directory)
+- SQLite-backed download history with duration and file-size metadata
+- History overview with download count, total data size, and total runtime
 
 ### Install
 
@@ -100,6 +102,8 @@ sqlite3 "$HOME/Library/Application Support/PineFetch/pinefetch.sqlite" \
   "SELECT id, server_enabled, host, port FROM link_dump_settings;"
 sqlite3 "$HOME/Library/Application Support/PineFetch/pinefetch.sqlite" \
   "SELECT id, name, created_at, last_used_at, revoked_at, deleted_at FROM link_dump_secrets;"
+sqlite3 "$HOME/Library/Application Support/PineFetch/pinefetch.sqlite" \
+  "SELECT COUNT(*) AS videos, SUM(duration_seconds) AS total_seconds, SUM(file_size_bytes) AS total_bytes FROM history_entries;"
 ```
 
 ## Features
@@ -108,6 +112,7 @@ sqlite3 "$HOME/Library/Application Support/PineFetch/pinefetch.sqlite" \
 - **Presets** for common workflows (e.g. Best / Audio-only / Custom)
 - **Optional logs** for transparency and troubleshooting
 - **Playlist support** (where supported by yt-dlp)
+- **Persistent history statistics** for downloaded videos, storage usage, and runtime
 - **Local-first**: no accounts, no cloud processing, files stay on your device
 
 ## Other Menus
@@ -115,7 +120,15 @@ sqlite3 "$HOME/Library/Application Support/PineFetch/pinefetch.sqlite" \
 The Settings screen lets you tune PineFetch for everyday use: default preset, download location, and whether logs are visible.
 ![screenshot of the app](/src/images/settings.png)
 
-History shows completed and failed jobs at a glance, including status and timestamp.
+History keeps successful downloads in the local SQLite database. Each entry includes the source URL, title, filename, thumbnail, platform, output path, upload date, completion time, duration in seconds, and final file size in bytes when available.
+
+The History view also provides an overview of:
+
+- **Downloaded videos** — the number of entries currently stored in History
+- **Total data** — the combined size of downloaded files
+- **Total runtime** — the combined duration of downloaded media
+
+Removing an entry or clearing History immediately updates these totals. Existing entries created before duration and file-size tracking was introduced remain available, but missing metadata is not included in the totals.
 
 ![history](/src/images/history.png)
 

@@ -76,6 +76,10 @@ const els = Object.seal({
     settingsView: document.getElementById('settingsView'),
     linkDumpView: document.getElementById('linkDumpView'),
     queueProgressView: document.getElementById('queueProgressView'),
+    historySummaryView: document.getElementById('historySummaryView'),
+    historyVideoCount: document.getElementById('historyVideoCount'),
+    historyTotalSize: document.getElementById('historyTotalSize'),
+    historyTotalDuration: document.getElementById('historyTotalDuration'),
     settingsSideView: document.getElementById('settingsSideView'),
     linkDumpSideView: document.getElementById('linkDumpSideView'),
     viewDownloadBtn: document.getElementById('viewDownloadBtn'),
@@ -178,6 +182,17 @@ const formatDuration = seconds => {
 
     if (hrs > 0) return `${hrs}h ${String(mins % 60).padStart(2, '0')}m`;
     return `${mins}m ${String(secs).padStart(2, '0')}s`;
+};
+
+const formatFileSize = bytes => {
+    const size = Number(bytes);
+    if (!Number.isFinite(size) || size <= 0) return '0 B';
+
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const unitIndex = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1);
+    const value = size / 1024 ** unitIndex;
+    const precision = unitIndex === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 2;
+    return `${value.toFixed(precision)} ${units[unitIndex]}`;
 };
 
 const formatCutStartLabel = seconds => {
@@ -650,14 +665,16 @@ const setActiveView = view => {
     els.historyView.hidden = !isHistory;
     els.settingsView.hidden = !isSettings;
     els.linkDumpView.hidden = !isLinkDump;
-    els.queueProgressView.hidden = isSettings || isLinkDump;
+    els.queueProgressView.hidden = !isDownload;
+    els.historySummaryView.hidden = !isHistory;
     els.settingsSideView.hidden = !isSettings;
     els.linkDumpSideView.hidden = !isLinkDump;
     els.downloadView.classList.toggle('pf-is-active', isDownload);
     els.historyView.classList.toggle('pf-is-active', isHistory);
     els.settingsView.classList.toggle('pf-is-active', isSettings);
     els.linkDumpView.classList.toggle('pf-is-active', isLinkDump);
-    els.queueProgressView.classList.toggle('pf-is-active', !isSettings && !isLinkDump);
+    els.queueProgressView.classList.toggle('pf-is-active', isDownload);
+    els.historySummaryView.classList.toggle('pf-is-active', isHistory);
     els.settingsSideView.classList.toggle('pf-is-active', isSettings);
     els.linkDumpSideView.classList.toggle('pf-is-active', isLinkDump);
 
@@ -677,8 +694,8 @@ const setActiveView = view => {
         els.infoBadge.style.display = 'inline-flex';
     } else if (isHistory) {
         els.leftPanelTitle.textContent = 'History';
-        els.rightPanelTitle.textContent = 'Queue / Progress';
-        els.queueBadge.style.display = 'inline-flex';
+        els.rightPanelTitle.textContent = 'History';
+        els.queueBadge.style.display = 'none';
         els.infoBadge.style.display = 'none';
         void renderHistory();
     } else if (isLinkDump) {
@@ -983,6 +1000,19 @@ const updateHistoryActions = () => {
     els.loadMoreHistoryBtn.hidden = !state.historyHasMore;
 };
 
+const renderHistoryStats = async () => {
+    if (!invoke) return;
+
+    try {
+        const stats = await invoke('get_history_stats');
+        els.historyVideoCount.textContent = Number(stats?.video_count || 0).toLocaleString();
+        els.historyTotalSize.textContent = formatFileSize(stats?.total_file_size_bytes);
+        els.historyTotalDuration.textContent = formatDuration(Number(stats?.total_duration_seconds || 0));
+    } catch (err) {
+        appendLog(`[history] ${err}`, true);
+    }
+};
+
 const createHistoryItem = entry => {
     const item = document.createElement('div');
     item.className = `pf-history-item ${entry.thumbnail ? '' : 'pf-no-thumb'}`;
@@ -1051,6 +1081,8 @@ const createHistoryItem = entry => {
 };
 
 const renderHistory = async ({ append = false } = {}) => {
+    if (!append) void renderHistoryStats();
+
     if (!invoke) {
         els.historyList.replaceChildren();
         els.historyHint.hidden = true;
@@ -1541,6 +1573,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     const thumbnailForRequest = hasLoadedInfo ? state.info?.thumbnail || null : (options.thumbnail ?? null);
     const uploadDateForRequest = hasLoadedInfo ? state.info?.upload_date || null : null;
     const timestampForRequest = hasLoadedInfo ? state.info?.timestamp ?? null : null;
+    const durationSecondsForRequest = hasLoadedInfo ? state.info?.duration ?? null : null;
 
     try {
         const id = await invoke('enqueue_download', {
@@ -1558,6 +1591,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
                 thumbnail: thumbnailForRequest,
                 upload_date: uploadDateForRequest,
                 timestamp: timestampForRequest,
+                duration_seconds: durationSecondsForRequest,
             },
         });
 

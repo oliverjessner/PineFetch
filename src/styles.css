@@ -113,6 +113,24 @@ body {
     flex: 1;
 }
 
+.pf-history-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(var(--pf-size-0), 1fr));
+    gap: var(--pf-space-3xl);
+}
+
+.pf-history-stat {
+    align-content: start;
+}
+
+.pf-history-stat-value {
+    margin: var(--pf-space-0);
+    color: var(--pf-accent);
+    font-size: 1.35rem;
+    font-weight: var(--pf-font-weight-bold);
+    line-height: var(--pf-line-height-tight);
+}
+
 #settingsView,
 #linkDumpView {
     overflow-y: auto;
@@ -628,6 +646,10 @@ body {
     }
 
     .pf-pinefetch-info-meta {
+        grid-template-columns: minmax(var(--pf-size-0), 1fr);
+    }
+
+    .pf-history-summary-grid {
         grid-template-columns: minmax(var(--pf-size-0), 1fr);
     }
 

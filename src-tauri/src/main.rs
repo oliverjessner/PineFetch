@@ -78,6 +78,8 @@ struct DownloadRequest {
     upload_date: Option<String>,
     #[serde(default)]
     timestamp: Option<i64>,
+    #[serde(default)]
+    duration_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +95,7 @@ struct DownloadJob {
     thumbnail: Option<String>,
     upload_date: Option<String>,
     timestamp: Option<i64>,
+    duration_seconds: Option<i64>,
     cut_start_time: Option<f64>,
     filename_suffix: Option<String>,
 }
@@ -160,6 +163,10 @@ struct HistoryEntry {
     #[serde(default)]
     timestamp: Option<i64>,
     #[serde(default)]
+    duration_seconds: Option<i64>,
+    #[serde(default)]
+    file_size_bytes: Option<i64>,
+    #[serde(default)]
     platform: Option<String>,
     #[serde(default)]
     output_path: Option<String>,
@@ -172,6 +179,13 @@ struct HistoryEntry {
 struct HistoryPage {
     entries: Vec<HistoryEntry>,
     has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct HistoryStats {
+    video_count: u64,
+    total_duration_seconds: u64,
+    total_file_size_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -655,7 +669,7 @@ fn load_info_with_yt_dlp(
             .or_else(|| value.get("uploader_id"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        duration: value.get("duration").and_then(|v| v.as_i64()),
+        duration: value.get("duration").and_then(json_value_to_i64),
         thumbnail: value
             .get("thumbnail")
             .and_then(|v| v.as_str())
@@ -812,6 +826,7 @@ fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<Down
         thumbnail: request.thumbnail,
         upload_date: request.upload_date,
         timestamp: request.timestamp,
+        duration_seconds: request.duration_seconds,
         cut_start_time,
         filename_suffix: normalize_filename_suffix(request.filename_suffix.as_deref()),
     })
@@ -922,6 +937,11 @@ fn get_history(
     list_history_page_from_db(state.inner(), limit, offset)
 }
 
+#[tauri::command]
+fn get_history_stats(state: State<AppState>) -> Result<HistoryStats, String> {
+    get_history_stats_from_db(state.inner())
+}
+
 fn detect_platform(url: &str) -> Option<String> {
     if let Ok(parsed) = url::Url::parse(url) {
         let host = parsed.host_str().unwrap_or("").to_lowercase();
@@ -992,13 +1012,25 @@ fn hydrate_history_metadata(
     state: &AppState,
     job: &DownloadJob,
     filename: Option<&str>,
-) -> (Option<String>, Option<String>, Option<String>, Option<i64>) {
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+) {
     let mut title = trim_optional_string(job.title.clone());
     let mut thumbnail = trim_optional_string(job.thumbnail.clone());
     let mut upload_date = trim_optional_string(job.upload_date.clone());
     let mut timestamp = job.timestamp;
+    let mut duration_seconds = job.duration_seconds;
 
-    if title.is_none() || thumbnail.is_none() || upload_date.is_none() || timestamp.is_none() {
+    if title.is_none()
+        || thumbnail.is_none()
+        || upload_date.is_none()
+        || timestamp.is_none()
+        || duration_seconds.is_none()
+    {
         if let Ok(yt_dlp) = resolve_yt_dlp(app, state) {
             let deno = resolve_deno_executable(app);
             if let Ok(info) = load_info_with_yt_dlp(yt_dlp, deno, job.url.clone()) {
@@ -1014,6 +1046,9 @@ fn hydrate_history_metadata(
                 if timestamp.is_none() {
                     timestamp = info.timestamp;
                 }
+                if duration_seconds.is_none() {
+                    duration_seconds = info.duration;
+                }
             }
         }
     }
@@ -1022,7 +1057,12 @@ fn hydrate_history_metadata(
         title = title_from_filename(filename);
     }
 
-    (title, thumbnail, upload_date, timestamp)
+    (title, thumbnail, upload_date, timestamp, duration_seconds)
+}
+
+fn file_size_bytes_from_path(path: Option<&str>) -> Option<i64> {
+    let size = fs::metadata(path?).ok()?.len();
+    i64::try_from(size).ok()
 }
 
 fn add_history_entry_on_success(
@@ -1032,8 +1072,9 @@ fn add_history_entry_on_success(
     output_path: Option<&str>,
 ) {
     let filename = filename_from_path(output_path);
-    let (title, thumbnail, upload_date, timestamp) =
+    let (title, thumbnail, upload_date, timestamp, duration_seconds) =
         hydrate_history_metadata(app, state, job, filename.as_deref());
+    let file_size_bytes = file_size_bytes_from_path(output_path);
     let now = current_timestamp_millis();
     let entry = HistoryEntry {
         id: Uuid::new_v4().to_string(),
@@ -1043,6 +1084,8 @@ fn add_history_entry_on_success(
         thumbnail,
         upload_date,
         timestamp,
+        duration_seconds,
+        file_size_bytes,
         platform: detect_platform(&job.url),
         output_path: output_path.map(|s| s.to_string()),
         created_at: now,
@@ -2481,6 +2524,8 @@ fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
     entry.thumbnail = trim_optional_string(entry.thumbnail);
     entry.upload_date = trim_optional_string(entry.upload_date);
     entry.timestamp = entry.timestamp.filter(|timestamp| *timestamp >= 0);
+    entry.duration_seconds = entry.duration_seconds.filter(|duration| *duration >= 0);
+    entry.file_size_bytes = entry.file_size_bytes.filter(|size| *size >= 0);
     entry.platform = trim_optional_string(entry.platform).or_else(|| detect_platform(&entry.url));
     entry.output_path = trim_optional_string(entry.output_path);
     if entry.title.is_none() {
@@ -2524,7 +2569,7 @@ fn list_history_page_from_db(
         .map_err(|e| format!("History read failed: {e}"))?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, url, title, filename, thumbnail, upload_date, timestamp, platform, output_path, created_at, completed_at
+            "SELECT id, url, title, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, platform, output_path, created_at, completed_at
              FROM history_entries
              ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC, id DESC
              LIMIT ?1 OFFSET ?2",
@@ -2533,8 +2578,8 @@ fn list_history_page_from_db(
 
     let rows = stmt
         .query_map(params![i64::from(limit), i64::from(offset)], |row| {
-            let created_at: i64 = row.get(9)?;
-            let completed_at: Option<i64> = row.get(10)?;
+            let created_at: i64 = row.get(11)?;
+            let completed_at: Option<i64> = row.get(12)?;
             Ok(HistoryEntry {
                 id: row.get(0)?,
                 url: row.get(1)?,
@@ -2543,8 +2588,10 @@ fn list_history_page_from_db(
                 thumbnail: row.get(4)?,
                 upload_date: row.get(5)?,
                 timestamp: row.get(6)?,
-                platform: row.get(7)?,
-                output_path: row.get(8)?,
+                duration_seconds: row.get(7)?,
+                file_size_bytes: row.get(8)?,
+                platform: row.get(9)?,
+                output_path: row.get(10)?,
                 created_at: i64_to_millis(created_at),
                 completed_at: optional_i64_to_millis(completed_at),
             })
@@ -2569,6 +2616,29 @@ fn list_history_entries_from_db(state: &AppState) -> Result<Vec<HistoryEntry>, S
     Ok(list_history_page_from_db(state, u32::MAX, 0)?.entries)
 }
 
+fn get_history_stats_from_db(state: &AppState) -> Result<HistoryStats, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(duration_seconds), 0),
+            COALESCE(SUM(file_size_bytes), 0)
+         FROM history_entries",
+        [],
+        |row| {
+            let video_count: i64 = row.get(0)?;
+            let total_duration_seconds: i64 = row.get(1)?;
+            let total_file_size_bytes: i64 = row.get(2)?;
+            Ok(HistoryStats {
+                video_count: video_count.max(0) as u64,
+                total_duration_seconds: total_duration_seconds.max(0) as u64,
+                total_file_size_bytes: total_file_size_bytes.max(0) as u64,
+            })
+        },
+    )
+    .map_err(|e| format!("History stats read failed: {e}"))
+}
+
 fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<(), String> {
     let entry = normalize_history_entry(entry.clone());
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
@@ -2581,11 +2651,13 @@ fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<
             thumbnail,
             upload_date,
             timestamp,
+            duration_seconds,
+            file_size_bytes,
             platform,
             output_path,
             created_at,
             completed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             entry.id,
             entry.url,
@@ -2594,6 +2666,8 @@ fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<
             entry.thumbnail,
             entry.upload_date,
             entry.timestamp,
+            entry.duration_seconds,
+            entry.file_size_bytes,
             entry.platform,
             entry.output_path,
             millis_to_i64(entry.created_at),
@@ -2856,6 +2930,8 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             thumbnail TEXT,
             upload_date TEXT,
             timestamp INTEGER,
+            duration_seconds INTEGER,
+            file_size_bytes INTEGER,
             platform TEXT,
             output_path TEXT,
             created_at INTEGER NOT NULL,
@@ -2871,20 +2947,38 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     )?;
 
     ensure_history_entries_timestamp_column(conn)?;
+    ensure_history_entries_duration_seconds_column(conn)?;
+    ensure_history_entries_file_size_bytes_column(conn)?;
     Ok(())
 }
 
 fn ensure_history_entries_timestamp_column(conn: &Connection) -> rusqlite::Result<()> {
+    ensure_history_entries_integer_column(conn, "timestamp")
+}
+
+fn ensure_history_entries_duration_seconds_column(conn: &Connection) -> rusqlite::Result<()> {
+    ensure_history_entries_integer_column(conn, "duration_seconds")
+}
+
+fn ensure_history_entries_file_size_bytes_column(conn: &Connection) -> rusqlite::Result<()> {
+    ensure_history_entries_integer_column(conn, "file_size_bytes")
+}
+
+fn ensure_history_entries_integer_column(
+    conn: &Connection,
+    column_name: &str,
+) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(history_entries)")?;
     let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
     for column in columns {
-        if column? == "timestamp" {
+        if column? == column_name {
             return Ok(());
         }
     }
+    drop(stmt);
 
     conn.execute(
-        "ALTER TABLE history_entries ADD COLUMN timestamp INTEGER",
+        &format!("ALTER TABLE history_entries ADD COLUMN {column_name} INTEGER"),
         [],
     )?;
     Ok(())
@@ -3785,6 +3879,7 @@ fn build_link_dump_download_request(
         thumbnail: youtube_thumbnail_url_from_normalized(normalized),
         upload_date: None,
         timestamp: None,
+        duration_seconds: None,
     })
 }
 
@@ -3900,6 +3995,7 @@ fn main() {
             enqueue_download,
             cancel_download,
             get_history,
+            get_history_stats,
             remove_history_entry,
             clear_history,
             get_link_dump_overview,
@@ -4267,7 +4363,7 @@ mod tests {
     }
 
     #[test]
-    fn link_dump_migration_adds_history_timestamp_to_existing_table() {
+    fn link_dump_migration_adds_history_metadata_columns_to_existing_table() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             r#"
@@ -4288,15 +4384,17 @@ mod tests {
         .unwrap();
 
         run_link_dump_migrations(&conn).unwrap();
-        let timestamp_column_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('history_entries') WHERE name = 'timestamp'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
+        for column_name in ["timestamp", "duration_seconds", "file_size_bytes"] {
+            let column_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('history_entries') WHERE name = ?1 AND type = 'INTEGER'",
+                    params![column_name],
+                    |row| row.get(0),
+                )
+                .unwrap();
 
-        assert_eq!(timestamp_column_count, 1);
+            assert_eq!(column_count, 1, "missing INTEGER column {column_name}");
+        }
     }
 
     #[test]
@@ -4310,6 +4408,8 @@ mod tests {
             thumbnail: Some("https://i.ytimg.com/vi/abc123/mqdefault.jpg".to_string()),
             upload_date: Some("20240501".to_string()),
             timestamp: Some(1_714_560_000),
+            duration_seconds: Some(754),
+            file_size_bytes: Some(42_000_000),
             platform: Some("youtube".to_string()),
             output_path: Some("/tmp/Example title - Uploader - abc123.mp4".to_string()),
             created_at: 1_700_000_000_000,
@@ -4333,6 +4433,13 @@ mod tests {
         );
         assert_eq!(entries[0].upload_date.as_deref(), Some("20240501"));
         assert_eq!(entries[0].timestamp, Some(1_714_560_000));
+        assert_eq!(entries[0].duration_seconds, Some(754));
+        assert_eq!(entries[0].file_size_bytes, Some(42_000_000));
+
+        let stats = get_history_stats_from_db(&state).unwrap();
+        assert_eq!(stats.video_count, 1);
+        assert_eq!(stats.total_duration_seconds, 754);
+        assert_eq!(stats.total_file_size_bytes, 42_000_000);
     }
 
     #[test]
@@ -4349,6 +4456,8 @@ mod tests {
                 thumbnail: None,
                 upload_date: None,
                 timestamp: None,
+                duration_seconds: None,
+                file_size_bytes: None,
                 platform: Some("example".to_string()),
                 output_path: None,
                 created_at: timestamp,

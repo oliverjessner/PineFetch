@@ -1,3 +1,10 @@
+# 1.7.0
+
+- quality options for transcribing
+- text with time stamps
+- transcribing stored in database
+- setting for transcribing including videos
+
 # 1.6.2
 
 - dependabot updates

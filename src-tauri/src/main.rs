@@ -29,7 +29,13 @@ fn default_cut_at_timestamp_enabled() -> bool {
     true
 }
 
+fn default_faster_whisper_model() -> String {
+    DEFAULT_FASTER_WHISPER_MODEL.to_string()
+}
+
 const LEGACY_CONFIG_MIGRATION_KEY: &str = "legacy_config_json_migrated";
+const DEFAULT_FASTER_WHISPER_MODEL: &str = "base";
+const FASTER_WHISPER_MODELS: [&str; 4] = ["base", "small", "medium", "large-v3"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppConfig {
@@ -37,6 +43,10 @@ struct AppConfig {
     default_output_dir: Option<String>,
     #[serde(default)]
     selected_preset_key: Option<String>,
+    #[serde(default = "default_faster_whisper_model")]
+    faster_whisper_model: String,
+    #[serde(default)]
+    download_video_with_transcript: bool,
     #[serde(default = "default_magic_import_enabled")]
     magic_import_enabled: bool,
     #[serde(default = "default_cut_at_timestamp_enabled")]
@@ -51,6 +61,8 @@ impl Default for AppConfig {
             yt_dlp_path: None,
             default_output_dir: None,
             selected_preset_key: Some(DEFAULT_DOWNLOAD_PRESET_KEY.to_string()),
+            faster_whisper_model: default_faster_whisper_model(),
+            download_video_with_transcript: false,
             magic_import_enabled: default_magic_import_enabled(),
             cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
@@ -66,6 +78,8 @@ struct DownloadRequest {
     extract_audio: bool,
     audio_format: Option<String>,
     transcribe_text: bool,
+    #[serde(default)]
+    transcribe_timestamps: bool,
     #[serde(default = "default_cut_at_timestamp_enabled")]
     cut_at_timestamp_enabled: bool,
     #[serde(default)]
@@ -93,6 +107,11 @@ struct DownloadJob {
     extract_audio: bool,
     audio_format: Option<String>,
     transcribe_text: bool,
+    transcribe_timestamps: bool,
+    #[serde(default = "default_faster_whisper_model")]
+    faster_whisper_model: String,
+    #[serde(default)]
+    download_video_with_transcript: bool,
     title: Option<String>,
     uploader: Option<String>,
     thumbnail: Option<String>,
@@ -338,6 +357,17 @@ struct DownloadRunResult {
     output_path: Option<String>,
 }
 
+#[derive(Debug)]
+struct TemporaryTranscriptionAudio {
+    path: PathBuf,
+}
+
+impl Drop for TemporaryTranscriptionAudio {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 const FASTER_WHISPER_TRANSCRIBE_SNIPPET: &str = r#"
 import sys
 from pathlib import Path
@@ -351,6 +381,13 @@ except Exception as exc:
 audio_path = sys.argv[1]
 output_path = Path(sys.argv[2])
 model_name = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else "base"
+include_timestamps = len(sys.argv) > 4 and sys.argv[4] == "1"
+
+def format_timestamp(seconds):
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 model = WhisperModel(model_name, compute_type="int8")
 segments, _ = model.transcribe(audio_path, beam_size=5)
@@ -358,7 +395,12 @@ lines = []
 for segment in segments:
     text = segment.text.strip()
     if text:
-        lines.append(text)
+        if include_timestamps:
+            start = format_timestamp(segment.start)
+            end = format_timestamp(segment.end)
+            lines.append(f"[{start} → {end}] {text}")
+        else:
+            lines.append(text)
 
 content = "\n".join(lines).strip()
 if content:
@@ -380,6 +422,7 @@ struct DownloadPreset {
     extract_audio: bool,
     audio_format: Option<&'static str>,
     transcribe_text: bool,
+    transcribe_timestamps: bool,
     filename_suffix: Option<&'static str>,
 }
 
@@ -390,6 +433,7 @@ const DOWNLOAD_PRESETS: &[DownloadPreset] = &[
         extract_audio: false,
         audio_format: None,
         transcribe_text: false,
+        transcribe_timestamps: false,
         filename_suffix: Some("_best"),
     },
     DownloadPreset {
@@ -398,6 +442,7 @@ const DOWNLOAD_PRESETS: &[DownloadPreset] = &[
         extract_audio: false,
         audio_format: None,
         transcribe_text: false,
+        transcribe_timestamps: false,
         filename_suffix: Some("__max"),
     },
     DownloadPreset {
@@ -406,6 +451,7 @@ const DOWNLOAD_PRESETS: &[DownloadPreset] = &[
         extract_audio: true,
         audio_format: Some("mp3"),
         transcribe_text: false,
+        transcribe_timestamps: false,
         filename_suffix: None,
     },
     DownloadPreset {
@@ -414,6 +460,7 @@ const DOWNLOAD_PRESETS: &[DownloadPreset] = &[
         extract_audio: true,
         audio_format: Some("opus"),
         transcribe_text: false,
+        transcribe_timestamps: false,
         filename_suffix: None,
     },
     DownloadPreset {
@@ -422,7 +469,17 @@ const DOWNLOAD_PRESETS: &[DownloadPreset] = &[
         extract_audio: true,
         audio_format: Some("mp3"),
         transcribe_text: true,
+        transcribe_timestamps: false,
         filename_suffix: None,
+    },
+    DownloadPreset {
+        key: "text_timestamps",
+        format: "ba/b",
+        extract_audio: true,
+        audio_format: Some("mp3"),
+        transcribe_text: true,
+        transcribe_timestamps: true,
+        filename_suffix: Some("_timestamps"),
     },
 ];
 
@@ -474,7 +531,18 @@ fn normalize_app_config(mut config: AppConfig) -> AppConfig {
     config.selected_preset_key = Some(normalize_download_preset_key(
         config.selected_preset_key.as_deref(),
     ));
+    config.faster_whisper_model = normalize_faster_whisper_model(&config.faster_whisper_model);
     config
+}
+
+fn normalize_faster_whisper_model(model: &str) -> String {
+    let model = model.trim();
+    FASTER_WHISPER_MODELS
+        .iter()
+        .find(|candidate| **candidate == model)
+        .copied()
+        .unwrap_or(DEFAULT_FASTER_WHISPER_MODEL)
+        .to_string()
 }
 
 #[tauri::command]
@@ -822,6 +890,13 @@ fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<Down
         request.cut_start_time,
         &request.url,
     );
+    let (faster_whisper_model, download_video_with_transcript) = {
+        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        (
+            normalize_faster_whisper_model(&cfg.faster_whisper_model),
+            cfg.download_video_with_transcript,
+        )
+    };
     let id = Uuid::new_v4().to_string();
     Ok(DownloadJob {
         id: id.clone(),
@@ -831,6 +906,9 @@ fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<Down
         extract_audio: request.extract_audio,
         audio_format: request.audio_format,
         transcribe_text: request.transcribe_text,
+        transcribe_timestamps: request.transcribe_timestamps,
+        faster_whisper_model,
+        download_video_with_transcript,
         title: request.title,
         uploader: request.uploader,
         thumbnail: request.thumbnail,
@@ -1149,13 +1227,14 @@ fn add_history_entry_on_success(
     state: &AppState,
     job: &DownloadJob,
     output_path: Option<&str>,
-) {
+) -> Result<String, String> {
     let filename = filename_from_path(output_path);
     let metadata = hydrate_history_metadata(app, state, job, filename.as_deref());
     let file_size_bytes = file_size_bytes_from_path(output_path);
     let now = current_timestamp_millis();
+    let history_entry_id = Uuid::new_v4().to_string();
     let entry = HistoryEntry {
-        id: Uuid::new_v4().to_string(),
+        id: history_entry_id.clone(),
         url: job.url.clone(),
         title: metadata.title,
         uploader: metadata.uploader,
@@ -1173,7 +1252,8 @@ fn add_history_entry_on_success(
         completed_at: Some(now),
     };
 
-    let _ = insert_history_entry_in_db(state, &entry);
+    insert_history_entry_in_db(state, &entry)?;
+    Ok(history_entry_id)
 }
 
 #[tauri::command]
@@ -1312,6 +1392,18 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
                             },
                         );
                     } else if job.transcribe_text {
+                        if job.download_video_with_transcript {
+                            if let Some(video_path) = run_result.output_path.as_deref() {
+                                emit_log(
+                                    &app_handle,
+                                    LogEvent {
+                                        id: job.id.clone(),
+                                        line: format!("[video] saved: {video_path}"),
+                                        is_error: false,
+                                    },
+                                );
+                            }
+                        }
                         emit_state(
                             &app_handle,
                             DownloadStateEvent {
@@ -1319,12 +1411,17 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
                                 state: "transcribing".to_string(),
                                 exit_code: Some(run_result.exit_code),
                                 error: None,
-                                output_path: None,
+                                output_path: if job.download_video_with_transcript {
+                                    run_result.output_path.clone()
+                                } else {
+                                    None
+                                },
                             },
                         );
 
                         match run_faster_whisper_transcription(
                             &app_handle,
+                            &state_handle,
                             &job,
                             run_result.output_path.as_deref(),
                         ) {
@@ -1347,13 +1444,40 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
                                         output_path: Some(transcript_path.clone()),
                                     },
                                 );
-                                // Add to history on success
-                                add_history_entry_on_success(
+                                match add_history_entry_on_success(
                                     &app_handle,
                                     &state_handle,
                                     &job,
-                                    run_result.output_path.as_deref(),
-                                );
+                                    Some(&transcript_path),
+                                ) {
+                                    Ok(history_entry_id) => {
+                                        if let Err(err) = store_transcription_for_history_entry(
+                                            &state_handle,
+                                            &job,
+                                            &history_entry_id,
+                                            &transcript_path,
+                                        ) {
+                                            emit_log(
+                                                &app_handle,
+                                                LogEvent {
+                                                    id: job.id.clone(),
+                                                    line: format!(
+                                                        "[transcript] database save failed: {err}"
+                                                    ),
+                                                    is_error: true,
+                                                },
+                                            );
+                                        }
+                                    }
+                                    Err(err) => emit_log(
+                                        &app_handle,
+                                        LogEvent {
+                                            id: job.id.clone(),
+                                            line: format!("[history] database save failed: {err}"),
+                                            is_error: true,
+                                        },
+                                    ),
+                                }
                             }
                             Err(err) => {
                                 emit_state(
@@ -1380,7 +1504,7 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
                             },
                         );
                         // Add to history on success
-                        add_history_entry_on_success(
+                        let _ = add_history_entry_on_success(
                             &app_handle,
                             &state_handle,
                             &job,
@@ -1414,6 +1538,8 @@ fn run_download_job(
     state: &AppState,
     job: &DownloadJob,
 ) -> Result<DownloadRunResult, String> {
+    let effective_job = effective_download_job(job);
+    let job = &effective_job;
     let yt_dlp = resolve_yt_dlp(app, state)?;
     let ffmpeg_location = resolve_ffmpeg_location(app, &yt_dlp);
     let deno_path = resolve_deno_executable(app);
@@ -1611,6 +1737,18 @@ fn run_download_job(
         exit_code: status.code().unwrap_or(-1),
         output_path,
     })
+}
+
+fn effective_download_job(job: &DownloadJob) -> DownloadJob {
+    let mut download_job = job.clone();
+    if job.transcribe_text && job.download_video_with_transcript {
+        download_job.format = download_preset_for_key(Some(DEFAULT_DOWNLOAD_PRESET_KEY))
+            .format
+            .to_string();
+        download_job.extract_audio = false;
+        download_job.audio_format = None;
+    }
+    download_job
 }
 
 fn trim_downloaded_file(
@@ -2206,16 +2344,29 @@ fn resolve_python_executable(app: &AppHandle) -> Option<String> {
 
 fn run_faster_whisper_transcription(
     app: &AppHandle,
+    state: &AppState,
     job: &DownloadJob,
     output_path: Option<&str>,
 ) -> Result<String, String> {
-    let audio_path = output_path
+    let media_path = output_path
         .ok_or_else(|| "Could not determine downloaded file path for transcription".to_string())?;
-    if !Path::new(audio_path).exists() {
+    if !Path::new(media_path).exists() {
         return Err(format!(
-            "Downloaded file not found for transcription: {audio_path}"
+            "Downloaded file not found for transcription: {media_path}"
         ));
     }
+
+    let temporary_audio = if job.download_video_with_transcript {
+        Some(extract_temporary_transcription_audio(
+            app, state, job, media_path,
+        )?)
+    } else {
+        None
+    };
+    let transcription_input = temporary_audio
+        .as_ref()
+        .map(|audio| audio.path.as_path())
+        .unwrap_or_else(|| Path::new(media_path));
 
     let python = resolve_python_executable(app).ok_or_else(|| {
     "No Python runtime found for faster-whisper (bundled runtime missing and no compatible Python in PATH)"
@@ -2230,20 +2381,26 @@ fn run_faster_whisper_transcription(
         },
     );
 
-    let transcript_path = Path::new(audio_path).with_extension("txt");
+    let transcript_path = Path::new(media_path).with_extension("txt");
     let transcript_path_str = transcript_path.to_string_lossy().to_string();
-    let model_name = std::env::var("PINEFETCH_FASTER_WHISPER_MODEL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "base".to_string());
+    let model_name = normalize_faster_whisper_model(&job.faster_whisper_model);
+    emit_log(
+        app,
+        LogEvent {
+            id: job.id.clone(),
+            line: format!("[faster-whisper] model: {model_name}"),
+            is_error: false,
+        },
+    );
 
     let mut command = Command::new(python);
     command
         .arg("-c")
         .arg(FASTER_WHISPER_TRANSCRIBE_SNIPPET)
-        .arg(audio_path)
+        .arg(transcription_input)
         .arg(&transcript_path_str)
         .arg(&model_name)
+        .arg(if job.transcribe_timestamps { "1" } else { "0" })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -2307,6 +2464,79 @@ fn run_faster_whisper_transcription(
     }
 
     Ok(transcript_path_str)
+}
+
+fn extract_temporary_transcription_audio(
+    app: &AppHandle,
+    state: &AppState,
+    job: &DownloadJob,
+    video_path: &str,
+) -> Result<TemporaryTranscriptionAudio, String> {
+    let yt_dlp = resolve_yt_dlp(app, state)?;
+    let ffmpeg_location = resolve_ffmpeg_location(app, &yt_dlp)
+        .ok_or_else(|| "ffmpeg not available for transcription audio extraction".to_string())?;
+    let ffmpeg_path = Path::new(&ffmpeg_location).join(ffmpeg_tool_name());
+    if !ffmpeg_path.exists() {
+        return Err(format!(
+            "ffmpeg executable not found for transcription: {}",
+            ffmpeg_path.to_string_lossy()
+        ));
+    }
+
+    let video_path = Path::new(video_path);
+    let parent = video_path
+        .parent()
+        .ok_or_else(|| "Downloaded video has no parent directory".to_string())?;
+    let audio_path = parent.join(format!(".pinefetch-transcription-{}.wav", Uuid::new_v4()));
+    let video_path_str = video_path.to_string_lossy().to_string();
+    let audio_path_str = audio_path.to_string_lossy().to_string();
+
+    emit_log(
+        app,
+        LogEvent {
+            id: job.id.clone(),
+            line: "[transcript] preparing audio from video".to_string(),
+            is_error: false,
+        },
+    );
+
+    let output = Command::new(&ffmpeg_path)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            video_path_str.as_str(),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            audio_path_str.as_str(),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to prepare audio for transcription: {e}"))?;
+
+    if !output.status.success() {
+        let _ = fs::remove_file(&audio_path);
+        let details = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if details.is_empty() {
+            format!(
+                "ffmpeg transcription audio extraction failed with exit code {}",
+                output.status.code().unwrap_or(-1)
+            )
+        } else {
+            format!("ffmpeg transcription audio extraction failed: {details}")
+        });
+    }
+    if !audio_path.exists() {
+        return Err("ffmpeg finished but no transcription audio was created".to_string());
+    }
+
+    Ok(TemporaryTranscriptionAudio { path: audio_path })
 }
 
 fn build_output_template(output_dir: &str, filename_suffix: Option<&str>) -> String {
@@ -2775,6 +3005,43 @@ fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<
     Ok(())
 }
 
+fn store_transcription_for_history_entry(
+    state: &AppState,
+    job: &DownloadJob,
+    history_entry_id: &str,
+    transcript_path: &str,
+) -> Result<(), String> {
+    let text = fs::read_to_string(transcript_path)
+        .map_err(|e| format!("Transcript file could not be read: {e}"))?;
+    let transcription_type = if job.transcribe_timestamps {
+        "text with timestamps"
+    } else {
+        "text"
+    };
+    insert_transcription_in_db(state, history_entry_id, &text, transcription_type)
+}
+
+fn insert_transcription_in_db(
+    state: &AppState,
+    history_entry_id: &str,
+    text: &str,
+    transcription_type: &str,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.execute(
+        "INSERT INTO transcriptions (id, history_entry_id, text, \"type\")
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            Uuid::new_v4().to_string(),
+            history_entry_id,
+            text,
+            transcription_type,
+        ],
+    )
+    .map_err(|e| format!("Transcription insert failed: {e}"))?;
+    Ok(())
+}
+
 fn delete_history_entry_from_db(state: &AppState, id: &str) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
     conn.execute("DELETE FROM history_entries WHERE id = ?1", params![id])
@@ -2813,7 +3080,7 @@ fn load_legacy_config_json(app: &AppHandle) -> Option<AppConfig> {
 
 fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
     conn.query_row(
-        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, magic_import_enabled, cut_at_timestamp_enabled, last_download_url
+        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url
          FROM app_config
          WHERE id = 1",
         [],
@@ -2822,9 +3089,11 @@ fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
                 yt_dlp_path: row.get(0)?,
                 default_output_dir: row.get(1)?,
                 selected_preset_key: row.get(2)?,
-                magic_import_enabled: row.get::<_, i64>(3)? != 0,
-                cut_at_timestamp_enabled: row.get::<_, i64>(4)? != 0,
-                last_download_url: row.get(5)?,
+                faster_whisper_model: row.get(3)?,
+                download_video_with_transcript: row.get::<_, i64>(4)? != 0,
+                magic_import_enabled: row.get::<_, i64>(5)? != 0,
+                cut_at_timestamp_enabled: row.get::<_, i64>(6)? != 0,
+                last_download_url: row.get(7)?,
             }))
         },
     )
@@ -2842,6 +3111,8 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             yt_dlp_path,
             default_output_dir,
             selected_preset_key,
+            faster_whisper_model,
+            download_video_with_transcript,
             magic_import_enabled,
             cut_at_timestamp_enabled,
             last_download_url,
@@ -2855,6 +3126,8 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             ?4,
             ?5,
             ?6,
+            ?7,
+            ?8,
             datetime('now'),
             datetime('now')
         )
@@ -2862,6 +3135,8 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             yt_dlp_path = excluded.yt_dlp_path,
             default_output_dir = excluded.default_output_dir,
             selected_preset_key = excluded.selected_preset_key,
+            faster_whisper_model = excluded.faster_whisper_model,
+            download_video_with_transcript = excluded.download_video_with_transcript,
             magic_import_enabled = excluded.magic_import_enabled,
             cut_at_timestamp_enabled = excluded.cut_at_timestamp_enabled,
             last_download_url = excluded.last_download_url,
@@ -2870,6 +3145,12 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             config.yt_dlp_path,
             config.default_output_dir,
             config.selected_preset_key,
+            config.faster_whisper_model,
+            if config.download_video_with_transcript {
+                1
+            } else {
+                0
+            },
             if config.magic_import_enabled { 1 } else { 0 },
             if config.cut_at_timestamp_enabled {
                 1
@@ -2943,6 +3224,8 @@ fn open_link_dump_db(app: &AppHandle) -> Result<Connection, String> {
 fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         r#"
+        PRAGMA foreign_keys = ON;
+
         CREATE TABLE IF NOT EXISTS link_dump_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             server_enabled INTEGER NOT NULL DEFAULT 1,
@@ -2973,6 +3256,8 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             yt_dlp_path TEXT,
             default_output_dir TEXT,
             selected_preset_key TEXT,
+            faster_whisper_model TEXT NOT NULL DEFAULT 'base',
+            download_video_with_transcript INTEGER NOT NULL DEFAULT 0,
             magic_import_enabled INTEGER NOT NULL DEFAULT 1,
             cut_at_timestamp_enabled INTEGER NOT NULL DEFAULT 1,
             last_download_url TEXT,
@@ -3038,6 +3323,14 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             completed_at INTEGER
         );
 
+        CREATE TABLE IF NOT EXISTS transcriptions (
+            id TEXT PRIMARY KEY,
+            history_entry_id TEXT NOT NULL UNIQUE,
+            text TEXT NOT NULL,
+            "type" TEXT NOT NULL CHECK ("type" IN ('text', 'text with timestamps')),
+            FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_link_dump_secrets_active
             ON link_dump_secrets(revoked_at, deleted_at);
 
@@ -3046,6 +3339,8 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
         "#,
     )?;
 
+    ensure_app_config_faster_whisper_model_column(conn)?;
+    ensure_app_config_download_video_with_transcript_column(conn)?;
     ensure_history_entries_timestamp_column(conn)?;
     ensure_history_entries_duration_seconds_column(conn)?;
     ensure_history_entries_file_size_bytes_column(conn)?;
@@ -3053,6 +3348,38 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_history_entries_text_column(conn, "medium")?;
     ensure_history_entries_text_column(conn, "source")?;
     backfill_history_sources(conn)?;
+    Ok(())
+}
+
+fn ensure_app_config_faster_whisper_model_column(conn: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'faster_whisper_model')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute(
+            "ALTER TABLE app_config ADD COLUMN faster_whisper_model TEXT NOT NULL DEFAULT 'base'",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_app_config_download_video_with_transcript_column(
+    conn: &Connection,
+) -> rusqlite::Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'download_video_with_transcript')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute(
+            "ALTER TABLE app_config ADD COLUMN download_video_with_transcript INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -4014,6 +4341,7 @@ fn build_link_dump_download_request(
         extract_audio: preset.extract_audio,
         audio_format: preset.audio_format.map(str::to_string),
         transcribe_text: preset.transcribe_text,
+        transcribe_timestamps: preset.transcribe_timestamps,
         cut_at_timestamp_enabled,
         cut_start_time: None,
         filename_suffix: preset.filename_suffix.map(str::to_string),
@@ -4388,6 +4716,16 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_unknown_faster_whisper_model_to_base() {
+        let config = normalize_app_config(AppConfig {
+            faster_whisper_model: "unknown".to_string(),
+            ..AppConfig::default()
+        });
+
+        assert_eq!(config.faster_whisper_model, DEFAULT_FASTER_WHISPER_MODEL);
+    }
+
+    #[test]
     fn app_config_defaults_are_loaded_from_sqlite() {
         let conn = Connection::open_in_memory().unwrap();
         run_link_dump_migrations(&conn).unwrap();
@@ -4398,6 +4736,8 @@ mod tests {
             config.selected_preset_key.as_deref(),
             Some(DEFAULT_DOWNLOAD_PRESET_KEY)
         );
+        assert_eq!(config.faster_whisper_model, DEFAULT_FASTER_WHISPER_MODEL);
+        assert!(!config.download_video_with_transcript);
         assert!(config.magic_import_enabled);
         assert!(config.cut_at_timestamp_enabled);
         assert!(config.yt_dlp_path.is_none());
@@ -4413,6 +4753,8 @@ mod tests {
             yt_dlp_path: Some("/opt/pinefetch/yt-dlp".to_string()),
             default_output_dir: Some("/Users/example/Downloads".to_string()),
             selected_preset_key: Some("audio_mp3".to_string()),
+            faster_whisper_model: "medium".to_string(),
+            download_video_with_transcript: true,
             magic_import_enabled: false,
             cut_at_timestamp_enabled: false,
             last_download_url: Some("https://example.com/watch".to_string()),
@@ -4427,6 +4769,8 @@ mod tests {
             Some("/Users/example/Downloads")
         );
         assert_eq!(loaded.selected_preset_key.as_deref(), Some("audio_mp3"));
+        assert_eq!(loaded.faster_whisper_model, "medium");
+        assert!(loaded.download_video_with_transcript);
         assert!(!loaded.magic_import_enabled);
         assert!(!loaded.cut_at_timestamp_enabled);
         assert_eq!(
@@ -4450,7 +4794,20 @@ mod tests {
         assert!(request.extract_audio);
         assert_eq!(request.audio_format.as_deref(), Some("mp3"));
         assert!(!request.transcribe_text);
+        assert!(!request.transcribe_timestamps);
         assert_eq!(request.filename_suffix, None);
+    }
+
+    #[test]
+    fn timestamped_text_preset_enables_segment_timestamps() {
+        let preset = download_preset_for_key(Some("text_timestamps"));
+
+        assert_eq!(preset.format, "ba/b");
+        assert!(preset.extract_audio);
+        assert_eq!(preset.audio_format, Some("mp3"));
+        assert!(preset.transcribe_text);
+        assert!(preset.transcribe_timestamps);
+        assert_eq!(preset.filename_suffix, Some("_timestamps"));
     }
 
     #[test]
@@ -4503,6 +4860,9 @@ mod tests {
             extract_audio: false,
             audio_format: None,
             transcribe_text: false,
+            transcribe_timestamps: false,
+            faster_whisper_model: DEFAULT_FASTER_WHISPER_MODEL.to_string(),
+            download_video_with_transcript: false,
             title: None,
             uploader: None,
             thumbnail: None,
@@ -4515,9 +4875,39 @@ mod tests {
 
         assert_eq!(medium_for_job(&job), "video");
         job.extract_audio = true;
+        job.audio_format = Some("mp3".to_string());
         assert_eq!(medium_for_job(&job), "audio");
         job.transcribe_text = true;
         assert_eq!(medium_for_job(&job), "transcript");
+
+        let audio_download_job = effective_download_job(&job);
+        assert!(audio_download_job.extract_audio);
+        assert_eq!(audio_download_job.audio_format.as_deref(), Some("mp3"));
+
+        job.download_video_with_transcript = true;
+        let download_job = effective_download_job(&job);
+        assert_eq!(
+            download_job.format,
+            download_preset_for_key(Some(DEFAULT_DOWNLOAD_PRESET_KEY)).format
+        );
+        assert!(!download_job.extract_audio);
+        assert!(download_job.audio_format.is_none());
+    }
+
+    #[test]
+    fn removes_temporary_transcription_audio_when_dropped() {
+        let dir = std::env::temp_dir().join(format!("pinefetch-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("transcription.wav");
+        fs::write(&path, b"temporary audio").unwrap();
+
+        {
+            let _temporary_audio = TemporaryTranscriptionAudio { path: path.clone() };
+            assert!(path.exists());
+        }
+
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -4617,6 +5007,38 @@ mod tests {
     }
 
     #[test]
+    fn link_dump_migration_adds_transcription_settings_to_existing_config() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                yt_dlp_path TEXT,
+                default_output_dir TEXT,
+                selected_preset_key TEXT,
+                magic_import_enabled INTEGER NOT NULL DEFAULT 1,
+                cut_at_timestamp_enabled INTEGER NOT NULL DEFAULT 1,
+                last_download_url TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            INSERT INTO app_config (
+                id, selected_preset_key, magic_import_enabled,
+                cut_at_timestamp_enabled, created_at, updated_at
+            ) VALUES (1, 'text', 1, 1, datetime('now'), datetime('now'));
+            "#,
+        )
+        .unwrap();
+
+        run_link_dump_migrations(&conn).unwrap();
+        let config = load_config_from_db(&conn).unwrap();
+
+        assert_eq!(config.faster_whisper_model, DEFAULT_FASTER_WHISPER_MODEL);
+        assert!(!config.download_video_with_transcript);
+    }
+
+    #[test]
     fn history_entries_are_stored_in_sqlite_with_file_metadata() {
         let state = link_dump_test_state();
         let entry = HistoryEntry {
@@ -4665,6 +5087,58 @@ mod tests {
         assert_eq!(stats.video_count, 1);
         assert_eq!(stats.total_duration_seconds, 754);
         assert_eq!(stats.total_file_size_bytes, 42_000_000);
+    }
+
+    #[test]
+    fn transcriptions_store_text_type_and_history_foreign_key() {
+        let state = link_dump_test_state();
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute_batch(
+                r#"
+                INSERT INTO history_entries (id, url, created_at)
+                VALUES
+                    ('history-text', 'https://example.com/text', 1),
+                    ('history-timestamps', 'https://example.com/timestamps', 2),
+                    ('history-invalid', 'https://example.com/invalid', 3);
+                "#,
+            )
+            .unwrap();
+        }
+
+        insert_transcription_in_db(&state, "history-text", "Plain transcript", "text").unwrap();
+        insert_transcription_in_db(
+            &state,
+            "history-timestamps",
+            "[00:00:01 → 00:00:02] Timestamped transcript",
+            "text with timestamps",
+        )
+        .unwrap();
+
+        let invalid =
+            insert_transcription_in_db(&state, "history-invalid", "Invalid transcript", "invalid");
+        assert!(invalid.is_err());
+
+        {
+            let conn = state.db.lock().unwrap();
+            let stored: (String, String, String) = conn
+                .query_row(
+                    "SELECT history_entry_id, text, \"type\" FROM transcriptions WHERE history_entry_id = 'history-timestamps'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(stored.0, "history-timestamps");
+            assert_eq!(stored.1, "[00:00:01 → 00:00:02] Timestamped transcript");
+            assert_eq!(stored.2, "text with timestamps");
+        }
+
+        delete_history_entry_from_db(&state, "history-timestamps").unwrap();
+        let conn = state.db.lock().unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transcriptions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 1);
     }
 
     #[test]

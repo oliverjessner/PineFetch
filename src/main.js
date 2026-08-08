@@ -35,6 +35,8 @@ const els = Object.seal({
     openFolderBtn: document.getElementById('openFolderBtn'),
     outputDir: document.getElementById('outputDir'),
     ytDlpPath: document.getElementById('ytDlpPath'),
+    fasterWhisperModel: document.getElementById('fasterWhisperModel'),
+    downloadVideoWithTranscript: document.getElementById('downloadVideoWithTranscript'),
     ytDlpInstalledVersion: document.getElementById('ytDlpInstalledVersion'),
     ytDlpLatestVersion: document.getElementById('ytDlpLatestVersion'),
     linkDumpServerStatusBadge: document.getElementById('linkDumpServerStatusBadge'),
@@ -107,6 +109,7 @@ const presetOptions = Object.freeze([
         extractAudio: false,
         audioFormat: null,
         transcribeText: false,
+        transcribeTimestamps: false,
         filenameSuffix: '_best',
     },
     {
@@ -118,6 +121,7 @@ const presetOptions = Object.freeze([
         extractAudio: false,
         audioFormat: null,
         transcribeText: false,
+        transcribeTimestamps: false,
         filenameSuffix: '__max',
     },
     {
@@ -129,6 +133,7 @@ const presetOptions = Object.freeze([
         extractAudio: true,
         audioFormat: 'mp3',
         transcribeText: false,
+        transcribeTimestamps: false,
         filenameSuffix: null,
     },
     {
@@ -140,18 +145,32 @@ const presetOptions = Object.freeze([
         extractAudio: true,
         audioFormat: 'opus',
         transcribeText: false,
+        transcribeTimestamps: false,
         filenameSuffix: null,
     },
     {
         key: 'text',
-        selectLabel: 'Text (fast-whisper)',
-        queueLabel: 'Text (fast-whisper)',
-        menuLabel: 'Download Text (fast-whisper)',
+        selectLabel: 'Text',
+        queueLabel: 'Text',
+        menuLabel: 'Download Text',
         format: 'ba/b',
         extractAudio: true,
         audioFormat: 'mp3',
         transcribeText: true,
+        transcribeTimestamps: false,
         filenameSuffix: null,
+    },
+    {
+        key: 'text_timestamps',
+        selectLabel: 'Text with timestamps',
+        queueLabel: 'Text with timestamps',
+        menuLabel: 'Download Text with timestamps',
+        format: 'ba/b',
+        extractAudio: true,
+        audioFormat: 'mp3',
+        transcribeText: true,
+        transcribeTimestamps: true,
+        filenameSuffix: '_timestamps',
     },
 ]);
 const presets = Object.freeze(Object.fromEntries(presetOptions.map(preset => [preset.key, preset])));
@@ -164,9 +183,14 @@ const findPresetForDownloadJob = job =>
             Boolean(job?.extract_audio) === preset.extractAudio &&
             (job?.audio_format ?? null) === (preset.audioFormat ?? null) &&
             Boolean(job?.transcribe_text) === preset.transcribeText &&
+            Boolean(job?.transcribe_timestamps) === preset.transcribeTimestamps &&
             (job?.filename_suffix ?? null) === (preset.filenameSuffix ?? null)
     ) || null;
 const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
+const defaultFasterWhisperModel = 'base';
+const fasterWhisperModels = new Set(['base', 'small', 'medium', 'large-v3']);
+const normalizeFasterWhisperModel = model =>
+    fasterWhisperModels.has(model) ? model : defaultFasterWhisperModel;
 const historyPageSize = 50;
 const cancellableJobStates = new Set(['downloading', 'transcribing']);
 const queueBusyJobStates = new Set(['downloading', 'transcribing', 'cancelling']);
@@ -865,7 +889,7 @@ const renderQueue = () => {
             hideQueueContextMenu();
             state.selectedId = job.id;
             renderQueue();
-            if (job.state === 'success' && job.outputPath && invoke) {
+            if ((job.state === 'success' || job.state === 'transcribing') && job.outputPath && invoke) {
                 try {
                     await invoke('open_folder', { path: job.outputPath });
                 } catch (err) {
@@ -1195,6 +1219,8 @@ const syncConfig = async () => {
         state.config = await invoke('get_config');
         els.outputDir.value = state.config.default_output_dir || '';
         els.ytDlpPath.value = state.config.yt_dlp_path || defaultYtDlpPath;
+        els.fasterWhisperModel.value = normalizeFasterWhisperModel(state.config.faster_whisper_model);
+        els.downloadVideoWithTranscript.checked = state.config.download_video_with_transcript ?? false;
         els.presetSelect.value = normalizePresetKey(state.config.selected_preset_key);
         els.magicImportEnabled.checked = state.config.magic_import_enabled ?? true;
         els.cutAtTimestampEnabled.checked = state.config.cut_at_timestamp_enabled ?? true;
@@ -1597,6 +1623,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
                 extract_audio: preset.extractAudio,
                 audio_format: preset.audioFormat,
                 transcribe_text: preset.transcribeText,
+                transcribe_timestamps: preset.transcribeTimestamps,
                 cut_at_timestamp_enabled: cutAtTimestampEnabled,
                 cut_start_time: cutStartTime,
                 filename_suffix: preset.filenameSuffix,
@@ -1712,6 +1739,8 @@ const saveSettings = async () => {
                 yt_dlp_path: els.ytDlpPath.value.trim() || null,
                 default_output_dir: els.outputDir.value.trim() || null,
                 selected_preset_key: selectedPresetKey,
+                faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value),
+                download_video_with_transcript: Boolean(els.downloadVideoWithTranscript.checked),
                 magic_import_enabled: Boolean(els.magicImportEnabled.checked),
                 cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
                 last_download_url: state.config?.last_download_url || null,
@@ -1722,6 +1751,8 @@ const saveSettings = async () => {
             yt_dlp_path: els.ytDlpPath.value.trim() || null,
             default_output_dir: els.outputDir.value.trim() || null,
             selected_preset_key: selectedPresetKey,
+            faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value),
+            download_video_with_transcript: Boolean(els.downloadVideoWithTranscript.checked),
             magic_import_enabled: Boolean(els.magicImportEnabled.checked),
             cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
             last_download_url: state.config?.last_download_url || null,

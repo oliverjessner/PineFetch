@@ -29,6 +29,33 @@ npm run build:windows
 - Release builds bundle `ffmpeg`/`ffprobe` for postprocessing.
 - PineFetch also tries `ffmpeg`/`ffprobe` from the same directory as `yt-dlp`, Homebrew paths, and PATH.
 
+## Transcription presets
+
+PineFetch provides two `faster-whisper` text presets:
+
+- **Text** writes a plain UTF-8 `.txt` transcript.
+- **Text with timestamps** writes a separate `_timestamps.txt` transcript with start and end times for every detected segment:
+
+```text
+[00:00:03 → 00:00:08] Welcome to this video.
+[00:00:09 → 00:00:14] Today we are looking at PineFetch.
+```
+
+The transcription quality can be selected in **Settings → Transcription quality**:
+
+- **Fast** uses the `base` model (default).
+- **Balanced** uses the `small` model.
+- **High** uses the `medium` model.
+- **Best** uses the `large-v3` model.
+
+Larger models can improve transcription accuracy, but require more download time, memory, and processing time. The selected model is stored when a download enters the queue, so queued jobs keep their original quality setting.
+
+Enable **Settings → Download video with transcript** to keep the video file alongside the generated TXT transcript. PineFetch prepares a temporary 16 kHz mono audio file for faster transcription and removes it afterward. The option is stored per queued job.
+
+Successful transcripts are also stored in SQLite table `transcriptions`. Each row contains its own primary key, the complete transcript text, a foreign key to `history_entries`, and a checked type of either `text` or `text with timestamps`. Deleting the related history entry also deletes its stored transcript.
+
+The timestamped preset uses segment-level timestamps and keeps the regular text preset unchanged.
+
 ## Import YouTube links from TXT
 
 Use **Import TXT** on the Download screen to add multiple YouTube videos to the queue at once:

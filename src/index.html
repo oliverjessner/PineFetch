@@ -269,6 +269,31 @@
 
                     <div id="settingsSideView" class="pf-pinefetch-right-panel-view pf-pinefetch-settings-side-view" hidden>
                         <div class="pf-stack">
+                            <label class="pf-field" for="fasterWhisperModel">
+                                <span class="pf-label">Transcription quality</span>
+                                <select id="fasterWhisperModel" class="pf-select">
+                                    <option value="base">Fast (base)</option>
+                                    <option value="small">Balanced (small)</option>
+                                    <option value="medium">High (medium)</option>
+                                    <option value="large-v3">Best (large-v3)</option>
+                                </select>
+                                <span class="pf-hint">
+                                    Larger models improve accuracy but need more download time, memory, and processing
+                                    time.
+                                </span>
+                            </label>
+
+                            <label class="pf-toggle" for="downloadVideoWithTranscript">
+                                <span class="pf-toggle-copy">
+                                    <span class="pf-toggle-title">Download video with transcript</span>
+                                    <span class="pf-toggle-hint"
+                                        >Keep the video file alongside the generated transcript.</span
+                                    >
+                                </span>
+                                <input id="downloadVideoWithTranscript" class="pf-toggle-input" type="checkbox" />
+                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                            </label>
+
                             <label class="pf-toggle" for="magicImportEnabled">
                                 <span class="pf-toggle-copy">
                                     <span class="pf-toggle-title">Magic import</span>

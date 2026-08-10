@@ -1,3 +1,7 @@
+# 1.7.1
+
+- import tiktok list as txt in queue
+
 # 1.7.0
 
 - quality options for transcribing

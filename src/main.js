@@ -517,6 +517,11 @@ const isYouTubeHostname = hostname => {
     return host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com');
 };
 
+const isTikTokHostname = hostname => {
+    const host = normalizeHostname(hostname);
+    return host === 'tiktok.com' || host.endsWith('.tiktok.com');
+};
+
 const getYouTubeVideoIdFromParsedUrl = parsed => {
     const host = normalizeHostname(parsed.hostname).replace(/^www\./, '');
     const pathParts = parsed.pathname.split('/').filter(Boolean);
@@ -577,6 +582,45 @@ const normalizeYouTubeUrl = value => {
     }
 };
 
+const normalizeTikTokUrl = value => {
+    const trimmed = `${value || ''}`.trim();
+    if (!trimmed) return null;
+
+    try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        if (!isTikTokHostname(parsed.hostname)) return null;
+
+        const host = normalizeHostname(parsed.hostname);
+        const pathParts = parsed.pathname.split('/').filter(Boolean);
+        const contentId = pathParts
+            .map(part => part.replace(/\.html$/i, ''))
+            .find(part => /^\d{6,}$/.test(part));
+        const shortCode =
+            host === 'vm.tiktok.com' || host === 'vt.tiktok.com'
+                ? pathParts[0] || null
+                : pathParts[0]?.toLowerCase() === 't'
+                  ? pathParts[1] || null
+                  : null;
+
+        if (!contentId && !shortCode) return null;
+
+        parsed.protocol = 'https:';
+        parsed.hostname = host;
+        parsed.search = '';
+        parsed.hash = '';
+        const url = parsed.toString();
+        return {
+            url,
+            key: contentId ? `tiktok:${contentId}` : `tiktok-short:${shortCode}`,
+        };
+    } catch {
+        return null;
+    }
+};
+
+const normalizeTxtImportUrl = value => normalizeYouTubeUrl(value) || normalizeTikTokUrl(value);
+
 const parseTxtImportLinks = content => {
     const rawContent = `${content || ''}`;
     const seenKeys = new Set();
@@ -595,7 +639,7 @@ const parseTxtImportLinks = content => {
             return;
         }
 
-        const normalized = normalizeYouTubeUrl(line);
+        const normalized = normalizeTxtImportUrl(line);
         if (!normalized) {
             result.invalidCount += 1;
             return;
@@ -613,10 +657,10 @@ const parseTxtImportLinks = content => {
     return result;
 };
 
-const getQueuedYouTubeImportKeys = () => {
+const getQueuedTxtImportKeys = () => {
     const keys = new Set();
     state.jobs.forEach(job => {
-        const normalized = normalizeYouTubeUrl(job.url);
+        const normalized = normalizeTxtImportUrl(job.url);
         if (normalized) keys.add(normalized.key);
     });
     return keys;
@@ -1830,7 +1874,7 @@ const importTxtLinks = async () => {
         }
 
         if (parsed.items.length === 0) {
-            const message = `No valid YouTube links found. Skipped ${pluralize(
+            const message = `No valid YouTube or TikTok links found. Skipped ${pluralize(
                 parsed.invalidCount,
                 'invalid line'
             )} and ${pluralize(parsed.duplicateCount, 'duplicate')}.`;
@@ -1840,7 +1884,7 @@ const importTxtLinks = async () => {
         }
 
         const presetKey = getSelectedPresetKey();
-        const queuedKeys = getQueuedYouTubeImportKeys();
+        const queuedKeys = getQueuedTxtImportKeys();
         let importedCount = 0;
         let duplicateCount = parsed.duplicateCount;
         let failedCount = 0;
@@ -1868,7 +1912,7 @@ const importTxtLinks = async () => {
         )}.`;
         const message =
             importedCount === 0 && failedCount === 0 && duplicateCount > 0
-                ? `No new YouTube links imported. ${skippedSummary}`
+                ? `No new links imported. ${skippedSummary}`
                 : formatTxtImportCounts(importedCount, parsed.invalidCount, duplicateCount, failedCount);
         const isError = importedCount === 0;
         setTxtImportStatus(message, isError);

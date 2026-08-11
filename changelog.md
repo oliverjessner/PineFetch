@@ -1,3 +1,7 @@
+# 1.7.2
+
+- bug where tiktok has no audio fixed
+
 # 1.7.1
 
 - import tiktok list as txt in queue

@@ -414,6 +414,7 @@ const LINK_DUMP_DEFAULT_PORT: u16 = 2255;
 const LINK_DUMP_MAX_BATCH_SIZE: usize = 500;
 const LINK_DUMP_MAX_BODY_BYTES: usize = 1024 * 1024;
 const DEFAULT_DOWNLOAD_PRESET_KEY: &str = "best";
+const TIKTOK_FORMAT_SORT: &str = "vcodec:h264";
 
 #[derive(Debug, Clone, Copy)]
 struct DownloadPreset {
@@ -1057,6 +1058,18 @@ fn detect_platform(url: &str) -> Option<String> {
     None
 }
 
+fn site_format_sort(url: &str) -> Option<&'static str> {
+    // Some TikTok HEVC renditions are marked as AAC by the API even though the
+    // downloaded container has no audio stream. Prefer the H.264 rendition,
+    // which contains the muxed audio, while keeping yt-dlp's normal fallback.
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed
+        .host_str()?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    (host == "tiktok.com" || host.ends_with(".tiktok.com")).then_some(TIKTOK_FORMAT_SORT)
+}
+
 fn source_from_url(url: &str) -> Option<String> {
     let parsed = url::Url::parse(url).ok()?;
     let host = parsed.domain()?.trim_end_matches('.').to_ascii_lowercase();
@@ -1600,6 +1613,11 @@ fn run_download_job(
         );
     }
 
+    if let Some(format_sort) = site_format_sort(&job.url) {
+        args.push("--format-sort".to_string());
+        args.push(format_sort.to_string());
+    }
+
     args.push(job.url.clone());
 
     let mut command = Command::new(&yt_dlp);
@@ -2060,6 +2078,11 @@ fn probe_expected_output_filename(
             command.arg("--audio-format");
             command.arg(fmt);
         }
+    }
+
+    if let Some(format_sort) = site_format_sort(&job.url) {
+        command.arg("--format-sort");
+        command.arg(format_sort);
     }
 
     command.arg(&job.url);
@@ -4848,6 +4871,23 @@ mod tests {
             Some("youtube")
         );
         assert_eq!(source_from_url("not-a-url"), None);
+    }
+
+    #[test]
+    fn prefers_h264_for_tiktok_downloads() {
+        assert_eq!(
+            site_format_sort("https://www.tiktok.com/@afd_fraktionbb/video/7608588575982144790"),
+            Some(TIKTOK_FORMAT_SORT)
+        );
+        assert_eq!(
+            site_format_sort("https://vm.tiktok.com/ZMexample/"),
+            Some(TIKTOK_FORMAT_SORT)
+        );
+        assert_eq!(site_format_sort("https://exampletiktok.com/video/1"), None);
+        assert_eq!(
+            site_format_sort("https://www.youtube.com/watch?v=abc123"),
+            None
+        );
     }
 
     #[test]

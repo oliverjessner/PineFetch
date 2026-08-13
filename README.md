@@ -1,14 +1,29 @@
 # PineFetch 🍍
 
-A local-first macOS desktop app that wraps **yt-dlp** with a clean UI: paste links, pick a preset, queue downloads, and optionally export audio. Transparent, minimal, and built for everyday workflows.
+A local-first desktop app for macOS and Windows that wraps **yt-dlp** with a clean UI: paste links, pick a preset, queue downloads, export audio, or create transcripts. Transparent, minimal, and built for everyday workflows.
 
 > PineFetch is designed for content you **own** or where you have **explicit permission** to download. Please respect platform Terms of Service and local laws.
 
 ![screenshot of the app](/src/images/download.png)
 
-**Note:** Please only download content you have the rights or permission to access.
+## Development and builds
 
-### Build Windows
+Install the Node.js dependencies and start PineFetch in development mode:
+
+```bash
+npm install
+npm run dev
+```
+
+Development requires Node.js, the Rust toolchain, `yt-dlp`, and the platform-specific Tauri system dependencies.
+
+Create a macOS release build with:
+
+```bash
+npm run build
+```
+
+### Windows
 
 Run this on Windows with the Rust MSVC toolchain, Node.js, ffmpeg/ffprobe, Deno, and Python 3.10+ installed:
 
@@ -16,7 +31,7 @@ Run this on Windows with the Rust MSVC toolchain, Node.js, ffmpeg/ffprobe, Deno,
 npm run build:windows
 ```
 
-> Note: I don't have a Windows Machine
+> Note: The Windows build is not currently tested by the maintainer.
 
 ## Version synchronization
 
@@ -25,9 +40,9 @@ npm run build:windows
 ## yt-dlp location
 
 - If `yt-dlp` is in your PATH, the app will find it automatically.
-- Otherwise, set the full path in **Settings → yt-dlp Pfad**.
-- Release builds bundle `ffmpeg`/`ffprobe` for postprocessing.
-- PineFetch also tries `ffmpeg`/`ffprobe` from the same directory as `yt-dlp`, Homebrew paths, and PATH.
+- Otherwise, set the full path in **Settings → yt-dlp path**.
+- Release builds bundle `ffmpeg`/`ffprobe` for post-processing.
+- PineFetch also tries `ffmpeg`/`ffprobe` from the same directory as `yt-dlp`, Homebrew paths, and `PATH`.
 
 ## Transcription presets
 
@@ -41,7 +56,7 @@ PineFetch provides two `faster-whisper` text presets:
 [00:00:09 → 00:00:14] Today we are looking at PineFetch.
 ```
 
-The transcription quality can be selected in **Settings → Transcription quality**:
+The transcription quality can be selected in **Settings → Options → Transcription**:
 
 - **Fast** uses the `base` model (default).
 - **Balanced** uses the `small` model.
@@ -50,7 +65,7 @@ The transcription quality can be selected in **Settings → Transcription qualit
 
 Larger models can improve transcription accuracy, but require more download time, memory, and processing time. The selected model is stored when a download enters the queue, so queued jobs keep their original quality setting.
 
-Enable **Settings → Download video with transcript** to keep the video file alongside the generated TXT transcript. PineFetch prepares a temporary 16 kHz mono audio file for faster transcription and removes it afterward. The option is stored per queued job.
+Enable **Settings → Options → Transcription → Download video with transcript** to keep the video file alongside the generated TXT transcript. PineFetch prepares a temporary 16 kHz mono audio file for faster transcription and removes it afterward. The option is stored per queued job.
 
 Successful transcripts are also stored in SQLite table `transcriptions`. Each row contains its own primary key, the complete transcript text, a foreign key to `history_entries`, and a checked type of either `text` or `text with timestamps`. Deleting the related history entry also deletes its stored transcript.
 
@@ -96,7 +111,7 @@ PineFetch starts a local loopback server for browser extensions at:
 http://127.0.0.1:2255
 ```
 
-Create a connection secret in **Settings → Link Dump Connections**. Copy it immediately; PineFetch stores only a hash and will not show the secret again.
+Open **Link Dump** and create a connection secret under **Connections**. Copy it immediately; PineFetch stores only a hash and will not show the secret again.
 
 Links sent through Link Dump are queued with the currently selected PineFetch preset.
 
@@ -125,15 +140,27 @@ curl -X OPTIONS http://127.0.0.1:2255/addYoutubeLinksToQueue/ -i
 ## Features
 
 - **Queue-based downloads** (multiple URLs, processed in order)
-- **Presets** for common workflows (e.g. Best / Audio-only / Custom)
-- **Optional logs** for transparency and troubleshooting
-- **Playlist support** (where supported by yt-dlp)
+- **Presets** for Best, Max 1080p, MP3, Opus, Text, and Text with timestamps
+- **Terminal logs** for transparency and troubleshooting, limited to the latest 500 lines
 - **Persistent history statistics** for downloaded videos, storage usage, and runtime
 - **Local-first**: no accounts, no cloud processing, files stay on your device
 
-## Other Menus
+## Queue and keyboard controls
 
-The Settings screen lets you tune PineFetch for everyday use: default preset, download location, and whether logs are visible.
+Queue items start automatically by default. Disable **Auto-start** to collect multiple items and start them together with **Start queue**. Right-click a queue item to copy its link, download it again with another preset, cancel an active job, or remove a completed job. Clicking a completed item opens its output location.
+
+When the URL field is focused:
+
+- `Enter` adds the current URL to the queue.
+- `Cmd + I` loads information for the current URL.
+- `Esc` clears the URL and its loaded information.
+
+## Other menus
+
+The Settings screen contains the output folder, `yt-dlp` path, installed and latest `yt-dlp` versions, and the terminal log. Versions are checked once per app run. The adjacent Options panel contains **Magic import**, **Cut at timestamp**, and a separate **Transcription** group for quality and video-retention settings.
+
+**Magic import** reads a supported URL from the clipboard when the PineFetch logo is clicked while the URL field is empty. **Cut at timestamp** starts supported downloads at timestamps embedded in their URLs.
+
 ![screenshot of the app](/src/images/settings.png)
 
 History keeps successful downloads in the local SQLite database. Each entry includes the source URL, source service, uploader, medium (`video`, `audio`, or `transcript`), title, filename, thumbnail, platform, output path, upload date, completion time, duration in seconds, and final file size in bytes when available. The source service is derived locally from the URL hostname by removing the protocol, subdomain, and TLD; known short domains such as `youtu.be` are normalized to their canonical service name. Sources are also backfilled from the URLs of existing History entries during migration.
@@ -146,12 +173,14 @@ The History view also provides an overview of:
 
 Removing an entry or clearing History immediately updates these totals. Existing entries created before duration and file-size tracking was introduced remain available, but missing metadata is not included in the totals.
 
+History loads 20 entries per page. Use **Load more** to append the next page; previously loaded entries remain cached while switching between views.
+
 ![history](/src/images/history.png)
 
 ## Credits
 
 - yt-dlp: [https://github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp)
-- ffmpeg: [https://ffmpeg.org/](https://ffmpeg.org/)
+- FFmpeg: [https://ffmpeg.org/](https://ffmpeg.org/)
 
 ## License
 

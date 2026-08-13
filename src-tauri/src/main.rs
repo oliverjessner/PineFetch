@@ -1021,7 +1021,7 @@ fn get_history(
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> Result<HistoryPage, String> {
-    let limit = limit.unwrap_or(50).clamp(1, 100);
+    let limit = limit.unwrap_or(20).clamp(1, 100);
     let offset = offset.unwrap_or(0);
     list_history_page_from_db(state.inner(), limit, offset)
 }
@@ -1266,6 +1266,7 @@ fn add_history_entry_on_success(
     };
 
     insert_history_entry_in_db(state, &entry)?;
+    let _ = app.emit_all("history:changed", ());
     Ok(history_entry_id)
 }
 
@@ -5208,17 +5209,17 @@ mod tests {
             insert_history_entry_in_db(&state, &entry).unwrap();
         }
 
-        let first_page = list_history_page_from_db(&state, 50, 0).unwrap();
-        let second_page = list_history_page_from_db(&state, 50, 50).unwrap();
+        let first_page = list_history_page_from_db(&state, 20, 0).unwrap();
+        let second_page = list_history_page_from_db(&state, 20, 20).unwrap();
 
-        assert_eq!(first_page.entries.len(), 50);
+        assert_eq!(first_page.entries.len(), 20);
         assert!(first_page.has_more);
         assert_eq!(first_page.entries[0].id, "history-54");
-        assert_eq!(first_page.entries[49].id, "history-05");
-        assert_eq!(second_page.entries.len(), 5);
-        assert!(!second_page.has_more);
-        assert_eq!(second_page.entries[0].id, "history-04");
-        assert_eq!(second_page.entries[4].id, "history-00");
+        assert_eq!(first_page.entries[19].id, "history-35");
+        assert_eq!(second_page.entries.len(), 20);
+        assert!(second_page.has_more);
+        assert_eq!(second_page.entries[0].id, "history-34");
+        assert_eq!(second_page.entries[19].id, "history-15");
     }
 
     #[test]

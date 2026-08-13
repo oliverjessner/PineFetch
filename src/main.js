@@ -20,6 +20,9 @@ const state = Object.seal({
     historyOffset: 0,
     historyHasMore: false,
     historyLoading: false,
+    historyLoaded: false,
+    historyDirty: true,
+    historyRevision: 0,
 });
 const els = Object.seal({
     magicImportTrigger: document.getElementById('magicImportTrigger'),
@@ -191,12 +194,21 @@ const defaultFasterWhisperModel = 'base';
 const fasterWhisperModels = new Set(['base', 'small', 'medium', 'large-v3']);
 const normalizeFasterWhisperModel = model =>
     fasterWhisperModels.has(model) ? model : defaultFasterWhisperModel;
-const historyPageSize = 50;
+const historyPageSize = 20;
+const maxLogLines = 500;
 const cancellableJobStates = new Set(['downloading', 'transcribing']);
 const queueBusyJobStates = new Set(['downloading', 'transcribing', 'cancelling']);
 const removableJobStates = new Set(['queued', 'success', 'error', 'cancelled']);
 let urlShakeTimer = null;
 let magicImportInFlight = false;
+let queueRenderFrame = null;
+let queueRenderDirty = true;
+let logDomDirty = false;
+let settingsLogRenderReady = false;
+let viewActivationId = 0;
+let ytDlpVersionsChecked = false;
+let ytDlpVersionsPromise = null;
+let linkDumpSyncPromise = null;
 
 const formatDuration = seconds => {
     if (!seconds && seconds !== 0) return '-';
@@ -694,7 +706,7 @@ const fetchLatestYtDlpVersion = async () => {
     return latest;
 };
 
-const refreshYtDlpVersions = async () => {
+const performYtDlpVersionCheck = async () => {
     if (!invoke) return;
     const path = els.ytDlpPath.value.trim() || null;
     els.ytDlpInstalledVersion.textContent = 'Installed: checking...';
@@ -723,12 +735,32 @@ const refreshYtDlpVersions = async () => {
     }
 };
 
+const refreshYtDlpVersionsOnce = () => {
+    if (!invoke) return Promise.resolve();
+    if (ytDlpVersionsChecked) return ytDlpVersionsPromise || Promise.resolve();
+
+    ytDlpVersionsChecked = true;
+    ytDlpVersionsPromise = performYtDlpVersionCheck().finally(() => {
+        ytDlpVersionsPromise = null;
+    });
+    return ytDlpVersionsPromise;
+};
+
 const setActiveView = view => {
     const isDownload = view === 'download';
     const isHistory = view === 'history';
     const isLinkDump = view === 'linkDump';
     const isSettings = view === 'settings';
     state.activeView = view;
+    settingsLogRenderReady = false;
+    const activationId = ++viewActivationId;
+    const runAfterViewPaint = callback => {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (state.activeView === view && viewActivationId === activationId) callback();
+            });
+        });
+    };
 
     els.downloadView.hidden = !isDownload;
     els.historyView.hidden = !isHistory;
@@ -761,24 +793,35 @@ const setActiveView = view => {
         els.rightPanelTitle.textContent = 'Queue / Progress';
         els.queueBadge.style.display = 'inline-flex';
         els.infoBadge.style.display = 'inline-flex';
+        runAfterViewPaint(flushQueueRender);
     } else if (isHistory) {
         els.leftPanelTitle.textContent = 'History';
         els.rightPanelTitle.textContent = 'History';
         els.queueBadge.style.display = 'none';
         els.infoBadge.style.display = 'none';
-        void renderHistory();
+        runAfterViewPaint(() => {
+            void renderHistory();
+        });
     } else if (isLinkDump) {
         els.leftPanelTitle.textContent = 'Link Dump';
         els.rightPanelTitle.textContent = 'Connections';
         els.queueBadge.style.display = 'none';
         els.infoBadge.style.display = 'none';
-        void syncLinkDumpOverview();
+        if (!state.linkDump) {
+            runAfterViewPaint(() => {
+                void syncLinkDumpOverview();
+            });
+        }
     } else {
         els.leftPanelTitle.textContent = 'Settings';
         els.rightPanelTitle.textContent = 'Options';
         els.queueBadge.style.display = 'none';
         els.infoBadge.style.display = 'none';
-        void refreshYtDlpVersions();
+        runAfterViewPaint(() => {
+            settingsLogRenderReady = true;
+            renderLogs();
+            void refreshYtDlpVersionsOnce();
+        });
     }
 };
 
@@ -800,7 +843,7 @@ const renderQueueContextMenu = () => {
     els.queueContextDownloads.replaceChildren();
     presetOptions.forEach(preset => {
         const button = document.createElement('button');
-        button.className = 'pf-queue-context-menu-btn';
+        button.className = 'pf-menu-item pf-queue-context-menu-btn';
         button.type = 'button';
         button.dataset.action = 'download';
         button.dataset.presetKey = preset.key;
@@ -922,17 +965,17 @@ const renderQueue = () => {
     els.queueList.replaceChildren();
     items.forEach(job => {
         const item = document.createElement('div');
-        item.className = `pf-queue-item ${job.id === state.selectedId ? 'pf-is-active' : ''}`;
+        item.className = `pf-list-card pf-queue-item ${job.id === state.selectedId ? 'pf-is-active' : ''}`;
         item.oncontextmenu = event => {
             event.preventDefault();
             state.selectedId = job.id;
-            renderQueue();
+            scheduleQueueRender();
             openQueueContextMenu(job, event.clientX, event.clientY);
         };
         item.onclick = async () => {
             hideQueueContextMenu();
             state.selectedId = job.id;
-            renderQueue();
+            scheduleQueueRender();
             if ((job.state === 'success' || job.state === 'transcribing') && job.outputPath && invoke) {
                 try {
                     await invoke('open_folder', { path: job.outputPath });
@@ -971,6 +1014,7 @@ const renderQueue = () => {
         const progress = document.createElement('div');
         progress.className = 'pf-progress';
         const bar = document.createElement('span');
+        bar.className = 'pf-progress-bar';
         bar.style.width = `${job.percent || 0}%`;
         progress.appendChild(bar);
 
@@ -981,7 +1025,7 @@ const renderQueue = () => {
         if (cutStartLabel) metaItems.push(cutStartLabel);
         appendTextSpans(meta, metaItems);
         const main = document.createElement('div');
-        main.className = 'pf-queue-main';
+        main.className = 'pf-list-card-layout pf-queue-main';
 
         const content = document.createElement('div');
         content.className = 'pf-queue-content';
@@ -991,11 +1035,11 @@ const renderQueue = () => {
         const thumbUrl = job.thumbnail || resolveYouTubeThumbnail(job.url);
         if (thumbUrl) {
             const thumb = document.createElement('div');
-            thumb.className = 'pf-queue-thumb';
+            thumb.className = 'pf-media-thumbnail pf-queue-thumb';
             thumb.style.backgroundImage = `url('${thumbUrl}')`;
             main.appendChild(thumb);
         } else {
-            main.classList.add('pf-no-thumb');
+            main.classList.add('pf-no-media');
         }
 
         item.append(main);
@@ -1008,6 +1052,22 @@ const renderQueue = () => {
     syncQueueContextMenuState();
     els.queueBadge.textContent = `${state.queueIds.length} queued`;
     renderQueueControls();
+};
+
+const flushQueueRender = () => {
+    if (state.activeView !== 'download' || queueRenderFrame !== null || !queueRenderDirty) return;
+
+    queueRenderFrame = requestAnimationFrame(() => {
+        queueRenderFrame = null;
+        if (state.activeView !== 'download' || !queueRenderDirty) return;
+        queueRenderDirty = false;
+        renderQueue();
+    });
+};
+
+const scheduleQueueRender = () => {
+    queueRenderDirty = true;
+    flushQueueRender();
 };
 
 const formatHistoryDate = timestamp => {
@@ -1082,9 +1142,14 @@ const renderHistoryStats = async () => {
     }
 };
 
+const invalidateHistoryCache = () => {
+    state.historyDirty = true;
+    state.historyRevision += 1;
+};
+
 const createHistoryItem = entry => {
     const item = document.createElement('div');
-    item.className = `pf-history-item ${entry.thumbnail ? '' : 'pf-no-thumb'}`;
+    item.className = `pf-list-card pf-list-card-layout pf-history-item ${entry.thumbnail ? '' : 'pf-no-media'}`;
 
     item.onclick = async () => {
         // Rust uses snake_case: output_path, not outputPath
@@ -1128,20 +1193,21 @@ const createHistoryItem = entry => {
 
     if (entry.thumbnail) {
         const thumb = document.createElement('div');
-        thumb.className = 'pf-history-thumb';
+        thumb.className = 'pf-media-thumbnail pf-history-thumb';
         thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
         item.appendChild(thumb);
     }
 
     const removeBtn = document.createElement('button');
-    removeBtn.className = 'pf-history-item-remove-btn';
+    removeBtn.className = 'pf-icon-btn pf-icon-btn-danger pf-history-item-remove-btn';
     removeBtn.textContent = '×';
     removeBtn.title = 'Remove from history';
     removeBtn.onclick = async event => {
         event.stopPropagation();
         try {
             await invoke('remove_history_entry', { id: entry.id });
-            void renderHistory();
+            invalidateHistoryCache();
+            void renderHistory({ force: true });
         } catch (err) {
             appendLog(`[history] ${err}`, true);
         }
@@ -1151,28 +1217,25 @@ const createHistoryItem = entry => {
     return item;
 };
 
-const renderHistory = async ({ append = false } = {}) => {
-    if (!append) void renderHistoryStats();
+const renderHistory = async ({ append = false, force = false } = {}) => {
+    if (!append && !force && state.historyLoaded && !state.historyDirty) return;
 
     if (!invoke) {
         els.historyList.replaceChildren();
         els.historyHint.hidden = true;
         state.historyHasMore = false;
+        state.historyLoaded = true;
+        state.historyDirty = false;
         updateHistoryActions();
         return;
     }
 
     if (state.historyLoading) return;
 
+    if (!append) void renderHistoryStats();
+    const requestedRevision = state.historyRevision;
+    let needsFollowUpRefresh = false;
     const offset = append ? state.historyOffset : 0;
-    if (!append) {
-        state.historyOffset = 0;
-        state.historyHasMore = false;
-        els.historyList.replaceChildren();
-        els.historyHint.hidden = true;
-        updateHistoryActions();
-    }
-
     setHistoryLoading(true);
 
     try {
@@ -1182,41 +1245,76 @@ const renderHistory = async ({ append = false } = {}) => {
             ? entries.length === historyPageSize
             : Boolean(page?.has_more ?? page?.hasMore);
 
-        if (!append && entries.length === 0) {
-            els.historyHint.hidden = false;
-            state.historyOffset = 0;
-            state.historyHasMore = false;
-            return;
+        const fragment = document.createDocumentFragment();
+        entries.forEach(entry => fragment.appendChild(createHistoryItem(entry)));
+        if (append) {
+            els.historyList.appendChild(fragment);
+        } else {
+            els.historyList.replaceChildren(fragment);
         }
 
-        els.historyHint.hidden = true;
-
-        entries.forEach(entry => {
-            els.historyList.appendChild(createHistoryItem(entry));
-        });
+        els.historyHint.hidden = entries.length > 0 || append;
         state.historyOffset = offset + entries.length;
         state.historyHasMore = hasMore;
+        state.historyLoaded = true;
+        needsFollowUpRefresh = state.historyRevision !== requestedRevision;
+        state.historyDirty = needsFollowUpRefresh;
     } catch (err) {
         appendLog(`[history] ${err}`, true);
     } finally {
         setHistoryLoading(false);
         updateHistoryActions();
+        if (needsFollowUpRefresh && state.activeView === 'history') {
+            void renderHistory({ force: true });
+        }
     }
 };
 
-const appendLog = (text, isError) => {
-    state.logs.push(text);
+const createLogLine = ({ text, isError }) => {
     const line = document.createElement('div');
-    line.className = `pf-log-line ${isError ? 'pf-status-error' : ''}`;
+    line.className = `pf-terminal-line pf-log-line ${isError ? 'pf-status-error' : ''}`;
     line.textContent = text;
-    els.logBody.appendChild(line);
+    return line;
+};
+
+const renderLogs = () => {
+    if (!logDomDirty) return;
+    const fragment = document.createDocumentFragment();
+    state.logs.forEach(entry => fragment.appendChild(createLogLine(entry)));
+    els.logBody.replaceChildren(fragment);
+    logDomDirty = false;
     els.logBody.scrollTop = els.logBody.scrollHeight;
+};
+
+const appendLog = (text, isError) => {
+    state.logs.push({ text, isError: Boolean(isError) });
+    if (state.logs.length > maxLogLines) {
+        state.logs.splice(0, state.logs.length - maxLogLines);
+    }
+
     els.copyLogsBtn.disabled = false;
     els.clearLogsBtn.disabled = false;
+
+    if (state.activeView !== 'settings' || !settingsLogRenderReady) {
+        logDomDirty = true;
+        return;
+    }
+
+    if (logDomDirty) {
+        renderLogs();
+        return;
+    }
+
+    els.logBody.appendChild(createLogLine(state.logs[state.logs.length - 1]));
+    while (els.logBody.childElementCount > maxLogLines) {
+        els.logBody.firstElementChild?.remove();
+    }
+    els.logBody.scrollTop = els.logBody.scrollHeight;
 };
 
 const clearLogs = () => {
     state.logs.length = 0;
+    logDomDirty = false;
     els.logBody.replaceChildren();
     els.copyLogsBtn.disabled = true;
     els.clearLogsBtn.disabled = true;
@@ -1225,7 +1323,7 @@ const clearLogs = () => {
 const updateJob = (id, patch) => {
     const existing = state.jobs.get(id) || { id, createdAt: Date.now() };
     state.jobs.set(id, { ...existing, ...patch });
-    renderQueue();
+    scheduleQueueRender();
 };
 
 const maybeHydrateQueueThumbnail = id => {
@@ -1269,7 +1367,6 @@ const syncConfig = async () => {
         els.magicImportEnabled.checked = state.config.magic_import_enabled ?? true;
         els.cutAtTimestampEnabled.checked = state.config.cut_at_timestamp_enabled ?? true;
         syncMagicImportTriggerState();
-        void refreshYtDlpVersions();
     } catch (err) {
         appendLog(`[config] ${err}`, true);
     }
@@ -1337,6 +1434,9 @@ const setLinkDumpSecretStatus = (message, isError = false) => {
 
 const applyLinkDumpServerStatus = serverStatus => {
     if (!serverStatus || !els.linkDumpServerStatusBadge) return;
+    if (state.linkDump) {
+        state.linkDump = { ...state.linkDump, server_status: serverStatus };
+    }
     const status = `${serverStatus.status || 'stopped'}`.toLowerCase();
     els.linkDumpServerStatusBadge.textContent = statusLabel(status);
     els.linkDumpServerStatusBadge.classList.toggle('pf-badge-danger', status === 'error');
@@ -1355,11 +1455,14 @@ const applyLinkDumpServerStatus = serverStatus => {
 
 const renderLinkDumpSecrets = secrets => {
     if (!els.linkDumpSecretList) return;
-    els.linkDumpSecretList.replaceChildren();
+    if (state.linkDump) {
+        state.linkDump = { ...state.linkDump, secrets };
+    }
     const visibleSecrets = Array.isArray(secrets)
         ? secrets.filter(connection => `${connection.status || ''}`.toLowerCase() !== 'deleted')
         : [];
     els.linkDumpSecretHint.hidden = visibleSecrets.length > 0;
+    const fragment = document.createDocumentFragment();
 
     visibleSecrets.forEach(connection => {
         const item = document.createElement('div');
@@ -1421,8 +1524,9 @@ const renderLinkDumpSecrets = secrets => {
         }
 
         item.append(content, actions);
-        els.linkDumpSecretList.appendChild(item);
+        fragment.appendChild(item);
     });
+    els.linkDumpSecretList.replaceChildren(fragment);
 };
 
 const renderLinkDumpOverview = overview => {
@@ -1443,14 +1547,21 @@ const renderLinkDumpOverview = overview => {
     renderLinkDumpSecrets(overview?.secrets || []);
 };
 
-const syncLinkDumpOverview = async () => {
-    if (!invoke) return;
-    try {
-        renderLinkDumpOverview(await invoke('get_link_dump_overview'));
-    } catch (err) {
-        setLinkDumpStatusText(`Link Dump settings unavailable: ${err}`, true);
-        appendLog(`[link-dump] ${err}`, true);
-    }
+const syncLinkDumpOverview = () => {
+    if (!invoke) return Promise.resolve();
+    if (linkDumpSyncPromise) return linkDumpSyncPromise;
+
+    linkDumpSyncPromise = (async () => {
+        try {
+            renderLinkDumpOverview(await invoke('get_link_dump_overview'));
+        } catch (err) {
+            setLinkDumpStatusText(`Link Dump settings unavailable: ${err}`, true);
+            appendLog(`[link-dump] ${err}`, true);
+        }
+    })().finally(() => {
+        linkDumpSyncPromise = null;
+    });
+    return linkDumpSyncPromise;
 };
 
 const openLinkDumpExtensionRepo = async event => {
@@ -1727,7 +1838,7 @@ const removeJobFromQueue = async job => {
     state.jobs.delete(job.id);
     state.queueIds = state.queueIds.filter(id => id !== job.id);
     if (state.selectedId === job.id) state.selectedId = null;
-    renderQueue();
+    scheduleQueueRender();
 
     if (job.state !== 'queued') return;
 
@@ -1738,7 +1849,7 @@ const removeJobFromQueue = async job => {
         state.jobs.set(job.id, existingJob);
         state.queueIds = previousQueueIds;
         state.selectedId = previousSelectedId;
-        renderQueue();
+        scheduleQueueRender();
         appendLog(`[remove] ${err}`, true);
     }
 };
@@ -1803,7 +1914,6 @@ const saveSettings = async () => {
         };
         syncMagicImportTriggerState();
         appendLog('[config] saved', false);
-        void refreshYtDlpVersions();
     } catch (err) {
         appendLog(`[config] ${err}`, true);
     }
@@ -1956,7 +2066,7 @@ const clearQueue = async () => {
     state.jobs.clear();
     state.queueIds = [];
     state.selectedId = null;
-    renderQueue();
+    scheduleQueueRender();
 };
 
 const bindEvents = () => {
@@ -2056,9 +2166,6 @@ const bindEvents = () => {
     els.clearQueueBtn.addEventListener('click', () => {
         void clearQueue();
     });
-    els.ytDlpPath.addEventListener('change', () => {
-        if (state.activeView === 'settings') void refreshYtDlpVersions();
-    });
     els.viewDownloadBtn.addEventListener('click', () => setActiveView('download'));
     els.viewHistoryBtn.addEventListener('click', () => setActiveView('history'));
     els.viewLinkDumpBtn.addEventListener('click', () => setActiveView('linkDump'));
@@ -2074,7 +2181,8 @@ const bindEvents = () => {
 
         try {
             await invoke('clear_history');
-            await renderHistory();
+            invalidateHistoryCache();
+            await renderHistory({ force: true });
         } catch (err) {
             appendLog(`[history] ${err}`, true);
         }
@@ -2145,7 +2253,7 @@ const bindEvents = () => {
 
     els.copyLogsBtn.addEventListener('click', async () => {
         try {
-            await navigator.clipboard.writeText(state.logs.join('\n'));
+            await navigator.clipboard.writeText(state.logs.map(entry => entry.text).join('\n'));
         } catch (err) {
             appendLog(`[copy] ${err}`, true);
         }
@@ -2156,6 +2264,13 @@ const bindEvents = () => {
 const bindBackendEvents = async () => {
     await listen('link-dump:server-status', event => {
         applyLinkDumpServerStatus(event.payload);
+    });
+
+    await listen('history:changed', () => {
+        invalidateHistoryCache();
+        if (state.activeView === 'history') {
+            void renderHistory({ force: true });
+        }
     });
 
     await listen('queue:status', event => {
@@ -2231,10 +2346,9 @@ const init = async () => {
         return;
     }
     await syncConfig();
-    await syncLinkDumpOverview();
     await syncQueueStatus();
     await bindBackendEvents();
-    renderQueue();
+    scheduleQueueRender();
 };
 
 init();

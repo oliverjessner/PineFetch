@@ -88,7 +88,7 @@
                                     <p class="pf-text pf-truncate" id="infoDuration">-</p>
                                 </div>
                             </div>
-                            <div class="pf-pinefetch-info-thumb" id="infoThumb"></div>
+                            <div class="pf-media-thumbnail pf-pinefetch-info-thumb" id="infoThumb"></div>
                         </div>
 
                         <div class="pf-divider"></div>
@@ -139,8 +139,8 @@
                             </div>
                         </div>
 
-                        <section class="pf-panel-soft pf-pinefetch-log-panel" id="logPanel">
-                            <div class="pf-panel-header pf-pinefetch-log-header">
+                        <section class="pf-panel-soft pf-terminal pf-pinefetch-log-panel" id="logPanel">
+                            <div class="pf-panel-header pf-terminal-header pf-pinefetch-log-header">
                                 <div class="pf-panel-heading">
                                     <h3 class="pf-section-title">Terminal Log</h3>
                                     <p class="pf-subtitle" id="logHint">stdout / stderr</p>
@@ -154,7 +154,7 @@
                                     </button>
                                 </div>
                             </div>
-                            <div id="logBody" class="pf-pinefetch-log-body"></div>
+                            <div id="logBody" class="pf-terminal-body pf-pinefetch-log-body"></div>
                         </section>
 
                         <p class="pf-hint">These settings are used for all new downloads.</p>
@@ -252,48 +252,23 @@
 
                     <div id="historySummaryView" class="pf-pinefetch-right-panel-view" hidden>
                         <div class="pf-history-summary-grid">
-                            <section class="pf-panel-soft pf-history-stat">
+                            <section class="pf-panel-soft pf-stat">
                                 <p class="pf-label">Downloaded videos</p>
-                                <p class="pf-history-stat-value" id="historyVideoCount">0</p>
+                                <p class="pf-stat-value" id="historyVideoCount">0</p>
                             </section>
-                            <section class="pf-panel-soft pf-history-stat">
+                            <section class="pf-panel-soft pf-stat">
                                 <p class="pf-label">Total data</p>
-                                <p class="pf-history-stat-value" id="historyTotalSize">0 B</p>
+                                <p class="pf-stat-value" id="historyTotalSize">0 B</p>
                             </section>
-                            <section class="pf-panel-soft pf-history-stat">
+                            <section class="pf-panel-soft pf-stat">
                                 <p class="pf-label">Total runtime</p>
-                                <p class="pf-history-stat-value" id="historyTotalDuration">0m 00s</p>
+                                <p class="pf-stat-value" id="historyTotalDuration">0m 00s</p>
                             </section>
                         </div>
                     </div>
 
                     <div id="settingsSideView" class="pf-pinefetch-right-panel-view pf-pinefetch-settings-side-view" hidden>
                         <div class="pf-stack">
-                            <label class="pf-field" for="fasterWhisperModel">
-                                <span class="pf-label">Transcription quality</span>
-                                <select id="fasterWhisperModel" class="pf-select">
-                                    <option value="base">Fast (base)</option>
-                                    <option value="small">Balanced (small)</option>
-                                    <option value="medium">High (medium)</option>
-                                    <option value="large-v3">Best (large-v3)</option>
-                                </select>
-                                <span class="pf-hint">
-                                    Larger models improve accuracy but need more download time, memory, and processing
-                                    time.
-                                </span>
-                            </label>
-
-                            <label class="pf-toggle" for="downloadVideoWithTranscript">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Download video with transcript</span>
-                                    <span class="pf-toggle-hint"
-                                        >Keep the video file alongside the generated transcript.</span
-                                    >
-                                </span>
-                                <input id="downloadVideoWithTranscript" class="pf-toggle-input" type="checkbox" />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
-                            </label>
-
                             <label class="pf-toggle" for="magicImportEnabled">
                                 <span class="pf-toggle-copy">
                                     <span class="pf-toggle-title">Magic import</span>
@@ -316,6 +291,39 @@
                                 <input id="cutAtTimestampEnabled" class="pf-toggle-input" type="checkbox" checked />
                                 <span class="pf-toggle-track" aria-hidden="true"></span>
                             </label>
+
+                            <section class="pf-stack" aria-labelledby="transcriptionOptionsTitle">
+                                <h3 id="transcriptionOptionsTitle" class="pf-section-title">Transcription</h3>
+
+                                <label class="pf-field" for="fasterWhisperModel">
+                                    <span class="pf-label">Transcription quality</span>
+                                    <select id="fasterWhisperModel" class="pf-select">
+                                        <option value="base">Fast (base)</option>
+                                        <option value="small">Balanced (small)</option>
+                                        <option value="medium">High (medium)</option>
+                                        <option value="large-v3">Best (large-v3)</option>
+                                    </select>
+                                    <span class="pf-hint">
+                                        Larger models improve accuracy but need more download time, memory, and
+                                        processing time.
+                                    </span>
+                                </label>
+
+                                <label class="pf-toggle" for="downloadVideoWithTranscript">
+                                    <span class="pf-toggle-copy">
+                                        <span class="pf-toggle-title">Download video with transcript</span>
+                                        <span class="pf-toggle-hint"
+                                            >Keep the video file alongside the generated transcript.</span
+                                        >
+                                    </span>
+                                    <input
+                                        id="downloadVideoWithTranscript"
+                                        class="pf-toggle-input"
+                                        type="checkbox"
+                                    />
+                                    <span class="pf-toggle-track" aria-hidden="true"></span>
+                                </label>
+                            </section>
                         </div>
                     </div>
 
@@ -378,13 +386,15 @@
                 </section>
             </main>
 
-            <div id="queueContextMenu" class="pf-queue-context-menu" hidden>
-                <button class="pf-queue-context-menu-btn" type="button" data-action="copy-link">Copy link</button>
-                <div class="pf-queue-context-divider" role="separator" aria-hidden="true"></div>
-                <div id="queueContextDownloads" class="pf-queue-context-downloads"></div>
+            <div id="queueContextMenu" class="pf-menu pf-menu-popover pf-queue-context-menu" hidden>
+                <button class="pf-menu-item pf-queue-context-menu-btn" type="button" data-action="copy-link">
+                    Copy link
+                </button>
+                <div class="pf-menu-divider pf-queue-context-divider" role="separator" aria-hidden="true"></div>
+                <div id="queueContextDownloads" class="pf-menu-group pf-queue-context-downloads"></div>
                 <button
                     id="queueContextCancelBtn"
-                    class="pf-queue-context-menu-btn pf-queue-context-menu-btn-danger"
+                    class="pf-menu-item pf-menu-item-danger pf-queue-context-menu-btn"
                     type="button"
                     data-action="cancel"
                     hidden
@@ -393,7 +403,7 @@
                 </button>
                 <button
                     id="queueContextRemoveBtn"
-                    class="pf-queue-context-menu-btn"
+                    class="pf-menu-item pf-queue-context-menu-btn"
                     type="button"
                     data-action="remove"
                     hidden

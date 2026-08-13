@@ -1,82 +1,90 @@
+# 1.8.0
+
+- Reduced History pagination to 20 entries per page.
+- Improved CSS and aligned PineFetch with `pinefetch-designsystem`.
+- Improved menu rendering with a 500-line log limit, caching, and lazy loading.
+- Separated transcription options from the other settings.
+- Spell-checked the changelog.
+
 # 1.7.2
 
-- bug where tiktok has no audio fixed
+- Fixed missing audio in TikTok downloads.
 
 # 1.7.1
 
-- import tiktok list as txt in queue
+- Added TXT imports for lists of TikTok links.
 
 # 1.7.0
 
-- quality options for transcribing
-- text with time stamps
-- transcribing stored in database
-- setting for transcribing including videos
+- Added transcription quality options.
+- Added text transcripts with timestamps.
+- Stored transcripts in the database.
+- Added an option to keep videos alongside their transcripts.
 
 # 1.6.2
 
-- dependabot updates
-- medium, source and uploader are now now also tracked
-- clear button in terminal
+- Updated dependencies through Dependabot.
+- Added tracking for medium, source, and uploader metadata.
+- Added a Clear button to the terminal.
 
 # 1.6.0
 
-- history view, collect length and size
+- Added the History view with runtime and file-size tracking.
 
 # 1.5.1
 
-- ffmpeg bug
+- Fixed an FFmpeg issue.
 
 # 1.5.0
 
-- fix for time stamps
-- fix bundled ffmpeg runtime for postprocessing
+- Fixed timestamp handling.
+- Fixed the bundled FFmpeg runtime for post-processing.
 
 # 1.4.5
 
-- pagination on the history
-- all settings in history
+- Added History pagination.
+- Added all available metadata to History.
 
 # 1.4.3
 
-- fix presets for sent pinefect-link-dump links
-- much better history
-- history in sqlite
+- Fixed presets for links sent through PineFetch Link Dump.
+- Improved History.
+- Migrated History storage to SQLite.
 
 # 1.4.0
 
-- using https://github.com/oliverjessner/PineFetch-Designsystem
-- Send to PineFetch from https://github.com/oliverjessner/PineFetch-Link-Dump
+- Added the [PineFetch Design System](https://github.com/oliverjessner/PineFetch-Designsystem).
+- Added support for sending links to PineFetch through [PineFetch Link Dump](https://github.com/oliverjessner/PineFetch-Link-Dump).
 
 # 1.3.0
 
-- adding a txt import
+- Added TXT import.
 
 # 1.2.0
 
-- download at specific timestap with t&=3
-- non blocking rendering
+- Added downloads starting at a URL timestamp such as `t=3`.
+- Added non-blocking rendering.
 
 # 1.0.1
 
-- fixed vibe coding problems with https://github.com/oliverjessner/ItWorksBut
+- Fixed code-quality issues with [ItWorksBut](https://github.com/oliverjessner/ItWorksBut).
 
 # 1.0.0
 
-- Start and stop download
+- Added starting and stopping downloads.
 
 # 0.2.0
 
 ## Highlights
 
-- context menu with items to redownload and cancel
-- magic import, pinefetch checks if you clipboard has an url, if so it automatically insert to the URL input field
-- history
+- Added a context menu with actions to download again or cancel.
+- Added Magic Import, which inserts a URL from the clipboard into an empty URL field.
+- Added History.
 
 ## Improvements
 
-- scroll fixes
-- press esc to clear the input field and the load info
+- Fixed scrolling issues.
+- Added support for pressing `Esc` to clear the URL input and loaded information.
 
 # 0.1.0
 

@@ -23,6 +23,13 @@ Create a macOS release build with:
 npm run build
 ```
 
+Published macOS releases can be installed through the Homebrew tap:
+
+```bash
+brew tap oliverjessner/tap
+brew install --cask oliverjessner/tap/pinefetch
+```
+
 ### Windows
 
 Run this on Windows with the Rust MSVC toolchain, Node.js, ffmpeg/ffprobe, Deno, and Python 3.10+ installed:
@@ -36,6 +43,18 @@ npm run build:windows
 ## Version synchronization
 
 `package.json` is the source of truth for the PineFetch version. Before each macOS or Windows build, `npm run sync:version` copies it to `src-tauri/tauri.conf.json` under `package.version`. The publish script performs the same sync before creating its release commit and Git tag.
+
+## Publishing
+
+Run `npm run publish` from a clean `../homebrew-tap` checkout. The release workflow:
+
+1. Synchronizes the version and commits pending PineFetch changes.
+2. Builds and verifies the macOS app and creates the DMG.
+3. Pushes PineFetch and creates the GitHub release.
+4. Calculates the DMG SHA256 and generates `Casks/pinefetch.rb`.
+5. Updates the Homebrew tap README, commits the tap changes, and pushes them.
+
+Set `HOMEBREW_TAP_DIR=/path/to/homebrew-tap` to use a tap checkout outside the default `../homebrew-tap` location. The workflow stops before publishing if the tap is dirty or not synchronized with its remote branch.
 
 ## yt-dlp location
 

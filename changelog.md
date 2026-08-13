@@ -4,6 +4,7 @@
 - Improved CSS and aligned PineFetch with `pinefetch-designsystem`.
 - Improved menu rendering with a 500-line log limit, caching, and lazy loading.
 - Separated transcription options from the other settings.
+- Added automatic Homebrew Cask publishing, including checksum generation and tap commits.
 - Spell-checked the changelog.
 
 # 1.7.2

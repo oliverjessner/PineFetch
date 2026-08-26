@@ -1,3 +1,8 @@
+# 1.8.1
+
+- Renamed the Link Dump API endpoints from `addYoutube` to `addVideo`.
+- Added support for Instagram and TikTok videos sent through the PineFetch Link Dump browser extension.
+
 # 1.8.0
 
 - Reduced History pagination to 20 entries per page.

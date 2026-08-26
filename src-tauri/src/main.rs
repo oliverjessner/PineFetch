@@ -302,9 +302,10 @@ struct ValidSecretResult {
 }
 
 #[derive(Debug, Clone)]
-struct NormalizedYoutubeUrl {
+struct NormalizedVideoUrl {
     url: String,
     key: String,
+    thumbnail: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -333,13 +334,13 @@ impl Default for LinkDumpServerRuntime {
 }
 
 #[derive(Debug, Deserialize)]
-struct AddYoutubeLinkRequestBody {
+struct AddVideoLinkRequestBody {
     url: Option<String>,
     secret: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct AddYoutubeLinksRequestBody {
+struct AddVideoLinksRequestBody {
     urls: Option<Vec<String>>,
     secret: Option<String>,
 }
@@ -4010,11 +4011,11 @@ fn handle_link_dump_stream(mut stream: TcpStream, app: AppHandle) -> Result<(), 
 
     let state = app.state::<AppState>();
     match path.as_str() {
-        "/addYoutubeLinkToQueue/" | "/addYoutubeLinkToQueue" => {
-            handle_add_youtube_link(&app, state.inner(), &mut stream, &request.body)
+        "/addVideoLinkToQueue/" | "/addVideoLinkToQueue" => {
+            handle_add_video_link(&app, state.inner(), &mut stream, &request.body)
         }
-        "/addYoutubeLinksToQueue/" | "/addYoutubeLinksToQueue" => {
-            handle_add_youtube_links(&app, state.inner(), &mut stream, &request.body)
+        "/addVideoLinksToQueue/" | "/addVideoLinksToQueue" => {
+            handle_add_video_links(&app, state.inner(), &mut stream, &request.body)
         }
         _ => write_json_response(
             &mut stream,
@@ -4027,10 +4028,10 @@ fn handle_link_dump_stream(mut stream: TcpStream, app: AppHandle) -> Result<(), 
 fn is_link_dump_endpoint(path: &str) -> bool {
     matches!(
         path,
-        "/addYoutubeLinkToQueue/"
-            | "/addYoutubeLinkToQueue"
-            | "/addYoutubeLinksToQueue/"
-            | "/addYoutubeLinksToQueue"
+        "/addVideoLinkToQueue/"
+            | "/addVideoLinkToQueue"
+            | "/addVideoLinksToQueue/"
+            | "/addVideoLinksToQueue"
     )
 }
 
@@ -4166,13 +4167,13 @@ fn write_json_response(
         .map_err(|e| format!("HTTP response write failed: {e}"))
 }
 
-fn handle_add_youtube_link(
+fn handle_add_video_link(
     app: &AppHandle,
     state: &AppState,
     stream: &mut TcpStream,
     body: &[u8],
 ) -> Result<(), String> {
-    let parsed = serde_json::from_slice::<AddYoutubeLinkRequestBody>(body);
+    let parsed = serde_json::from_slice::<AddVideoLinkRequestBody>(body);
     let parsed = match parsed {
         Ok(parsed) => parsed,
         Err(_) => {
@@ -4193,11 +4194,11 @@ fn handle_add_youtube_link(
         );
     };
 
-    let Some(url) = parsed.url.as_deref().and_then(normalize_youtube_url) else {
+    let Some(url) = parsed.url.as_deref().and_then(normalize_video_url) else {
         return write_json_response(
             stream,
             400,
-            &json!({ "ok": false, "error": "Invalid YouTube URL" }),
+            &json!({ "ok": false, "error": "Invalid video URL" }),
         );
     };
 
@@ -4207,7 +4208,7 @@ fn handle_add_youtube_link(
         skipped: 0,
         invalid: 0,
     };
-    if add_normalized_youtube_urls_to_queue(app, state, &[url], &mut summary).is_err() {
+    if add_normalized_video_urls_to_queue(app, state, &[url], &mut summary).is_err() {
         return write_json_response(
             stream,
             500,
@@ -4223,18 +4224,18 @@ fn handle_add_youtube_link(
             "ok": true,
             "added": summary.added,
             "skipped": summary.skipped,
-            "message": format!("Added {} YouTube link{} to queue.", summary.added, if summary.added == 1 { "" } else { "s" }),
+            "message": format!("Added {} video link{} to queue.", summary.added, if summary.added == 1 { "" } else { "s" }),
         }),
     )
 }
 
-fn handle_add_youtube_links(
+fn handle_add_video_links(
     app: &AppHandle,
     state: &AppState,
     stream: &mut TcpStream,
     body: &[u8],
 ) -> Result<(), String> {
-    let parsed = serde_json::from_slice::<AddYoutubeLinksRequestBody>(body);
+    let parsed = serde_json::from_slice::<AddVideoLinksRequestBody>(body);
     let parsed = match parsed {
         Ok(parsed) => parsed,
         Err(_) => {
@@ -4260,7 +4261,7 @@ fn handle_add_youtube_links(
         return write_json_response(
             stream,
             400,
-            &json!({ "ok": false, "error": "No valid YouTube URLs" }),
+            &json!({ "ok": false, "error": "No valid video URLs" }),
         );
     }
 
@@ -4274,7 +4275,7 @@ fn handle_add_youtube_links(
     let mut normalized_urls = Vec::new();
 
     for raw_url in urls.iter().take(LINK_DUMP_MAX_BATCH_SIZE) {
-        let Some(normalized) = normalize_youtube_url(raw_url) else {
+        let Some(normalized) = normalize_video_url(raw_url) else {
             summary.invalid += 1;
             continue;
         };
@@ -4293,11 +4294,11 @@ fn handle_add_youtube_links(
         return write_json_response(
             stream,
             400,
-            &json!({ "ok": false, "error": "No valid YouTube URLs" }),
+            &json!({ "ok": false, "error": "No valid video URLs" }),
         );
     }
 
-    if add_normalized_youtube_urls_to_queue(app, state, &normalized_urls, &mut summary).is_err() {
+    if add_normalized_video_urls_to_queue(app, state, &normalized_urls, &mut summary).is_err() {
         return write_json_response(
             stream,
             500,
@@ -4316,18 +4317,18 @@ fn handle_add_youtube_links(
             "added": summary.added,
             "skipped": summary.skipped,
             "invalid": summary.invalid,
-            "message": format!("Added {} YouTube link{} to queue.", summary.added, if summary.added == 1 { "" } else { "s" }),
+            "message": format!("Added {} video link{} to queue.", summary.added, if summary.added == 1 { "" } else { "s" }),
         }),
     )
 }
 
-fn add_normalized_youtube_urls_to_queue(
+fn add_normalized_video_urls_to_queue(
     app: &AppHandle,
     state: &AppState,
-    normalized_urls: &[NormalizedYoutubeUrl],
+    normalized_urls: &[NormalizedVideoUrl],
     summary: &mut LinkDumpQueueSummary,
 ) -> Result<(), String> {
-    let mut queued_keys = queued_youtube_keys(state)?;
+    let mut queued_keys = queued_video_keys(state)?;
     let mut jobs = Vec::new();
 
     for normalized in normalized_urls {
@@ -4348,7 +4349,7 @@ fn add_normalized_youtube_urls_to_queue(
 
 fn build_link_dump_download_request(
     state: &AppState,
-    normalized: &NormalizedYoutubeUrl,
+    normalized: &NormalizedVideoUrl,
 ) -> Result<DownloadRequest, String> {
     let (preset, cut_at_timestamp_enabled) = {
         let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
@@ -4371,22 +4372,28 @@ fn build_link_dump_download_request(
         filename_suffix: preset.filename_suffix.map(str::to_string),
         title: None,
         uploader: None,
-        thumbnail: youtube_thumbnail_url_from_normalized(normalized),
+        thumbnail: normalized.thumbnail.clone(),
         upload_date: None,
         timestamp: None,
         duration_seconds: None,
     })
 }
 
-fn queued_youtube_keys(state: &AppState) -> Result<std::collections::HashSet<String>, String> {
+fn queued_video_keys(state: &AppState) -> Result<std::collections::HashSet<String>, String> {
     let queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
     Ok(queue
         .iter()
-        .filter_map(|job| normalize_youtube_url(&job.url).map(|normalized| normalized.key))
+        .filter_map(|job| normalize_video_url(&job.url).map(|normalized| normalized.key))
         .collect())
 }
 
-fn normalize_youtube_url(input: &str) -> Option<NormalizedYoutubeUrl> {
+fn normalize_video_url(input: &str) -> Option<NormalizedVideoUrl> {
+    normalize_youtube_url(input)
+        .or_else(|| normalize_tiktok_url(input))
+        .or_else(|| normalize_instagram_url(input))
+}
+
+fn normalize_youtube_url(input: &str) -> Option<NormalizedVideoUrl> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return None;
@@ -4437,9 +4444,10 @@ fn normalize_youtube_url(input: &str) -> Option<NormalizedYoutubeUrl> {
         return None;
     }
 
-    Some(NormalizedYoutubeUrl {
+    Some(NormalizedVideoUrl {
         url: format!("https://www.youtube.com/watch?v={video_id}"),
         key: format!("youtube:{video_id}"),
+        thumbnail: Some(format!("https://i.ytimg.com/vi/{video_id}/mqdefault.jpg")),
     })
 }
 
@@ -4451,11 +4459,130 @@ fn is_plausible_youtube_video_id(video_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
-fn youtube_thumbnail_url_from_normalized(normalized: &NormalizedYoutubeUrl) -> Option<String> {
-    normalized
-        .key
-        .strip_prefix("youtube:")
-        .map(|video_id| format!("https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"))
+fn normalize_tiktok_url(input: &str) -> Option<NormalizedVideoUrl> {
+    let parsed = parse_http_url(input)?;
+    let host = normalized_url_host(&parsed)?;
+    if host != "tiktok.com" && !host.ends_with(".tiktok.com") {
+        return None;
+    }
+
+    let path_parts = parsed
+        .path_segments()
+        .map(|segments| segments.filter(|part| !part.is_empty()).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    if path_parts.len() >= 3
+        && path_parts[0].starts_with('@')
+        && path_parts[1].eq_ignore_ascii_case("video")
+    {
+        let handle = path_parts[0].strip_prefix('@')?;
+        let video_id = path_parts[2];
+        if is_plausible_tiktok_handle(handle) && is_plausible_numeric_id(video_id) {
+            return Some(NormalizedVideoUrl {
+                url: format!("https://www.tiktok.com/@{handle}/video/{video_id}"),
+                key: format!("tiktok:{video_id}"),
+                thumbnail: None,
+            });
+        }
+    }
+
+    let short_code = if matches!(host.as_str(), "vm.tiktok.com" | "vt.tiktok.com") {
+        path_parts.first().copied()
+    } else if path_parts
+        .first()
+        .is_some_and(|part| part.eq_ignore_ascii_case("t"))
+    {
+        path_parts.get(1).copied()
+    } else {
+        None
+    }?;
+
+    if !is_plausible_content_code(short_code) {
+        return None;
+    }
+
+    let url = if matches!(host.as_str(), "vm.tiktok.com" | "vt.tiktok.com") {
+        format!("https://{host}/{short_code}/")
+    } else {
+        format!("https://www.tiktok.com/t/{short_code}/")
+    };
+    Some(NormalizedVideoUrl {
+        url,
+        key: format!("tiktok-short:{short_code}"),
+        thumbnail: None,
+    })
+}
+
+fn normalize_instagram_url(input: &str) -> Option<NormalizedVideoUrl> {
+    let parsed = parse_http_url(input)?;
+    let host = normalized_url_host(&parsed)?;
+    let is_instagram_host = host == "instagram.com"
+        || host.ends_with(".instagram.com")
+        || host == "instagr.am"
+        || host.ends_with(".instagr.am");
+    if !is_instagram_host {
+        return None;
+    }
+
+    let path_parts = parsed
+        .path_segments()
+        .map(|segments| segments.filter(|part| !part.is_empty()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let (route, content_code) = match path_parts.as_slice() {
+        [route, content_code, ..] if is_instagram_content_route(route) => {
+            ((*route).to_ascii_lowercase(), *content_code)
+        }
+        [_, route, content_code, ..] if is_instagram_content_route(route) => {
+            ((*route).to_ascii_lowercase(), *content_code)
+        }
+        _ => return None,
+    };
+    if !is_plausible_content_code(content_code) {
+        return None;
+    }
+
+    Some(NormalizedVideoUrl {
+        url: format!("https://www.instagram.com/{route}/{content_code}/"),
+        key: format!("instagram:{content_code}"),
+        thumbnail: None,
+    })
+}
+
+fn parse_http_url(input: &str) -> Option<url::Url> {
+    let parsed = url::Url::parse(input.trim()).ok()?;
+    matches!(parsed.scheme(), "http" | "https").then_some(parsed)
+}
+
+fn normalized_url_host(parsed: &url::Url) -> Option<String> {
+    Some(
+        parsed
+            .host_str()?
+            .trim_end_matches('.')
+            .to_ascii_lowercase(),
+    )
+}
+
+fn is_plausible_tiktok_handle(handle: &str) -> bool {
+    !handle.is_empty()
+        && handle.len() <= 64
+        && handle
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.'))
+}
+
+fn is_plausible_numeric_id(value: &str) -> bool {
+    (6..=32).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn is_plausible_content_code(value: &str) -> bool {
+    (3..=128).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn is_instagram_content_route(route: &str) -> bool {
+    matches!(route.to_ascii_lowercase().as_str(), "p" | "reel" | "tv")
 }
 
 fn main() {
@@ -5315,6 +5442,10 @@ mod tests {
 
         assert_eq!(normalized.url, "https://www.youtube.com/watch?v=abc123");
         assert_eq!(normalized.key, "youtube:abc123");
+        assert_eq!(
+            normalized.thumbnail.as_deref(),
+            Some("https://i.ytimg.com/vi/abc123/mqdefault.jpg")
+        );
     }
 
     #[test]
@@ -5345,5 +5476,59 @@ mod tests {
                 .url,
             "https://www.youtube.com/watch?v=live99"
         );
+    }
+
+    #[test]
+    fn normalizes_tiktok_video_and_short_urls() {
+        let video = normalize_video_url(
+            "https://www.tiktok.com/@creator.name/video/7412345678901234567?is_from_webapp=1",
+        )
+        .unwrap();
+        assert_eq!(
+            video.url,
+            "https://www.tiktok.com/@creator.name/video/7412345678901234567"
+        );
+        assert_eq!(video.key, "tiktok:7412345678901234567");
+        assert_eq!(video.thumbnail, None);
+
+        let short = normalize_video_url("https://vm.tiktok.com/ZMexample/?share=1").unwrap();
+        assert_eq!(short.url, "https://vm.tiktok.com/ZMexample/");
+        assert_eq!(short.key, "tiktok-short:ZMexample");
+    }
+
+    #[test]
+    fn normalizes_instagram_post_reel_and_tv_urls() {
+        let reel = normalize_video_url(
+            "https://www.instagram.com/reel/ABC_def-123/?utm_source=ig_web_copy_link",
+        )
+        .unwrap();
+        assert_eq!(reel.url, "https://www.instagram.com/reel/ABC_def-123/");
+        assert_eq!(reel.key, "instagram:ABC_def-123");
+
+        assert_eq!(
+            normalize_video_url("https://instagram.com/creator/p/PostCode9/")
+                .unwrap()
+                .url,
+            "https://www.instagram.com/p/PostCode9/"
+        );
+        assert!(normalize_video_url("https://www.instagram.com/tv/TvCode1/").is_some());
+    }
+
+    #[test]
+    fn video_normalizer_rejects_unsupported_or_spoofed_domains() {
+        assert!(normalize_video_url("https://example.com/video/123456").is_none());
+        assert!(normalize_video_url(
+            "https://tiktok.example.com/@creator/video/7412345678901234567"
+        )
+        .is_none());
+        assert!(normalize_video_url("https://instagram.com.example.org/reel/ABC123/").is_none());
+    }
+
+    #[test]
+    fn link_dump_exposes_video_endpoints_only() {
+        assert!(is_link_dump_endpoint("/addVideoLinkToQueue/"));
+        assert!(is_link_dump_endpoint("/addVideoLinksToQueue"));
+        assert!(!is_link_dump_endpoint("/addYoutubeLinkToQueue/"));
+        assert!(!is_link_dump_endpoint("/addYoutubeLinksToQueue/"));
     }
 }

@@ -132,30 +132,31 @@ http://127.0.0.1:2255
 
 Open **Link Dump** and create a connection secret under **Connections**. Copy it immediately; PineFetch stores only a hash and will not show the secret again.
 
-Links sent through Link Dump are queued with the currently selected PineFetch preset.
+YouTube, TikTok, and Instagram links sent through Link Dump are queued with the currently selected PineFetch preset.
+Supported variants include YouTube watch, short, Shorts, Live, Embed, and `/v/` URLs; TikTok `/@creator/video/`, `vm.`, `vt.`, and `/t/` URLs; and Instagram post, Reel, and TV URLs.
 
 ![PineFetch Link Dump screen](src/images/mockups/link_dump.png)
 
 Single link:
 
 ```bash
-curl -X POST http://127.0.0.1:2255/addYoutubeLinkToQueue/ \
+curl -X POST http://127.0.0.1:2255/addVideoLinkToQueue/ \
   -H "Content-Type: application/json" \
-  -d '{"url":"https://www.youtube.com/watch?v=abc123","secret":"pfld_REPLACE_ME"}'
+  -d '{"url":"https://www.tiktok.com/@creator/video/7412345678901234567","secret":"pfld_REPLACE_ME"}'
 ```
 
 Multiple links:
 
 ```bash
-curl -X POST http://127.0.0.1:2255/addYoutubeLinksToQueue/ \
+curl -X POST http://127.0.0.1:2255/addVideoLinksToQueue/ \
   -H "Content-Type: application/json" \
-  -d '{"urls":["https://www.youtube.com/watch?v=abc123","https://youtu.be/def456"],"secret":"pfld_REPLACE_ME"}'
+  -d '{"urls":["https://www.youtube.com/watch?v=abc123","https://www.instagram.com/reel/ABC_def-123/"],"secret":"pfld_REPLACE_ME"}'
 ```
 
 Preflight:
 
 ```bash
-curl -X OPTIONS http://127.0.0.1:2255/addYoutubeLinksToQueue/ -i
+curl -X OPTIONS http://127.0.0.1:2255/addVideoLinksToQueue/ -i
 ```
 
 ## Features

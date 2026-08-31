@@ -23,6 +23,15 @@
             "hireable": true
         }
     ],
+    "author": {
+        "name": "oliverjessner",
+        "url": "https://oliverjessner.at"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/oliverjessner/PineFetch/"
+    },
+    "homepage": "https://oliverjessner.at/pinefetch",
     "dependencies": {
         "pinefetch-designsystem": "^0.1.1"
     }

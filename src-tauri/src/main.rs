@@ -1,3 +1,5 @@
+mod cli;
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -53,6 +55,8 @@ struct AppConfig {
     cut_at_timestamp_enabled: bool,
     #[serde(default)]
     last_download_url: Option<String>,
+    #[serde(default)]
+    notifications_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -66,6 +70,7 @@ impl Default for AppConfig {
             magic_import_enabled: default_magic_import_enabled(),
             cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
+            notifications_enabled: false,
         }
     }
 }
@@ -1313,6 +1318,85 @@ fn is_queue_auto_start_enabled(state: &AppState) -> Result<bool, String> {
     Ok(*auto_start)
 }
 
+#[derive(Default)]
+struct QueueRunSummary {
+    started: usize,
+    succeeded: usize,
+}
+
+impl QueueRunSummary {
+    fn should_notify(&self, enabled: bool) -> bool {
+        enabled && self.started > 1 && self.succeeded == self.started
+    }
+}
+
+fn notify_queue_completed(app: &AppHandle, state: &AppState, summary: &QueueRunSummary) {
+    let enabled = state
+        .config
+        .lock()
+        .map(|config| config.notifications_enabled)
+        .unwrap_or(false);
+    if !summary.should_notify(enabled) {
+        return;
+    }
+    let body = format!("All {} downloads finished successfully.", summary.succeeded);
+    if let Err(err) = show_queue_notification(app, &body) {
+        emit_log(
+            app,
+            LogEvent {
+                id: String::new(),
+                line: format!("[notification] {err}"),
+                is_error: true,
+            },
+        );
+    }
+}
+
+fn show_queue_notification(app: &AppHandle, body: &str) -> Result<(), String> {
+    let icon = app
+        .path_resolver()
+        .resolve_resource("icons/icon.png")
+        .filter(|path| path.is_file())
+        .ok_or("Bundled notification icon unavailable")?;
+    let icon = icon.to_string_lossy();
+    let title = "PineFetch — Queue complete";
+
+    #[cfg(target_os = "macos")]
+    {
+        // Tauri's notification wrapper ignores custom icons on macOS. Use the
+        // native app_icon option, retaining Tauri's delivery identity in dev.
+        let identifier = if cfg!(feature = "custom-protocol") {
+            app.config().tauri.bundle.identifier.clone()
+        } else {
+            "com.apple.Terminal".to_string()
+        };
+        match mac_notification_sys::set_application(&identifier) {
+            Ok(()) => {}
+            Err(mac_notification_sys::error::Error::Application(
+                mac_notification_sys::error::ApplicationError::AlreadySet(_),
+            )) => {}
+            Err(err) => return Err(err.to_string()),
+        }
+        mac_notification_sys::Notification::new()
+            .title(title)
+            .message(body)
+            .app_icon(&icon)
+            .send()
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        tauri::api::notification::Notification::new(&app.config().tauri.bundle.identifier)
+            .title(title)
+            .body(body)
+            .icon(icon.as_ref())
+            .show()
+            .map_err(|err| err.to_string())
+    }
+}
+
 fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let mut running = state
         .worker_running
@@ -1328,6 +1412,7 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let app_handle = app.clone();
 
     thread::spawn(move || {
+        let mut summary = QueueRunSummary::default();
         loop {
             let state_handle = app_handle.state::<AppState>();
             let job_opt = {
@@ -1335,20 +1420,28 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
                     Ok(queue) => queue,
                     Err(_) => break,
                 };
-                queue.pop_front()
+                let job = queue.pop_front();
+                // Keep the queue locked until idle is published so an enqueue cannot
+                // miss starting a worker between the empty check and shutdown.
+                if job.is_none() {
+                    if let Ok(mut running) = state_handle.worker_running.lock() {
+                        *running = false;
+                    }
+                }
+                job
             };
 
             let job = match job_opt {
                 Some(job) => job,
                 None => {
-                    if let Ok(mut running) = state_handle.worker_running.lock() {
-                        *running = false;
-                    }
+                    notify_queue_completed(&app_handle, &state_handle, &summary);
                     let _ = emit_queue(&app_handle, &state_handle);
                     emit_queue_status(&app_handle, &state_handle);
                     break;
                 }
             };
+
+            summary.started += 1;
 
             if let Ok(mut current) = state_handle.current_job_id.lock() {
                 *current = Some(job.id.clone());
@@ -1441,6 +1534,7 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
                             run_result.output_path.as_deref(),
                         ) {
                             Ok(transcript_path) => {
+                                summary.succeeded += 1;
                                 emit_log(
                                     &app_handle,
                                     LogEvent {
@@ -1508,6 +1602,7 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
                             }
                         }
                     } else {
+                        summary.succeeded += 1;
                         emit_state(
                             &app_handle,
                             DownloadStateEvent {
@@ -3105,7 +3200,7 @@ fn load_legacy_config_json(app: &AppHandle) -> Option<AppConfig> {
 
 fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
     conn.query_row(
-        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url
+        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled
          FROM app_config
          WHERE id = 1",
         [],
@@ -3119,6 +3214,7 @@ fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
                 magic_import_enabled: row.get::<_, i64>(5)? != 0,
                 cut_at_timestamp_enabled: row.get::<_, i64>(6)? != 0,
                 last_download_url: row.get(7)?,
+                notifications_enabled: row.get::<_, i64>(8)? != 0,
             }))
         },
     )
@@ -3141,6 +3237,7 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             magic_import_enabled,
             cut_at_timestamp_enabled,
             last_download_url,
+            notifications_enabled,
             created_at,
             updated_at
         ) VALUES (
@@ -3153,6 +3250,7 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             ?6,
             ?7,
             ?8,
+            ?9,
             datetime('now'),
             datetime('now')
         )
@@ -3165,6 +3263,7 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             magic_import_enabled = excluded.magic_import_enabled,
             cut_at_timestamp_enabled = excluded.cut_at_timestamp_enabled,
             last_download_url = excluded.last_download_url,
+            notifications_enabled = excluded.notifications_enabled,
             updated_at = datetime('now')",
         params![
             config.yt_dlp_path,
@@ -3183,6 +3282,7 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
                 0
             },
             config.last_download_url,
+            config.notifications_enabled,
         ],
     )?;
     Ok(())
@@ -3364,6 +3464,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
         "#,
     )?;
 
+    ensure_app_config_notifications_enabled_column(conn)?;
     ensure_app_config_faster_whisper_model_column(conn)?;
     ensure_app_config_download_video_with_transcript_column(conn)?;
     ensure_history_entries_timestamp_column(conn)?;
@@ -3373,6 +3474,21 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_history_entries_text_column(conn, "medium")?;
     ensure_history_entries_text_column(conn, "source")?;
     backfill_history_sources(conn)?;
+    Ok(())
+}
+
+fn ensure_app_config_notifications_enabled_column(conn: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'notifications_enabled')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute(
+            "ALTER TABLE app_config ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -4586,7 +4702,29 @@ fn is_instagram_content_route(route: &str) -> bool {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let command = match cli::parse(&args) {
+        Ok(Some(cli::CliCommand::Help)) => {
+            print!("{}", cli::HELP);
+            return;
+        }
+        Ok(command) => command,
+        Err(err) => {
+            eprintln!("PineFetch: {err}");
+            std::process::exit(2);
+        }
+    };
     let context = tauri::generate_context!();
+    if let Some(command) = command {
+        match cli::run(command, context.config()) {
+            Ok(output) => println!("{output}"),
+            Err(err) => {
+                eprintln!("PineFetch: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     tauri::Builder::default()
         .setup(|app| {
             let db = open_link_dump_db(&app.handle())?;
@@ -4600,6 +4738,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            cli::initialize_cli,
             get_config,
             set_config,
             set_selected_preset_key,
@@ -4633,6 +4772,9 @@ fn main() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 let state = app_handle.state::<AppState>();
                 stop_link_dump_server(state.inner());
+                if let Some(server) = app_handle.try_state::<cli::CliServer>() {
+                    server.stop();
+                }
             }
         });
 }
@@ -4909,6 +5051,7 @@ mod tests {
             magic_import_enabled: false,
             cut_at_timestamp_enabled: false,
             last_download_url: Some("https://example.com/watch".to_string()),
+            notifications_enabled: true,
         };
 
         upsert_app_config_in_conn(&conn, &config).unwrap();
@@ -4922,6 +5065,7 @@ mod tests {
         assert_eq!(loaded.selected_preset_key.as_deref(), Some("audio_mp3"));
         assert_eq!(loaded.faster_whisper_model, "medium");
         assert!(loaded.download_video_with_transcript);
+        assert!(loaded.notifications_enabled);
         assert!(!loaded.magic_import_enabled);
         assert!(!loaded.cut_at_timestamp_enabled);
         assert_eq!(
@@ -5175,7 +5319,7 @@ mod tests {
     }
 
     #[test]
-    fn link_dump_migration_adds_transcription_settings_to_existing_config() {
+    fn link_dump_migration_adds_settings_to_existing_config() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             r#"
@@ -5204,6 +5348,32 @@ mod tests {
 
         assert_eq!(config.faster_whisper_model, DEFAULT_FASTER_WHISPER_MODEL);
         assert!(!config.download_video_with_transcript);
+        assert!(!config.notifications_enabled);
+        // Re-running migrations preserves the user's choice.
+        let config = AppConfig {
+            notifications_enabled: true,
+            ..config
+        };
+        upsert_app_config_in_conn(&conn, &config).unwrap();
+        run_link_dump_migrations(&conn).unwrap();
+        assert!(load_config_from_db(&conn).unwrap().notifications_enabled);
+    }
+
+    #[test]
+    fn queue_notification_requires_multiple_successful_downloads_and_opt_in() {
+        for (started, succeeded, enabled, expected) in [
+            (0, 0, true, false),
+            (1, 1, true, false),
+            (2, 2, false, false),
+            (2, 2, true, true),
+            (5, 5, true, true),
+            (2, 1, true, false),
+            (3, 2, true, false),
+            (2, 0, true, false),
+        ] {
+            let summary = QueueRunSummary { started, succeeded };
+            assert_eq!(summary.should_notify(enabled), expected);
+        }
     }
 
     #[test]

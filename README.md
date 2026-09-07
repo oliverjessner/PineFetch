@@ -56,6 +56,48 @@ Run `npm run publish` from a clean `../homebrew-tap` checkout. The release workf
 
 Set `HOMEBREW_TAP_DIR=/path/to/homebrew-tap` to use a tap checkout outside the default `../homebrew-tap` location. The workflow stops before publishing if the tap is dirty or not synchronized with its remote branch.
 
+## Command-line interface
+
+See the [CLI reference](docs/CLI.md) for installation, commands, presets, and troubleshooting.
+
+The desktop executable also includes the PineFetch CLI. CLI commands connect to the running desktop app, opening it automatically if necessary. Configure the output folder and yt-dlp in the app before adding your first download.
+
+```bash
+PineFetch queue add --link 'https://www.youtube.com/watch?v=VIDEO_ID' --preset 'best'
+PineFetch queue add --link 'https://www.youtube.com/watch?v=VIDEO_ID' --preset 'text with timestamps'
+PineFetch queue list
+PineFetch queue remove 1
+PineFetch history list
+PineFetch stats
+PineFetch --help
+```
+
+`--preset` accepts `best` (the default), `max` (up to 1080p), `mp3`, `opus`, `text`, or `text with timestamps`. Quote presets containing spaces. Downloads use the app's saved output folder, timestamp, and transcription settings, and follow its current auto-start mode.
+
+`queue list` numbers the waiting downloads in processing order. `queue remove 1` removes the first waiting item; active downloads are excluded. Numbers refer to the queue at command execution time, so they can change as downloads start.
+
+`history list` shows the latest 25 successful downloads, newest first. **CLI history access is read-only: there are no delete, remove, or clear commands for history.** `stats` shows the same downloaded-video count, total data, and total runtime as the History sidebar, across the entire history.
+
+The CLI uses a separate authenticated loopback connection and works even when the Link Dump server is disabled. Successful commands exit with code `0`, execution errors with `1`, and invalid arguments with `2`. Errors go to stderr.
+
+### Accessing the command
+
+Homebrew releases generated with CLI support install the `PineFetch` command automatically. For a manual macOS app installation, invoke the bundled executable directly:
+
+```bash
+/Applications/PineFetch.app/Contents/MacOS/PineFetch stats
+```
+
+To use the shorter command, add this alias to your shell configuration:
+
+```bash
+alias PineFetch='/Applications/PineFetch.app/Contents/MacOS/PineFetch'
+```
+
+On Windows, run `PineFetch.exe` from the installation directory, or add that directory to your user `PATH` to use `PineFetch` from any terminal. In PowerShell, use `& 'C:\path\to\PineFetch.exe' stats` when specifying a full path.
+
+For development, start the app with `npm run dev`, then run `src-tauri/target/debug/pinefetch --help` or any of the commands above. A debug executable needs the development web server for its desktop window; release builds include the UI.
+
 ## yt-dlp location
 
 - If `yt-dlp` is in your PATH, the app will find it automatically.

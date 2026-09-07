@@ -1,3 +1,8 @@
+# 1.9.0
+
+- notifications
+- cli
+
 # 1.8.1
 
 - Renamed the Link Dump API endpoints from `addYoutube` to `addVideo`.

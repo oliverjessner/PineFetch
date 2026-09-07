@@ -35,6 +35,7 @@ const els = Object.seal({
     txtImportStatus: document.getElementById('txtImportStatus'),
     pickDirBtn: document.getElementById('pickDirBtn'),
     saveSettingsBtn: document.getElementById('saveSettingsBtn'),
+    notificationsEnabled: document.getElementById('notificationsEnabled'),
     openFolderBtn: document.getElementById('openFolderBtn'),
     outputDir: document.getElementById('outputDir'),
     ytDlpPath: document.getElementById('ytDlpPath'),
@@ -1359,6 +1360,7 @@ const maybeHydrateQueueThumbnail = id => {
 const syncConfig = async () => {
     try {
         state.config = await invoke('get_config');
+        els.notificationsEnabled.checked = state.config.notifications_enabled ?? false;
         els.outputDir.value = state.config.default_output_dir || '';
         els.ytDlpPath.value = state.config.yt_dlp_path || defaultYtDlpPath;
         els.fasterWhisperModel.value = normalizeFasterWhisperModel(state.config.faster_whisper_model);
@@ -1896,6 +1898,7 @@ const saveSettings = async () => {
                 selected_preset_key: selectedPresetKey,
                 faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value),
                 download_video_with_transcript: Boolean(els.downloadVideoWithTranscript.checked),
+                notifications_enabled: Boolean(els.notificationsEnabled.checked),
                 magic_import_enabled: Boolean(els.magicImportEnabled.checked),
                 cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
                 last_download_url: state.config?.last_download_url || null,
@@ -1908,6 +1911,7 @@ const saveSettings = async () => {
             selected_preset_key: selectedPresetKey,
             faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value),
             download_video_with_transcript: Boolean(els.downloadVideoWithTranscript.checked),
+            notifications_enabled: Boolean(els.notificationsEnabled.checked),
             magic_import_enabled: Boolean(els.magicImportEnabled.checked),
             cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
             last_download_url: state.config?.last_download_url || null,
@@ -2348,6 +2352,11 @@ const init = async () => {
     await syncConfig();
     await syncQueueStatus();
     await bindBackendEvents();
+    try {
+        await invoke('initialize_cli');
+    } catch (err) {
+        appendLog(`[cli] ${err}`, true);
+    }
     scheduleQueueRender();
 };
 

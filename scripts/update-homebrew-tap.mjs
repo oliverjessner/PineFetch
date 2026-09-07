@@ -47,6 +47,7 @@ const cask = `cask "pinefetch" do
   depends_on macos: :big_sur
 
   app "PineFetch.app"
+  binary "#{appdir}/PineFetch.app/Contents/MacOS/PineFetch", target: "PineFetch"
 
   zap trash: [
     "~/Library/Application Support/com.pinefetch.app",

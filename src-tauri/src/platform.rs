@@ -15,6 +15,8 @@ pub(super) fn detect_platform(url: &str) -> Option<String> {
             ("twitch.tv", "twitch"),
             ("x.com", "x"),
             ("twitter.com", "x"),
+            ("reddit.com", "reddit"),
+            ("redditmedia.com", "reddit"),
             ("tiktok.com", "tiktok"),
             ("instagram.com", "instagram"),
             ("instagr.am", "instagram"),
@@ -29,6 +31,9 @@ pub(super) fn detect_platform(url: &str) -> Option<String> {
         if host == "fb.watch" {
             return Some("facebook".to_string());
         }
+        if host == "redd.it" {
+            return Some("reddit".to_string());
+        }
     }
     None
 }
@@ -40,7 +45,7 @@ pub(super) fn caption_platform(url: &str, enabled: bool) -> Option<String> {
     detect_platform(url).filter(|platform| {
         matches!(
             platform.as_str(),
-            "instagram" | "tiktok" | "youtube" | "facebook" | "x"
+            "instagram" | "tiktok" | "youtube" | "facebook" | "x" | "reddit"
         )
     })
 }

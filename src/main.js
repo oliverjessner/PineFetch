@@ -614,6 +614,7 @@ const updateDownloadOptionHints = () => {
         instagram: 'Instagram',
         facebook: 'Facebook',
         x: 'X',
+        reddit: 'Reddit',
     };
     const captionPlatformName = captionPlatformNames[captionPlatform];
     els.captionHint.hidden = !captionPlatformName;

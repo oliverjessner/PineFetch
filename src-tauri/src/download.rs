@@ -34,7 +34,7 @@ pub(super) fn run_download_job(
 
     if save_captions {
         args.push("--print".to_string());
-        args.push("after_move:pinefetch_caption:%(.{filepath,description})j".to_string());
+        args.push("after_move:pinefetch_caption:%(.{filepath,description,alt_title,title})j".to_string());
     }
 
     if job.save_thumbnails {
@@ -120,6 +120,7 @@ pub(super) fn run_download_job(
     let id_stdout = job.id.clone();
     let output_path_for_stdout = output_path_capture.clone();
     let captions_for_stdout = caption_capture.clone();
+    let reddit_caption = caption_platform.as_deref() == Some("reddit");
     let metadata_for_stdout = metadata_capture.clone();
     let handle_out = thread::spawn(move || {
         if let Some(out) = stdout {
@@ -158,7 +159,7 @@ pub(super) fn run_download_job(
                         slot.push(path_line);
                     }
                 }
-                if let Some(caption) = parse_caption_line(&line) {
+                if let Some(caption) = parse_caption_line(&line, reddit_caption) {
                     if let Ok(mut captions) = captions_for_stdout.lock() {
                         captions.push(caption);
                     }
@@ -333,15 +334,35 @@ pub(super) fn parse_download_metadata_line(line: &str) -> Option<(String, InfoRe
     ))
 }
 
-pub(super) fn parse_caption_line(line: &str) -> Option<(String, String)> {
+pub(super) fn parse_caption_line(line: &str, reddit: bool) -> Option<(String, String)> {
     let json = line.strip_prefix("pinefetch_caption:")?;
     let value: serde_json::Value = serde_json::from_str(json).ok()?;
     let path = value.get("filepath")?.as_str()?.trim();
-    let caption = value.get("description")?.as_str()?;
-    if path.is_empty() || caption.trim().is_empty() {
+    if path.is_empty() {
         return None;
     }
-    Some((path.to_string(), caption.to_string()))
+    let description = value.get("description").and_then(|item| item.as_str()).unwrap_or("");
+    if reddit {
+        let title = value
+            .get("alt_title")
+            .and_then(|item| item.as_str())
+            .filter(|title| !title.trim().is_empty())
+            .or_else(|| value.get("title").and_then(|item| item.as_str()))
+            .unwrap_or("")
+            .trim();
+        let body = description.trim();
+        let caption = match (title.is_empty(), body.is_empty()) {
+            (false, false) => format!("{title}\n\n{body}"),
+            (false, true) => title.to_string(),
+            (true, false) => body.to_string(),
+            (true, true) => return None,
+        };
+        return Some((path.to_string(), caption));
+    }
+    if description.trim().is_empty() {
+        return None;
+    }
+    Some((path.to_string(), description.to_string()))
 }
 
 pub(super) fn write_caption_sidecar(media_path: &Path, caption: &str) -> Result<PathBuf, String> {

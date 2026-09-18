@@ -70,6 +70,7 @@ const detectPlatform = url => {
         if (matches('facebook.com') || matches('fb.watch')) return 'facebook';
         if (matches('twitch.tv')) return 'twitch';
         if (matches('x.com') || matches('twitter.com')) return 'x';
+        if (matches('reddit.com') || matches('redditmedia.com') || host === 'redd.it') return 'reddit';
         if (matches('tiktok.com')) return 'tiktok';
         if (matches('instagram.com') || matches('instagr.am')) return 'instagram';
     } catch {

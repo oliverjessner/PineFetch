@@ -11,7 +11,7 @@ Here are our first class citizen listed:
 | Instagram          | `instagram.com/p/...`           | Yes        |
 | Facebook           | `facebook.com/...`              | Yes        |
 | X                  | `x.com/...`,                    | Yes        |
-| Reddit             | `reddit.com/r/.../comments/...` | No         |
+| Reddit             | `reddit.com/r/.../comments/...` | Yes        |
 | Twitch             | `twitch.tv/...`                 | No         |
 | Snapchat Spotlight | `snapchat.com/spotlight/...`    | No         |
 | Pinterest          | `pinterest.com/pin/...`         | No         |
@@ -21,3 +21,5 @@ Here are our first class citizen listed:
 | Tumblr             | `tumblr.com/...`                | No         |
 
 - \* Post captions are save when **Save post captions** is enabled in the settings and the video has a description
+
+check [PineFetch-Link-Dump](https://github.com/oliverjessner/PineFetch-Link-Dump) to see which platforms are supported by import text and sending urls via browser

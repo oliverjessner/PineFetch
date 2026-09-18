@@ -1,1 +1,2 @@
 - parity with link-dump for most used platforms
+- history visual fix for cards

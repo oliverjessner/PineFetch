@@ -37,6 +37,10 @@ pub(super) fn run_download_job(
         args.push("after_move:pinefetch_caption:%(.{filepath,description})j".to_string());
     }
 
+    if job.save_thumbnails {
+        args.push("--write-thumbnail".to_string());
+    }
+
     let needs_ffmpeg = job.extract_audio
         || job.transcribe_text
         || job.format.contains('+')

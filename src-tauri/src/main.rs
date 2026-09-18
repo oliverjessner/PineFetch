@@ -77,6 +77,8 @@ struct AppConfig {
     download_video_with_transcript: bool,
     #[serde(default, alias = "save_instagram_captions")]
     save_captions: bool,
+    #[serde(default)]
+    save_thumbnails: bool,
     #[serde(default = "default_magic_import_enabled")]
     magic_import_enabled: bool,
     #[serde(default = "default_cut_at_timestamp_enabled")]
@@ -96,6 +98,7 @@ impl Default for AppConfig {
             faster_whisper_model: default_faster_whisper_model(),
             download_video_with_transcript: false,
             save_captions: false,
+            save_thumbnails: false,
             magic_import_enabled: default_magic_import_enabled(),
             cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
@@ -148,6 +151,8 @@ struct DownloadJob {
     download_video_with_transcript: bool,
     #[serde(default, alias = "save_instagram_captions")]
     save_captions: bool,
+    #[serde(default)]
+    save_thumbnails: bool,
     title: Option<String>,
     uploader: Option<String>,
     thumbnail: Option<String>,
@@ -1461,6 +1466,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             faster_whisper_model TEXT NOT NULL DEFAULT 'base',
             download_video_with_transcript INTEGER NOT NULL DEFAULT 0,
             save_captions INTEGER NOT NULL DEFAULT 0,
+            save_thumbnails INTEGER NOT NULL DEFAULT 0,
             magic_import_enabled INTEGER NOT NULL DEFAULT 1,
             cut_at_timestamp_enabled INTEGER NOT NULL DEFAULT 1,
             last_download_url TEXT,
@@ -1552,6 +1558,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_app_config_faster_whisper_model_column(conn)?;
     ensure_app_config_download_video_with_transcript_column(conn)?;
     ensure_app_config_save_captions_column(conn)?;
+    ensure_app_config_save_thumbnails_column(conn)?;
     ensure_app_config_legacy_migration_column(conn)?;
     ensure_history_entries_timestamp_column(conn)?;
     ensure_history_entries_duration_seconds_column(conn)?;
@@ -1633,6 +1640,21 @@ fn ensure_app_config_save_captions_column(conn: &Connection) -> rusqlite::Result
                 [],
             )?;
         }
+    }
+    Ok(())
+}
+
+fn ensure_app_config_save_thumbnails_column(conn: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'save_thumbnails')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute(
+            "ALTER TABLE app_config ADD COLUMN save_thumbnails INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     Ok(())
 }
@@ -2141,6 +2163,7 @@ mod tests {
         assert_eq!(config.faster_whisper_model, DEFAULT_FASTER_WHISPER_MODEL);
         assert!(!config.download_video_with_transcript);
         assert!(!config.save_captions);
+        assert!(!config.save_thumbnails);
         assert!(config.magic_import_enabled);
         assert!(config.cut_at_timestamp_enabled);
         assert!(config.yt_dlp_path.is_none());
@@ -2159,6 +2182,7 @@ mod tests {
             faster_whisper_model: "medium".to_string(),
             download_video_with_transcript: true,
             save_captions: true,
+            save_thumbnails: true,
             magic_import_enabled: false,
             cut_at_timestamp_enabled: false,
             last_download_url: Some("https://example.com/watch".to_string()),
@@ -2177,6 +2201,7 @@ mod tests {
         assert_eq!(loaded.faster_whisper_model, "medium");
         assert!(loaded.download_video_with_transcript);
         assert!(loaded.save_captions);
+        assert!(loaded.save_thumbnails);
         assert!(loaded.notifications_enabled);
         assert!(!loaded.magic_import_enabled);
         assert!(!loaded.cut_at_timestamp_enabled);
@@ -2476,6 +2501,7 @@ mod tests {
             faster_whisper_model: DEFAULT_FASTER_WHISPER_MODEL.to_string(),
             download_video_with_transcript: false,
             save_captions: false,
+            save_thumbnails: false,
             title: None,
             uploader: None,
             thumbnail: None,
@@ -2722,6 +2748,7 @@ mod tests {
         assert!(!config.download_video_with_transcript);
         assert!(!config.notifications_enabled);
         assert!(config.save_captions);
+        assert!(!config.save_thumbnails);
         let migrated: i64 = conn
             .query_row(
                 "SELECT legacy_config_json_migrated FROM app_config WHERE id = 1",
@@ -3192,6 +3219,7 @@ mod tests {
             faster_whisper_model: "base".to_string(),
             download_video_with_transcript: false,
             save_captions: false,
+            save_thumbnails: false,
             title: None,
             uploader: None,
             thumbnail: None,

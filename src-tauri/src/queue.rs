@@ -99,12 +99,13 @@ pub(super) fn build_download_job(
         request.cut_start_time,
         &request.url,
     );
-    let (faster_whisper_model, download_video_with_transcript, save_captions) = {
+    let (faster_whisper_model, download_video_with_transcript, save_captions, save_thumbnails) = {
         let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
         (
             normalize_faster_whisper_model(&cfg.faster_whisper_model),
             cfg.download_video_with_transcript,
             cfg.save_captions,
+            cfg.save_thumbnails,
         )
     };
     let id = Uuid::new_v4().to_string();
@@ -120,6 +121,7 @@ pub(super) fn build_download_job(
         faster_whisper_model,
         download_video_with_transcript,
         save_captions,
+        save_thumbnails,
         title: request.title,
         uploader: request.uploader,
         thumbnail: request.thumbnail,

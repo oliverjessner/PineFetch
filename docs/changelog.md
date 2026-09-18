@@ -5,7 +5,6 @@
 - added captions for facebook, YouTube, TikTok
 - downloadable thumbnails, via setting, default false,
 - remove old legacy sqlite table
-- account view
 
 # 2.0.0
 

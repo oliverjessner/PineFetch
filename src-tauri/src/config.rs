@@ -35,6 +35,7 @@ pub(super) struct ConfigPatch {
     download_video_with_transcript: Option<bool>,
     #[serde(alias = "save_instagram_captions")]
     save_captions: Option<bool>,
+    save_thumbnails: Option<bool>,
     magic_import_enabled: Option<bool>,
     cut_at_timestamp_enabled: Option<bool>,
     notifications_enabled: Option<bool>,
@@ -65,6 +66,9 @@ fn apply_config_patch(config: &mut AppConfig, changes: ConfigPatch) {
     }
     if let Some(value) = changes.save_captions {
         config.save_captions = value;
+    }
+    if let Some(value) = changes.save_thumbnails {
+        config.save_thumbnails = value;
     }
     if let Some(value) = changes.magic_import_enabled {
         config.magic_import_enabled = value;
@@ -152,7 +156,7 @@ pub(super) fn load_legacy_config_json(app: &AppHandle) -> Option<AppConfig> {
 
 pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
     conn.query_row(
-        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions
+        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions, save_thumbnails
          FROM app_config
          WHERE id = 1",
         [],
@@ -168,6 +172,7 @@ pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<Ap
                 last_download_url: row.get(7)?,
                 notifications_enabled: row.get::<_, i64>(8)? != 0,
                 save_captions: row.get::<_, i64>(9)? != 0,
+                save_thumbnails: row.get::<_, i64>(10)? != 0,
             }))
         },
     )
@@ -195,6 +200,7 @@ pub(super) fn upsert_app_config_in_conn(
             last_download_url,
             notifications_enabled,
             save_captions,
+            save_thumbnails,
             created_at,
             updated_at
         ) VALUES (
@@ -209,6 +215,7 @@ pub(super) fn upsert_app_config_in_conn(
             ?8,
             ?9,
             ?10,
+            ?11,
             datetime('now'),
             datetime('now')
         )
@@ -223,6 +230,7 @@ pub(super) fn upsert_app_config_in_conn(
             last_download_url = excluded.last_download_url,
             notifications_enabled = excluded.notifications_enabled,
             save_captions = excluded.save_captions,
+            save_thumbnails = excluded.save_thumbnails,
             updated_at = datetime('now')",
         params![
             config.yt_dlp_path,
@@ -243,6 +251,7 @@ pub(super) fn upsert_app_config_in_conn(
             config.last_download_url,
             config.notifications_enabled,
             config.save_captions,
+            config.save_thumbnails,
         ],
     )?;
     Ok(())

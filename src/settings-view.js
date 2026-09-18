@@ -113,6 +113,7 @@ export const createSettingsView = ({ els, invoke, appendLog, normalizePresetKey,
             config = await invoke('get_config');
             els.notificationsEnabled.checked = config.notifications_enabled ?? false;
             els.saveCaptions.checked = config.save_captions ?? false;
+            els.saveThumbnails.checked = config.save_thumbnails ?? false;
             els.outputDir.value = config.default_output_dir || '';
             els.ytDlpPath.value = config.yt_dlp_path || '';
             els.fasterWhisperModel.value = normalizeFasterWhisperModel(config.faster_whisper_model);
@@ -216,6 +217,9 @@ export const createSettingsView = ({ els, invoke, appendLog, normalizePresetKey,
         });
         els.saveCaptions.addEventListener('change', () => {
             void persistCaptionSetting();
+        });
+        els.saveThumbnails.addEventListener('change', () => {
+            void saveSettings({ save_thumbnails: els.saveThumbnails.checked });
         });
         els.cutAtTimestampEnabled.addEventListener('change', () => {
             void saveSettings({ cut_at_timestamp_enabled: els.cutAtTimestampEnabled.checked });

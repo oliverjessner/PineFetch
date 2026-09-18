@@ -871,7 +871,10 @@ pub(super) fn resolve_bundled_ffmpeg_location(app: &AppHandle) -> Option<String>
         "resources/ffmpeg-runtime/bin",
         "resources/ffmpeg-runtime",
     ] {
-        if let Some(path) = app.path_resolver().resolve_resource(relative) {
+        if let Ok(path) = app
+            .path()
+            .resolve(relative, tauri::path::BaseDirectory::Resource)
+        {
             if let Some(location) = normalize_ffmpeg_location(&path) {
                 return Some(location);
             }
@@ -941,7 +944,10 @@ pub(super) fn resolve_bundled_python(app: &AppHandle) -> Option<String> {
     ];
 
     for relative in candidates {
-        if let Some(path) = app.path_resolver().resolve_resource(relative) {
+        if let Ok(path) = app
+            .path()
+            .resolve(relative, tauri::path::BaseDirectory::Resource)
+        {
             if path.exists() {
                 return Some(path.to_string_lossy().to_string());
             }
@@ -962,7 +968,10 @@ pub(super) fn resolve_bundled_deno(app: &AppHandle) -> Option<String> {
     let candidates = vec!["deno-runtime/bin/deno", "resources/deno-runtime/bin/deno"];
 
     for relative in candidates {
-        if let Some(path) = app.path_resolver().resolve_resource(relative) {
+        if let Ok(path) = app
+            .path()
+            .resolve(relative, tauri::path::BaseDirectory::Resource)
+        {
             if path.exists() {
                 return Some(path.to_string_lossy().to_string());
             }

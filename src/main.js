@@ -4,9 +4,8 @@ import { createHistoryView } from './history-view.js';
 import { detectPlatform, extractUrlStartTimestamp, isValidHttpUrl, normalizeTxtImportUrl, parseTxtImportLinks, resolveYouTubeThumbnail } from './url-utils.js';
 
 const tauriGlobal = window.__TAURI__;
-const invoke = tauriGlobal?.tauri?.invoke;
+const invoke = tauriGlobal?.core?.invoke;
 const listen = tauriGlobal?.event?.listen;
-const shellOpen = tauriGlobal?.shell?.open;
 const state = Object.seal({
     jobs: new Map(),
     queueIds: [],
@@ -978,7 +977,7 @@ const syncQueueStatus = async () => {
     }
 };
 
-const browserImport = createBrowserImportView({ els, invoke, shellOpen, appendLog, appendTextSpans });
+const browserImport = createBrowserImportView({ els, invoke, appendLog, appendTextSpans });
 const {
     applyLinkDumpServerStatus,
     syncLinkDumpOverview,

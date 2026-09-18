@@ -272,7 +272,9 @@ struct Request {
 }
 
 fn endpoint_path(config: &tauri::Config) -> Result<PathBuf, String> {
-    let dir = tauri::api::path::app_data_dir(config).ok_or("App data directory unavailable")?;
+    let dir = dirs::data_dir()
+        .ok_or("App data directory unavailable")?
+        .join(&config.identifier);
     Ok(dir.join("cli-endpoint.json"))
 }
 

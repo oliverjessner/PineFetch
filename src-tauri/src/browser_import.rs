@@ -271,7 +271,7 @@ pub(super) fn snapshot_link_dump_server_status(state: &AppState) -> LinkDumpServ
 }
 
 pub(super) fn emit_link_dump_server_status(app: &AppHandle, state: &AppState) {
-    let _ = app.emit_all(
+    let _ = app.emit(
         "link-dump:server-status",
         snapshot_link_dump_server_status(state),
     );

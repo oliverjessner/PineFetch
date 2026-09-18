@@ -1,59 +1,37 @@
 {
+    "productName": "PineFetch",
+    "mainBinaryName": "PineFetch",
+    "version": "2.0.0",
+    "identifier": "com.pinefetch.app",
     "build": {
         "beforeBuildCommand": "",
         "beforeDevCommand": "node scripts/dev-server.mjs",
-        "devPath": "http://127.0.0.1:1420",
-        "distDir": "../src",
-        "withGlobalTauri": true
+        "devUrl": "http://127.0.0.1:1420",
+        "frontendDist": "../src"
     },
-    "package": {
-        "productName": "PineFetch",
-        "version": "2.0.0"
-    },
-    "tauri": {
-        "allowlist": {
-            "all": false,
-            "clipboard": {
-                "all": false,
-                "readText": true,
-                "writeText": false
-            },
-            "dialog": {
-                "all": false,
-                "open": true,
-                "save": false,
-                "message": false,
-                "ask": false,
-                "confirm": false
-            },
-            "shell": {
-                "all": false,
-                "execute": false,
-                "sidecar": false,
-                "open": "^(?:/[^\\u0000]*|[A-Za-z]:\\\\[^\\u0000]*|\\\\\\\\[^\\u0000]+|https://github\\.com/oliverjessner/PineFetch-Link-Dump/?$)$",
-                "scope": []
-            }
-        },
-        "bundle": {
-            "identifier": "com.pinefetch.app",
-            "active": true,
-            "targets": "all",
-            "copyright": "Copyright (c) 2026 Oliver Jessner - https://oliverjessner.at\nMIT License",
-            "resources": ["resources/whisper-runtime", "resources/ffmpeg-runtime", "resources/deno-runtime", "icons/icon.png"],
-            "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"]
-        },
+    "app": {
+        "withGlobalTauri": true,
         "windows": [
             {
+                "label": "main",
                 "title": "PineFetch",
                 "width": 1400,
                 "height": 960,
                 "minWidth": 1000,
                 "minHeight": 960,
-                "resizable": true
+                "resizable": true,
+                "useHttpsScheme": true
             }
         ],
         "security": {
             "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data: asset: http://asset.localhost; connect-src 'self' https://api.github.com; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
         }
+    },
+    "bundle": {
+        "active": true,
+        "targets": "all",
+        "copyright": "Copyright (c) 2026 Oliver Jessner - https://oliverjessner.at\nMIT License",
+        "resources": ["resources/whisper-runtime", "resources/ffmpeg-runtime", "resources/deno-runtime", "icons/icon.png"],
+        "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"]
     }
 }

@@ -364,7 +364,7 @@ pub(super) fn snapshot_queue_status(state: &AppState) -> Result<QueueStatus, Str
 
 pub(super) fn emit_queue_status(app: &AppHandle, state: &AppState) {
     if let Ok(status) = snapshot_queue_status(state) {
-        let _ = app.emit_all("queue:status", status);
+        let _ = app.emit("queue:status", status);
     }
 }
 
@@ -423,8 +423,9 @@ pub(super) fn emit_history_warning(app: &AppHandle, job_id: &str, warning: &str)
 
 pub(super) fn show_queue_notification(app: &AppHandle, body: &str) -> Result<(), String> {
     let icon = app
-        .path_resolver()
-        .resolve_resource("icons/icon.png")
+        .path()
+        .resolve("icons/icon.png", tauri::path::BaseDirectory::Resource)
+        .ok()
         .filter(|path| path.is_file())
         .ok_or("Bundled notification icon unavailable")?;
     let icon = icon.to_string_lossy();
@@ -435,7 +436,7 @@ pub(super) fn show_queue_notification(app: &AppHandle, body: &str) -> Result<(),
         // Tauri's notification wrapper ignores custom icons on macOS. Use the
         // native app_icon option, retaining Tauri's delivery identity in dev.
         let identifier = if cfg!(feature = "custom-protocol") {
-            app.config().tauri.bundle.identifier.clone()
+            app.config().identifier.clone()
         } else {
             "com.apple.Terminal".to_string()
         };
@@ -457,10 +458,12 @@ pub(super) fn show_queue_notification(app: &AppHandle, body: &str) -> Result<(),
 
     #[cfg(not(target_os = "macos"))]
     {
-        tauri::api::notification::Notification::new(&app.config().tauri.bundle.identifier)
+        use tauri_plugin_notification::NotificationExt;
+        app.notification()
+            .builder()
             .title(title)
             .body(body)
-            .icon(icon.as_ref())
+            .icon(icon.to_string())
             .show()
             .map_err(|err| err.to_string())
     }
@@ -756,18 +759,18 @@ pub(super) fn next_worker_job(state: &AppState) -> Result<(Option<DownloadJob>, 
 
 pub(super) fn emit_queue(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
-    app.emit_all("queue:update", queue.clone())
+    app.emit("queue:update", queue.clone())
         .map_err(|e| format!("Emit queue failed: {e}"))
 }
 
 pub(super) fn emit_progress(app: &AppHandle, progress: DownloadProgress) {
-    let _ = app.emit_all("download:progress", progress);
+    let _ = app.emit("download:progress", progress);
 }
 
 pub(super) fn emit_state(app: &AppHandle, state: DownloadStateEvent) {
-    let _ = app.emit_all("download:state", state);
+    let _ = app.emit("download:state", state);
 }
 
 pub(super) fn emit_log(app: &AppHandle, log: LogEvent) {
-    let _ = app.emit_all("download:log", log);
+    let _ = app.emit("download:log", log);
 }

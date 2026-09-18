@@ -21,21 +21,16 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
 const tauriConfigRaw = await readFile(tauriConfigPath, 'utf8');
 const tauriConfig = JSON.parse(tauriConfigRaw);
 
-if (tauriConfig.package?.version === version) {
+if (tauriConfig.version === version) {
     console.log(`[version] Tauri already uses ${version}`);
 } else {
-    const versionPattern = /("package"\s*:\s*\{[\s\S]*?"version"\s*:\s*")([^"]*)(")/;
-    const match = tauriConfigRaw.match(versionPattern);
-    if (!match) {
-        throw new Error('Could not find package.version in tauri.conf.json');
+    if (typeof tauriConfig.version !== 'string') {
+        throw new Error('Could not find version in tauri.conf.json');
     }
 
-    const previousVersion = match[2] || '(missing)';
-    const updatedConfig = tauriConfigRaw.replace(
-        versionPattern,
-        (_match, prefix, _currentVersion, suffix) => `${prefix}${version}${suffix}`
-    );
-    await writeFile(tauriConfigPath, updatedConfig, 'utf8');
+    const previousVersion = tauriConfig.version || '(missing)';
+    tauriConfig.version = version;
+    await writeFile(tauriConfigPath, `${JSON.stringify(tauriConfig, null, 4)}\n`, 'utf8');
     console.log(`[version] Synced Tauri ${previousVersion} -> ${version}`);
 }
 

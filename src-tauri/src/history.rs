@@ -1,7 +1,10 @@
 use super::*;
 
 pub(super) fn legacy_history_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = tauri::api::path::app_data_dir(&app.config()).ok_or("Data directory unavailable")?;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "Data directory unavailable")?;
     fs::create_dir_all(&dir).map_err(|e| format!("Data dir create failed: {e}"))?;
     Ok(dir.join("history.json"))
 }

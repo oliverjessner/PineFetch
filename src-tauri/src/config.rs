@@ -130,8 +130,10 @@ pub(super) fn cache_last_download_url(state: State<AppState>, url: String) -> Re
 }
 
 pub(super) fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir =
-        tauri::api::path::app_config_dir(&app.config()).ok_or("Config directory unavailable")?;
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|_| "Config directory unavailable")?;
     fs::create_dir_all(&dir).map_err(|e| format!("Config dir create failed: {e}"))?;
     Ok(dir.join("config.json"))
 }

@@ -1,4 +1,4 @@
-export const createBrowserImportView = ({ els, invoke, shellOpen, appendLog, appendTextSpans }) => {
+export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpans }) => {
     const linkDumpExtensionRepoUrl = 'https://github.com/oliverjessner/PineFetch-Link-Dump';
     const state = { linkDump: null, generatedLinkDumpSecret: null };
     let linkDumpSyncPromise = null;
@@ -170,9 +170,9 @@ export const createBrowserImportView = ({ els, invoke, shellOpen, appendLog, app
     const openLinkDumpExtensionRepo = async event => {
         event.preventDefault();
         const url = els.linkDumpExtensionRepoLink?.href || linkDumpExtensionRepoUrl;
-        if (shellOpen) {
+        if (invoke) {
             try {
-                await shellOpen(url);
+                await invoke('open_external_url', { url });
                 return;
             } catch (err) {
                 appendLog(`[link-dump] Could not open extension repository: ${err}`, true);

@@ -40,7 +40,10 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, ClipboardManager, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
 use uuid::Uuid;
 
 #[cfg(unix)]
@@ -513,10 +516,13 @@ fn get_download_presets() -> Vec<DownloadPreset> {
 }
 
 #[tauri::command]
-async fn pick_output_dir() -> Result<Option<String>, String> {
+async fn pick_output_dir(app: AppHandle) -> Result<Option<String>, String> {
     let (tx, rx) = std::sync::mpsc::channel();
-    tauri::api::dialog::FileDialogBuilder::new().pick_folder(move |path| {
-        let _ = tx.send(path.map(|p| p.to_string_lossy().to_string()));
+    app.dialog().file().pick_folder(move |path| {
+        let _ = tx.send(
+            path.and_then(|p| p.into_path().ok())
+                .map(|p| p.to_string_lossy().to_string()),
+        );
     });
     tauri::async_runtime::spawn_blocking(move || rx.recv())
         .await
@@ -525,12 +531,13 @@ async fn pick_output_dir() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn pick_txt_file() -> Result<Option<TxtImportFile>, String> {
+async fn pick_txt_file(app: AppHandle) -> Result<Option<TxtImportFile>, String> {
     let (tx, rx) = std::sync::mpsc::channel();
-    tauri::api::dialog::FileDialogBuilder::new()
+    app.dialog()
+        .file()
         .add_filter("Text", &["txt"])
         .pick_file(move |path| {
-            let _ = tx.send(path);
+            let _ = tx.send(path.and_then(|p| p.into_path().ok()));
         });
 
     let selected_path = tauri::async_runtime::spawn_blocking(move || rx.recv())
@@ -555,7 +562,8 @@ async fn pick_txt_file() -> Result<Option<TxtImportFile>, String> {
 fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
     let path =
         canonical_existing_local_path(&path)?.ok_or_else(|| "Path does not exist".to_string())?;
-    tauri::api::shell::open(&app.shell_scope(), path, None)
+    app.opener()
+        .open_path(path, None::<&str>)
         .map_err(|e| format!("Open folder failed: {e}"))
 }
 
@@ -564,15 +572,29 @@ fn open_file_path(app: AppHandle, path: String) -> Result<bool, String> {
     let Some(path) = canonical_existing_local_path(&path)? else {
         return Ok(false);
     };
-    tauri::api::shell::open(&app.shell_scope(), path, None)
+    app.opener()
+        .open_path(path, None::<&str>)
         .map_err(|e| format!("Open file failed: {e}"))?;
     Ok(true)
 }
 
 #[tauri::command]
+fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    if url != "https://github.com/oliverjessner/PineFetch-Link-Dump"
+        && url != "https://github.com/oliverjessner/PineFetch-Link-Dump/"
+    {
+        return Err("URL is not allowed".to_string());
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("Open URL failed: {e}"))
+}
+
+#[tauri::command]
 fn read_clipboard_text(app: AppHandle) -> Result<Option<String>, String> {
-    app.clipboard_manager()
+    app.clipboard()
         .read_text()
+        .map(Some)
         .map_err(|e| format!("Clipboard read failed: {e}"))
 }
 
@@ -1137,7 +1159,7 @@ fn add_history_entry_on_success(
     };
 
     insert_history_entry_in_db(state, &entry)?;
-    let _ = app.emit_all("history:changed", ());
+    let _ = app.emit("history:changed", ());
     Ok(history_entry_id)
 }
 
@@ -1376,7 +1398,10 @@ fn find_in_path(binary: &str) -> Option<String> {
 }
 
 fn link_dump_db_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = tauri::api::path::app_data_dir(&app.config()).ok_or("Data directory unavailable")?;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "Data directory unavailable")?;
     fs::create_dir_all(&dir).map_err(|e| format!("Data dir create failed: {e}"))?;
     Ok(dir.join("pinefetch.sqlite"))
 }
@@ -1680,6 +1705,10 @@ fn main() {
         return;
     }
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let db = open_link_dump_db(&app.handle())?;
             migrate_legacy_config_json(&app.handle(), &db)?;
@@ -1703,6 +1732,7 @@ fn main() {
             pick_txt_file,
             open_folder,
             open_file_path,
+            open_external_url,
             read_clipboard_text,
             load_info,
             get_yt_dlp_installed_version,

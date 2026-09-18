@@ -103,6 +103,7 @@ const els = Object.seal({
     linkDumpExtensionRepoLink: document.getElementById('linkDumpExtensionRepoLink'),
     loadMoreHistoryBtn: document.getElementById('loadMoreHistoryBtn'),
     clearHistoryBtn: document.getElementById('clearHistoryBtn'),
+    historyActionStatus: document.getElementById('historyActionStatus'),
     queueContextMenu: document.getElementById('queueContextMenu'),
     queueContextDownloads: document.getElementById('queueContextDownloads'),
     queueContextCancelBtn: document.getElementById('queueContextCancelBtn'),

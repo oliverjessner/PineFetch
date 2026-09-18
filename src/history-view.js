@@ -7,6 +7,7 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
         historyDirty: true,
         historyRevision: 0,
         historyQuery: '',
+        historyClearing: false,
     });
     const historyPageSize = 20;
     const historySearchDelayMs = 250;
@@ -63,12 +64,19 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
     const setHistoryLoading = isLoading => {
         state.historyLoading = isLoading;
         els.loadMoreHistoryBtn.disabled = isLoading;
-        els.clearHistoryBtn.disabled = isLoading;
+        els.clearHistoryBtn.disabled = isLoading || state.historyClearing;
         els.loadMoreHistoryBtn.textContent = isLoading ? 'Loading...' : 'Load more';
     };
 
     const updateHistoryActions = () => {
         els.loadMoreHistoryBtn.hidden = !state.historyHasMore;
+    };
+
+    const setHistoryActionStatus = (message, isError = false) => {
+        els.historyActionStatus.textContent = message;
+        els.historyActionStatus.hidden = !message;
+        els.historyActionStatus.classList.toggle('pf-status-error', isError);
+        els.historyActionStatus.classList.toggle('pf-status-success', Boolean(message && !isError));
     };
 
     const formatHistorySource = source => {
@@ -272,9 +280,12 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
             }, historySearchDelayMs);
         });
         els.clearHistoryBtn.addEventListener('click', async () => {
-            if (!invoke) return;
-            if (!window.confirm('Clear the entire history? Downloaded files will stay on disk.')) return;
+            if (!invoke || state.historyClearing) return;
+            if (!window.confirm('Delete all history entries and saved transcripts? This cannot be undone. Downloaded files will stay on disk.')) return;
 
+            state.historyClearing = true;
+            els.clearHistoryBtn.disabled = true;
+            setHistoryActionStatus('Deleting history...');
             try {
                 await invoke('clear_history');
                 if (historySearchTimer !== null) clearTimeout(historySearchTimer);
@@ -283,8 +294,13 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
                 state.historyQuery = '';
                 invalidateHistoryCache();
                 await renderHistory({ force: true });
+                setHistoryActionStatus('History deleted. Downloaded files remain on disk.');
             } catch (err) {
+                setHistoryActionStatus(`Could not delete history: ${err}`, true);
                 appendLog(`[history] ${err}`, true);
+            } finally {
+                state.historyClearing = false;
+                els.clearHistoryBtn.disabled = state.historyLoading;
             }
         });
     };

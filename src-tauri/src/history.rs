@@ -38,6 +38,7 @@ pub(super) fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
         .or_else(|| source_from_url(&entry.url));
     entry.platform = trim_optional_string(entry.platform).or_else(|| detect_platform(&entry.url));
     entry.output_path = trim_optional_string(entry.output_path);
+    entry.pinefetch_version = trim_optional_string(entry.pinefetch_version);
     if entry.title.is_none() {
         entry.title = title_from_filename(entry.filename.as_deref());
     }
@@ -95,7 +96,7 @@ pub(super) fn search_history_page_from_db(
         .map_err(|e| format!("History read failed: {e}"))?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, medium, source, platform, output_path, created_at, completed_at
+            "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, medium, source, platform, output_path, pinefetch_version, created_at, completed_at
              FROM history_entries
              WHERE (?1 IS NULL OR title LIKE ?1 ESCAPE '\\' COLLATE NOCASE
                 OR source LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
@@ -108,8 +109,8 @@ pub(super) fn search_history_page_from_db(
         .query_map(
             params![pattern, i64::from(limit), i64::from(offset)],
             |row| {
-                let created_at: i64 = row.get(14)?;
-                let completed_at: Option<i64> = row.get(15)?;
+                let created_at: i64 = row.get(15)?;
+                let completed_at: Option<i64> = row.get(16)?;
                 Ok(HistoryEntry {
                     id: row.get(0)?,
                     url: row.get(1)?,
@@ -125,6 +126,7 @@ pub(super) fn search_history_page_from_db(
                     source: row.get(11)?,
                     platform: row.get(12)?,
                     output_path: row.get(13)?,
+                    pinefetch_version: row.get(14)?,
                     created_at: i64_to_millis(created_at),
                     completed_at: optional_i64_to_millis(completed_at),
                 })
@@ -238,9 +240,10 @@ pub(super) fn insert_history_entry_in_db(
             source,
             platform,
             output_path,
+            pinefetch_version,
             created_at,
             completed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
         ON CONFLICT(id) DO UPDATE SET
             url = excluded.url,
             title = excluded.title,
@@ -255,6 +258,7 @@ pub(super) fn insert_history_entry_in_db(
             source = excluded.source,
             platform = excluded.platform,
             output_path = excluded.output_path,
+            pinefetch_version = excluded.pinefetch_version,
             created_at = excluded.created_at,
             completed_at = excluded.completed_at",
         params![
@@ -272,6 +276,7 @@ pub(super) fn insert_history_entry_in_db(
             entry.source,
             entry.platform,
             entry.output_path,
+            entry.pinefetch_version,
             millis_to_i64(entry.created_at),
             entry.completed_at.map(millis_to_i64),
         ],

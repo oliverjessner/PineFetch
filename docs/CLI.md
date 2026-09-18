@@ -20,22 +20,6 @@ alias PineFetch='/Applications/PineFetch.app/Contents/MacOS/PineFetch'
 
 Open a new terminal after saving the alias. Adjust the path if the app is installed elsewhere.
 
-### Windows
-
-Run `PineFetch.exe` from its installation directory. In PowerShell:
-
-```powershell
-.\PineFetch.exe --help
-```
-
-For an executable elsewhere, use its full path:
-
-```powershell
-& 'C:\path\to\PineFetch.exe' stats
-```
-
-Add the installation directory to your user `PATH` to use `PineFetch` from any terminal.
-
 ## Add a download
 
 ```bash

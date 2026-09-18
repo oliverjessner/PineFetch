@@ -239,6 +239,8 @@ struct HistoryEntry {
     platform: Option<String>,
     #[serde(default)]
     output_path: Option<String>,
+    #[serde(default)]
+    pinefetch_version: Option<String>,
     created_at: u64,
     #[serde(default)]
     completed_at: Option<u64>,
@@ -1167,6 +1169,7 @@ fn add_history_entry_on_success(
         source: source_from_url(&job.url),
         platform: detect_platform(&job.url),
         output_path: output_path.map(|s| s.to_string()),
+        pinefetch_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         created_at: now,
         completed_at: Some(now),
     };
@@ -1524,6 +1527,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             source TEXT,
             platform TEXT,
             output_path TEXT,
+            pinefetch_version TEXT,
             created_at INTEGER NOT NULL,
             completed_at INTEGER
         );
@@ -1566,6 +1570,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_history_entries_text_column(conn, "uploader")?;
     ensure_history_entries_text_column(conn, "medium")?;
     ensure_history_entries_text_column(conn, "source")?;
+    ensure_history_entries_text_column(conn, "pinefetch_version")?;
     backfill_history_sources(conn)?;
     Ok(())
 }
@@ -2681,7 +2686,7 @@ mod tests {
 
             assert_eq!(column_count, 1, "missing INTEGER column {column_name}");
         }
-        for column_name in ["uploader", "medium", "source"] {
+        for column_name in ["uploader", "medium", "source", "pinefetch_version"] {
             let column_count: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM pragma_table_info('history_entries') WHERE name = ?1 AND type = 'TEXT'",
@@ -2701,6 +2706,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(source.as_deref(), Some("linkedin"));
+        let pinefetch_version: Option<String> = conn
+            .query_row(
+                "SELECT pinefetch_version FROM history_entries WHERE id = 'legacy-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pinefetch_version, None);
     }
 
     #[test]
@@ -2839,6 +2852,7 @@ mod tests {
             source: Some("youtube".to_string()),
             platform: Some("youtube".to_string()),
             output_path: Some("/tmp/Example title - Uploader - abc123.mp4".to_string()),
+            pinefetch_version: Some("2.2.0".to_string()),
             created_at: 1_700_000_000_000,
             completed_at: Some(1_700_000_000_100),
         };
@@ -2848,6 +2862,7 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, "history-1");
+        assert_eq!(entries[0].pinefetch_version.as_deref(), Some("2.2.0"));
         assert_eq!(entries[0].title.as_deref(), Some("Example title"));
         assert_eq!(entries[0].uploader.as_deref(), Some("Example uploader"));
         assert_eq!(
@@ -2935,6 +2950,7 @@ mod tests {
                 source: Some("instagram".to_string()),
                 platform: Some("instagram".to_string()),
                 output_path: None,
+                pinefetch_version: None,
                 created_at: 1,
                 completed_at: Some(2),
             },
@@ -3136,6 +3152,7 @@ mod tests {
                 source: Some("example".to_string()),
                 platform: Some("example".to_string()),
                 output_path: None,
+                pinefetch_version: None,
                 created_at: timestamp,
                 completed_at: Some(timestamp),
             };
@@ -3185,6 +3202,7 @@ mod tests {
                     }),
                     platform: None,
                     output_path: None,
+                    pinefetch_version: None,
                     created_at: index,
                     completed_at: None,
                 },
@@ -3228,6 +3246,7 @@ mod tests {
                     source: None,
                     platform: None,
                     output_path: None,
+                    pinefetch_version: None,
                     created_at: 1,
                     completed_at: None,
                 },

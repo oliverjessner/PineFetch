@@ -4,7 +4,7 @@ A local-first desktop app for macOS and Windows that wraps **yt-dlp** with a cle
 
 > PineFetch is designed for content you **own** or where you have **explicit permission** to download. Please respect platform Terms of Service and local laws.
 
-![PineFetch download screen](src/images/mockups/download.png)
+![PineFetch download screen](src/images/mockups/download.webp)
 
 ## Development and builds
 
@@ -181,7 +181,7 @@ Open **Link Dump** and create a connection secret under **Connections**. Copy it
 YouTube, TikTok, and Instagram links sent through Link Dump are queued with the currently selected PineFetch preset.
 Supported variants include YouTube watch, short, Shorts, Live, Embed, and `/v/` URLs; TikTok `/@creator/video/`, `vm.`, `vt.`, and `/t/` URLs; and Instagram post, Reel, and TV URLs.
 
-![PineFetch Link Dump screen](src/images/mockups/link_dump.png)
+![PineFetch Browser Import screen](src/images/mockups/browser_import.webp)
 
 Single link:
 
@@ -229,7 +229,7 @@ The Settings screen contains the output folder, `yt-dlp` path, **Magic import**,
 
 **Magic import** reads a supported URL from the clipboard when the PineFetch logo is clicked while the URL field is empty. **Cut at timestamp** starts supported downloads at timestamps embedded in their URLs.
 
-![PineFetch settings screen](src/images/mockups/settings.png)
+![PineFetch settings screen](src/images/mockups/settings.webp)
 
 History keeps successful downloads in the local SQLite database. Each entry includes the source URL, source service, uploader, medium (`video`, `audio`, or `transcript`), title, filename, thumbnail, platform, output path, upload date, completion time, duration in seconds, and final file size in bytes when available. The source service is derived locally from the URL hostname by removing the protocol, subdomain, and TLD; known short domains such as `youtu.be` are normalized to their canonical service name. Sources are also backfilled from the URLs of existing History entries during migration.
 
@@ -244,7 +244,7 @@ Removing an entry or clearing History immediately updates these totals. Existing
 
 History loads 20 entries per page. Use **Load more** to append the next page; previously loaded entries remain cached while switching between views.
 
-![PineFetch history screen](src/images/mockups/history.png)
+![PineFetch history screen](src/images/mockups/history.webp)
 
 ## Credits
 

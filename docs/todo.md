@@ -2,3 +2,4 @@
 - history visual fix for cards
 - better search
 - view captions in history
+- md5 for videos

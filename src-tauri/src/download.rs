@@ -34,7 +34,9 @@ pub(super) fn run_download_job(
 
     if save_captions {
         args.push("--print".to_string());
-        args.push("after_move:pinefetch_caption:%(.{filepath,description,alt_title,title})j".to_string());
+        args.push(
+            "after_move:pinefetch_caption:%(.{filepath,description,alt_title,title})j".to_string(),
+        );
     }
 
     if job.save_thumbnails {
@@ -341,7 +343,10 @@ pub(super) fn parse_caption_line(line: &str, reddit: bool) -> Option<(String, St
     if path.is_empty() {
         return None;
     }
-    let description = value.get("description").and_then(|item| item.as_str()).unwrap_or("");
+    let description = value
+        .get("description")
+        .and_then(|item| item.as_str())
+        .unwrap_or("");
     if reddit {
         let title = value
             .get("alt_title")

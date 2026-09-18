@@ -1999,7 +1999,7 @@ mod tests {
                 "description": "Grüße aus Wien 👋\n#urlaub"
             })
         );
-        let (path, caption) = parse_caption_line(&line).unwrap();
+        let (path, caption) = parse_caption_line(&line, false).unwrap();
         let caption_path = write_caption_sidecar(Path::new(&path), &caption).unwrap();
 
         assert_eq!(caption_path, directory.join("post.caption.txt"));
@@ -2008,15 +2008,35 @@ mod tests {
             "Grüße aus Wien 👋\n#urlaub"
         );
         assert!(parse_yt_dlp_filepath(&line).is_none());
-        assert!(
-            parse_caption_line("pinefetch_caption:{\"filepath\":\"x\",\"description\":\"\"}")
-                .is_none()
-        );
+        assert!(parse_caption_line(
+            "pinefetch_caption:{\"filepath\":\"x\",\"description\":\"\"}",
+            false
+        )
+        .is_none());
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
-    fn captures_post_descriptions_only_for_enabled_caption_platforms() {
+    fn saves_reddit_title_and_optional_selftext_as_caption() {
+        let with_body = r#"pinefetch_caption:{"filepath":"post.mp4","title":"Short title","alt_title":"Full Reddit title","description":"First line\nSecond line"}"#;
+        assert_eq!(
+            parse_caption_line(with_body, true),
+            Some((
+                "post.mp4".to_string(),
+                "Full Reddit title\n\nFirst line\nSecond line".to_string()
+            ))
+        );
+
+        let title_only = r#"pinefetch_caption:{"filepath":"post.mp4","title":"Reddit title","description":null}"#;
+        assert_eq!(
+            parse_caption_line(title_only, true),
+            Some(("post.mp4".to_string(), "Reddit title".to_string()))
+        );
+        assert_eq!(parse_caption_line(title_only, false), None);
+    }
+
+    #[test]
+    fn captures_post_text_only_for_enabled_caption_platforms() {
         for (url, platform) in [
             ("https://www.youtube.com/watch?v=abc123", "youtube"),
             ("https://www.tiktok.com/@user/video/123456789", "tiktok"),
@@ -2025,12 +2045,25 @@ mod tests {
             ("https://fb.watch/ABC123/", "facebook"),
             ("https://x.com/creator/status/123456789", "x"),
             ("https://twitter.com/creator/status/123456789", "x"),
+            (
+                "https://www.reddit.com/r/videos/comments/abc123/post/",
+                "reddit",
+            ),
+            ("https://old.reddit.com/comments/abc123", "reddit"),
+            ("https://redd.it/abc123", "reddit"),
         ] {
             assert_eq!(caption_platform(url, true).as_deref(), Some(platform));
             assert_eq!(caption_platform(url, false), None);
         }
         assert_eq!(
             caption_platform("https://www.twitch.tv/videos/123456", true),
+            None
+        );
+        assert_eq!(
+            caption_platform(
+                "https://reddit.com.example.org/r/videos/comments/abc123",
+                true
+            ),
             None
         );
     }

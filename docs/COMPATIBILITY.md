@@ -20,6 +20,6 @@ Here are our first class citizen listed:
 | VK                 | `vk.com/video...`               | No         |
 | Tumblr             | `tumblr.com/...`                | No         |
 
-- \* Post captions are save when **Save post captions** is enabled in the settings and the video has a description
+- \* Captions are saved when **Save post captions** is enabled and post text is available. Reddit uses the title and optional self-text.
 
 check [PineFetch-Link-Dump](https://github.com/oliverjessner/PineFetch-Link-Dump) to see which platforms are supported by import text and sending urls via browser

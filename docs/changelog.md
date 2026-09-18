@@ -2,10 +2,10 @@
 
 - captions are stored in database
 - compatibility list for download able videos / caption
-- added captions for tiktok, facebook, YouTube, TikTok
+- added captions for facebook, YouTube, TikTok
 - downloadable thumbnails, via setting, default false,
-- account view
 - remove old legacy sqlite table
+- account view
 
 # 2.0.0
 

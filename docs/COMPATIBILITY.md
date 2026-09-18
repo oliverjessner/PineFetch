@@ -18,6 +18,4 @@ Paste a video link into the **URL** field on PineFetch's Download screen. PineFe
 | LinkedIn           | `linkedin.com/posts/...`                                          | Via yt-dlp     | No                                                                          |
 | VK                 | `vk.com/video...`                                                 | Via yt-dlp     | No                                                                          |
 | 9GAG               | `9gag.com/gag/...`                                                | Via yt-dlp     | No                                                                          |
-| Kick               | `kick.com/...`                                                    | Via yt-dlp     | No                                                                          |
-| Rumble             | `rumble.com/...`                                                  | Via yt-dlp     | No                                                                          |
 | Vimeo              | `vimeo.com/...`                                                   | Via yt-dlp     | No                                                                          |

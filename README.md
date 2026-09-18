@@ -25,6 +25,8 @@ No account. No cloud. Your files stay on your machine.
 
 PineFetch is intentionally local-first. Downloads, transcripts and history stay on your computer.
 
+See the [video and caption compatibility list](docs/COMPATIBILITY.md) for accepted links and caption behavior.
+
 ## Install
 
 ### macOS

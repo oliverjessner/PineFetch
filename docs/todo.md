@@ -1,3 +1,4 @@
 - parity with link-dump for most used platforms
 - history visual fix for cards
 - better search
+- view captions in history

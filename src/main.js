@@ -420,7 +420,9 @@ const setActiveView = view => {
     const isLinkDump = view === 'linkDump';
     const isSettings = view === 'settings';
     state.activeView = view;
-    els.settingsView.closest('.pf-pinefetch-split').classList.toggle('pf-settings-active', isSettings);
+    const split = els.settingsView.closest('.pf-pinefetch-split');
+    split.classList.toggle('pf-settings-active', isSettings);
+    split.classList.toggle('pf-history-active', isHistory);
     settingsLogRenderReady = false;
     const activationId = ++viewActivationId;
     const runAfterViewPaint = callback => {
@@ -437,7 +439,7 @@ const setActiveView = view => {
     els.linkDumpView.hidden = !isLinkDump;
     els.queueProgressView.hidden = !isDownload || state.queueCollapsed;
     els.queueCollapseBtn.hidden = !isDownload;
-    document.querySelector('.pf-pinefetch-split')?.classList.toggle('pf-queue-collapsed', isDownload && state.queueCollapsed);
+    split.classList.toggle('pf-queue-collapsed', isDownload && state.queueCollapsed);
     els.historySummaryView.hidden = !isHistory;
     els.linkDumpSideView.hidden = !isLinkDump;
     els.downloadView.classList.toggle('pf-is-active', isDownload);
@@ -465,7 +467,7 @@ const setActiveView = view => {
         runAfterViewPaint(flushQueueRender);
     } else if (isHistory) {
         els.leftPanelTitle.textContent = 'History';
-        els.rightPanelTitle.textContent = 'History';
+        els.rightPanelTitle.textContent = 'Statistics';
         els.queueBadge.style.display = 'none';
         els.infoBadge.style.display = 'none';
         runAfterViewPaint(() => {

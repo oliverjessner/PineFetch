@@ -252,33 +252,15 @@ pub(super) fn save_config_to_db(state: &AppState, config: &AppConfig) -> Result<
     upsert_app_config_in_conn(&conn, config).map_err(|e| format!("Config write failed: {e}"))
 }
 
-pub(super) fn get_app_meta_value(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
-        "SELECT value FROM app_meta WHERE key = ?1",
-        params![key],
-        |row| row.get(0),
-    )
-    .optional()
-}
-
-pub(super) fn set_app_meta_value(
-    conn: &Connection,
-    key: &str,
-    value: &str,
-) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![key, value],
-    )?;
-    Ok(())
-}
-
 pub(super) fn migrate_legacy_config_json(app: &AppHandle, conn: &Connection) -> Result<(), String> {
-    let already_migrated = get_app_meta_value(conn, LEGACY_CONFIG_MIGRATION_KEY)
+    let already_migrated: bool = conn
+        .query_row(
+            "SELECT legacy_config_json_migrated FROM app_config WHERE id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
         .map_err(|e| format!("Config migration check failed: {e}"))?
-        .as_deref()
-        == Some("1");
+        != 0;
 
     if already_migrated {
         return Ok(());
@@ -289,8 +271,11 @@ pub(super) fn migrate_legacy_config_json(app: &AppHandle, conn: &Connection) -> 
             .map_err(|e| format!("Config migration failed: {e}"))?;
     }
 
-    set_app_meta_value(conn, LEGACY_CONFIG_MIGRATION_KEY, "1")
-        .map_err(|e| format!("Config migration marker failed: {e}"))?;
+    conn.execute(
+        "UPDATE app_config SET legacy_config_json_migrated = 1 WHERE id = 1",
+        [],
+    )
+    .map_err(|e| format!("Config migration marker failed: {e}"))?;
     Ok(())
 }
 

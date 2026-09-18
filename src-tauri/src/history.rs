@@ -223,7 +223,7 @@ pub(super) fn insert_history_entry_in_db(
     let entry = normalize_history_entry(entry.clone());
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
     conn.execute(
-        "INSERT OR REPLACE INTO history_entries (
+        "INSERT INTO history_entries (
             id,
             url,
             title,
@@ -240,7 +240,23 @@ pub(super) fn insert_history_entry_in_db(
             output_path,
             created_at,
             completed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+        ON CONFLICT(id) DO UPDATE SET
+            url = excluded.url,
+            title = excluded.title,
+            uploader = excluded.uploader,
+            filename = excluded.filename,
+            thumbnail = excluded.thumbnail,
+            upload_date = excluded.upload_date,
+            timestamp = excluded.timestamp,
+            duration_seconds = excluded.duration_seconds,
+            file_size_bytes = excluded.file_size_bytes,
+            medium = excluded.medium,
+            source = excluded.source,
+            platform = excluded.platform,
+            output_path = excluded.output_path,
+            created_at = excluded.created_at,
+            completed_at = excluded.completed_at",
         params![
             entry.id,
             entry.url,
@@ -261,6 +277,48 @@ pub(super) fn insert_history_entry_in_db(
         ],
     )
     .map_err(|e| format!("History insert failed: {e}"))?;
+    Ok(())
+}
+
+pub(super) fn insert_instagram_captions_in_db(
+    state: &AppState,
+    history_entry_id: &str,
+    captions: &[SavedInstagramCaption],
+) -> Result<(), String> {
+    if captions.is_empty() {
+        return Ok(());
+    }
+
+    let mut conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let transaction = conn
+        .transaction()
+        .map_err(|e| format!("Instagram caption transaction failed: {e}"))?;
+    {
+        let mut statement = transaction
+            .prepare(
+                "INSERT INTO captions (
+                    history_entry_id, media_path, caption_path, text, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                ON CONFLICT(history_entry_id, media_path) DO UPDATE SET
+                    caption_path = excluded.caption_path,
+                    text = excluded.text",
+            )
+            .map_err(|e| format!("Instagram caption insert failed: {e}"))?;
+        for caption in captions {
+            statement
+                .execute(params![
+                    history_entry_id,
+                    caption.media_path,
+                    caption.caption_path,
+                    caption.text,
+                    millis_to_i64(current_timestamp_millis()),
+                ])
+                .map_err(|e| format!("Instagram caption insert failed: {e}"))?;
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|e| format!("Instagram caption transaction failed: {e}"))?;
     Ok(())
 }
 

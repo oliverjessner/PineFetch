@@ -410,6 +410,14 @@ struct DownloadRunResult {
     output_path: Option<String>,
     error: Option<String>,
     info: Option<InfoResponse>,
+    captions: Vec<SavedInstagramCaption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SavedInstagramCaption {
+    pub(crate) media_path: String,
+    pub(crate) caption_path: String,
+    pub(crate) text: String,
 }
 
 #[derive(Debug)]
@@ -1456,6 +1464,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             magic_import_enabled INTEGER NOT NULL DEFAULT 1,
             cut_at_timestamp_enabled INTEGER NOT NULL DEFAULT 1,
             last_download_url TEXT,
+            legacy_config_json_migrated INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -1480,11 +1489,6 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             NULL,
             datetime('now'),
             datetime('now')
-        );
-
-        CREATE TABLE IF NOT EXISTS app_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS link_dump_secrets (
@@ -1526,6 +1530,16 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS captions (
+            history_entry_id TEXT NOT NULL,
+            media_path TEXT NOT NULL,
+            caption_path TEXT NOT NULL,
+            text TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY (history_entry_id, media_path),
+            FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_link_dump_secrets_active
             ON link_dump_secrets(revoked_at, deleted_at);
 
@@ -1538,6 +1552,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_app_config_faster_whisper_model_column(conn)?;
     ensure_app_config_download_video_with_transcript_column(conn)?;
     ensure_app_config_save_instagram_captions_column(conn)?;
+    ensure_app_config_legacy_migration_column(conn)?;
     ensure_history_entries_timestamp_column(conn)?;
     ensure_history_entries_duration_seconds_column(conn)?;
     ensure_history_entries_file_size_bytes_column(conn)?;
@@ -1606,6 +1621,51 @@ fn ensure_app_config_save_instagram_captions_column(conn: &Connection) -> rusqli
             "ALTER TABLE app_config ADD COLUMN save_instagram_captions INTEGER NOT NULL DEFAULT 0",
             [],
         )?;
+    }
+    Ok(())
+}
+
+fn ensure_app_config_legacy_migration_column(conn: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'legacy_config_json_migrated')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute(
+            "ALTER TABLE app_config ADD COLUMN legacy_config_json_migrated INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+
+    let already_migrated: i64 = conn.query_row(
+        "SELECT legacy_config_json_migrated FROM app_config WHERE id = 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if already_migrated != 0 {
+        return Ok(());
+    }
+
+    let has_legacy_meta: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_meta')",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_legacy_meta {
+        let migrated: Option<String> = conn
+            .query_row(
+                "SELECT value FROM app_meta WHERE key = ?1",
+                params![LEGACY_CONFIG_MIGRATION_KEY],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if migrated.as_deref() == Some("1") {
+            conn.execute(
+                "UPDATE app_config SET legacy_config_json_migrated = 1 WHERE id = 1",
+                [],
+            )?;
+        }
     }
     Ok(())
 }
@@ -2467,6 +2527,29 @@ mod tests {
     }
 
     #[test]
+    fn link_dump_migration_does_not_create_app_meta() {
+        let state = link_dump_test_state();
+        let conn = state.db.lock().unwrap();
+        let table_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_meta'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let migrated: i64 = conn
+            .query_row(
+                "SELECT legacy_config_json_migrated FROM app_config WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(table_count, 0);
+        assert_eq!(migrated, 0);
+    }
+
+    #[test]
     fn link_dump_migration_adds_history_metadata_columns_to_existing_table() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -2530,6 +2613,49 @@ mod tests {
     }
 
     #[test]
+    fn instagram_caption_migration_preserves_legacy_history_and_enforces_foreign_key() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE history_entries (
+                id TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                completed_at INTEGER
+            );
+            INSERT INTO history_entries (id, url, created_at)
+            VALUES ('legacy-instagram', 'https://www.instagram.com/p/example/', 1);",
+        )
+        .unwrap();
+
+        run_link_dump_migrations(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO captions (
+                history_entry_id, media_path, caption_path, text, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                "legacy-instagram",
+                "/tmp/legacy.mp4",
+                "/tmp/legacy.txt",
+                "Alte Beschreibung",
+                2,
+            ],
+        )
+        .unwrap();
+        assert!(conn
+            .execute(
+                "INSERT INTO captions (
+                    history_entry_id, media_path, caption_path, text, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["missing", "/tmp/missing.mp4", "/tmp/missing.txt", "x", 3],
+            )
+            .is_err());
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM captions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
     fn link_dump_migration_adds_settings_to_existing_config() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -2550,6 +2676,10 @@ mod tests {
                 id, selected_preset_key, magic_import_enabled,
                 cut_at_timestamp_enabled, created_at, updated_at
             ) VALUES (1, 'text', 1, 1, datetime('now'), datetime('now'));
+
+            CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO app_meta (key, value)
+            VALUES ('legacy_config_json_migrated', '1');
             "#,
         )
         .unwrap();
@@ -2561,6 +2691,14 @@ mod tests {
         assert!(!config.download_video_with_transcript);
         assert!(!config.notifications_enabled);
         assert!(!config.save_instagram_captions);
+        let migrated: i64 = conn
+            .query_row(
+                "SELECT legacy_config_json_migrated FROM app_config WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(migrated, 1);
         // Re-running migrations preserves the user's choice.
         let config = AppConfig {
             notifications_enabled: true,
@@ -2646,6 +2784,133 @@ mod tests {
                 count: 1,
             }]
         );
+    }
+
+    #[test]
+    fn instagram_captions_store_unicode_newlines_and_upsert_without_duplication() {
+        let state = link_dump_test_state();
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO history_entries (id, url, created_at) VALUES (?1, ?2, ?3)",
+                params!["instagram-1", "https://www.instagram.com/p/example/", 1],
+            )
+            .unwrap();
+        }
+
+        let original = SavedInstagramCaption {
+            media_path: "/tmp/post.mp4".to_string(),
+            caption_path: "/tmp/post.txt".to_string(),
+            text: "Grüße 🌲\nZweite Zeile".to_string(),
+        };
+        insert_instagram_captions_in_db(&state, "instagram-1", &[original.clone()]).unwrap();
+        insert_instagram_captions_in_db(&state, "instagram-1", &[original]).unwrap();
+        insert_instagram_captions_in_db(
+            &state,
+            "instagram-1",
+            &[SavedInstagramCaption {
+                media_path: "/tmp/post.mp4".to_string(),
+                caption_path: "/tmp/post-updated.txt".to_string(),
+                text: "Aktualisiert ✨\nMehr Text".to_string(),
+            }],
+        )
+        .unwrap();
+        insert_instagram_captions_in_db(
+            &state,
+            "instagram-1",
+            &[SavedInstagramCaption {
+                media_path: "/tmp/post-second.jpg".to_string(),
+                caption_path: "/tmp/post-second.txt".to_string(),
+                text: "Zweites Medium 🖼️".to_string(),
+            }],
+        )
+        .unwrap();
+        insert_history_entry_in_db(
+            &state,
+            &HistoryEntry {
+                id: "instagram-1".to_string(),
+                url: "https://www.instagram.com/p/example/".to_string(),
+                title: Some("Updated post".to_string()),
+                uploader: None,
+                filename: None,
+                thumbnail: None,
+                upload_date: None,
+                timestamp: None,
+                duration_seconds: None,
+                file_size_bytes: None,
+                medium: Some("video".to_string()),
+                source: Some("instagram".to_string()),
+                platform: Some("instagram".to_string()),
+                output_path: None,
+                created_at: 1,
+                completed_at: Some(2),
+            },
+        )
+        .unwrap();
+
+        let conn = state.db.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM captions", [], |row| row.get(0))
+            .unwrap();
+        let (caption_path, text): (String, String) = conn
+            .query_row(
+                "SELECT caption_path, text FROM captions WHERE history_entry_id = 'instagram-1' AND media_path = '/tmp/post.mp4'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let second_text: String = conn
+            .query_row(
+                "SELECT text FROM captions WHERE history_entry_id = 'instagram-1' AND media_path = '/tmp/post-second.jpg'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(caption_path, "/tmp/post-updated.txt");
+        assert_eq!(text, "Aktualisiert ✨\nMehr Text");
+        assert_eq!(second_text, "Zweites Medium 🖼️");
+    }
+
+    #[test]
+    fn instagram_captions_follow_history_delete_and_clear() {
+        let state = link_dump_test_state();
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute_batch(
+                "INSERT INTO history_entries (id, url, created_at) VALUES
+                    ('instagram-1', 'https://instagram.com/p/one/', 1),
+                    ('instagram-2', 'https://instagram.com/p/two/', 2);",
+            )
+            .unwrap();
+        }
+        for id in ["instagram-1", "instagram-2"] {
+            insert_instagram_captions_in_db(
+                &state,
+                id,
+                &[SavedInstagramCaption {
+                    media_path: format!("/tmp/{id}.mp4"),
+                    caption_path: format!("/tmp/{id}.txt"),
+                    text: id.to_string(),
+                }],
+            )
+            .unwrap();
+        }
+
+        delete_history_entry_from_db(&state, "instagram-1").unwrap();
+        {
+            let conn = state.db.lock().unwrap();
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM captions", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 1);
+        }
+        clear_history_entries_in_db(&state).unwrap();
+        let conn = state.db.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM captions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

@@ -421,6 +421,22 @@ pub(super) fn emit_history_warning(app: &AppHandle, job_id: &str, warning: &str)
     );
 }
 
+fn store_instagram_captions_with_warning(
+    app: &AppHandle,
+    state: &AppState,
+    job_id: &str,
+    history_entry_id: &str,
+    captions: &[SavedInstagramCaption],
+) -> Option<String> {
+    insert_instagram_captions_in_db(state, history_entry_id, captions)
+        .err()
+        .map(|err| {
+            let warning = format!("Instagram caption save failed: {err}");
+            emit_history_warning(app, job_id, &warning);
+            warning
+        })
+}
+
 pub(super) fn show_queue_notification(app: &AppHandle, body: &str) -> Result<(), String> {
     let icon = app
         .path()
@@ -620,26 +636,34 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                         run_result.info.as_ref(),
                                     ) {
                                         Ok(history_entry_id) => {
-                                            store_transcription_for_history_entry(
+                                            let mut warnings = Vec::new();
+                                            if let Err(err) = store_transcription_for_history_entry(
                                                 &state_handle,
                                                 &job,
                                                 &history_entry_id,
                                                 &transcript_path,
-                                            )
-                                            .err()
-                                            .map(
-                                                |err| {
-                                                    let warning = format!(
-                                                        "Transcript index save failed: {err}"
-                                                    );
-                                                    emit_history_warning(
-                                                        &app_handle,
-                                                        &job.id,
-                                                        &warning,
-                                                    );
-                                                    warning
-                                                },
-                                            )
+                                            ) {
+                                                let warning =
+                                                    format!("Transcript index save failed: {err}");
+                                                emit_history_warning(
+                                                    &app_handle,
+                                                    &job.id,
+                                                    &warning,
+                                                );
+                                                warnings.push(warning);
+                                            }
+                                            if let Some(warning) =
+                                                store_instagram_captions_with_warning(
+                                                    &app_handle,
+                                                    &state_handle,
+                                                    &job.id,
+                                                    &history_entry_id,
+                                                    &run_result.captions,
+                                                )
+                                            {
+                                                warnings.push(warning);
+                                            }
+                                            (!warnings.is_empty()).then(|| warnings.join("; "))
                                         }
                                         Err(err) => {
                                             let warning = format!("History save failed: {err}");
@@ -676,20 +700,25 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                 error: None,
                                 output_path: run_result.output_path.clone(),
                             },
-                            || {
-                                add_history_entry_on_success(
+                            || match add_history_entry_on_success(
+                                &app_handle,
+                                &state_handle,
+                                &job,
+                                run_result.output_path.as_deref(),
+                                run_result.info.as_ref(),
+                            ) {
+                                Ok(history_entry_id) => store_instagram_captions_with_warning(
                                     &app_handle,
                                     &state_handle,
-                                    &job,
-                                    run_result.output_path.as_deref(),
-                                    run_result.info.as_ref(),
-                                )
-                                .err()
-                                .map(|err| {
+                                    &job.id,
+                                    &history_entry_id,
+                                    &run_result.captions,
+                                ),
+                                Err(err) => {
                                     let warning = format!("History save failed: {err}");
                                     emit_history_warning(&app_handle, &job.id, &warning);
-                                    warning
-                                })
+                                    Some(warning)
+                                }
                             },
                         ) {
                             summary.succeeded += 1;

@@ -216,6 +216,7 @@ pub(super) fn run_download_job(
         .ok()
         .and_then(|guard| select_existing_output_path(&guard));
     let mut info = None;
+    let mut saved_captions = Vec::new();
 
     if status.success() {
         if output_path.is_none() {
@@ -271,6 +272,11 @@ pub(super) fn run_download_job(
                     downloaded_path
                 };
                 let caption_path = write_instagram_caption_sidecar(Path::new(final_path), caption)?;
+                saved_captions.push(SavedInstagramCaption {
+                    media_path: final_path.to_string(),
+                    caption_path: caption_path.to_string_lossy().into_owned(),
+                    text: caption.clone(),
+                });
                 emit_log(
                     app,
                     LogEvent {
@@ -288,6 +294,7 @@ pub(super) fn run_download_job(
         output_path,
         error: error_capture.lock().ok().and_then(|reason| reason.clone()),
         info,
+        captions: saved_captions,
     })
 }
 

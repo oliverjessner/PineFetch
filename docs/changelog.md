@@ -1,3 +1,12 @@
+# 2.1.0
+
+- captions are stored in database
+- added TikTok captions, YouTube captions
+- compatibility list for download able videos / caption
+- downloadable thumbnails
+- account view
+- remove old legacy sqlite table
+
 # 2.0.0
 
 - history search

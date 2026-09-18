@@ -1,7 +1,7 @@
 {
     "productName": "PineFetch",
     "mainBinaryName": "PineFetch",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "identifier": "com.pinefetch.app",
     "build": {
         "beforeBuildCommand": "",
@@ -31,7 +31,16 @@
         "active": true,
         "targets": "all",
         "copyright": "Copyright (c) 2026 Oliver Jessner - https://oliverjessner.at\nMIT License",
-        "resources": ["resources/whisper-runtime", "resources/ffmpeg-runtime", "resources/deno-runtime", "icons/icon.png"],
-        "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"]
+        "resources": [
+            "resources/whisper-runtime",
+            "resources/ffmpeg-runtime",
+            "resources/deno-runtime",
+            "icons/icon.png"
+        ],
+        "icon": [
+            "icons/icon.png",
+            "icons/icon.icns",
+            "icons/icon.ico"
+        ]
     }
 }

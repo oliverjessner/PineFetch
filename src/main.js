@@ -608,8 +608,8 @@ const updateDownloadOptionHints = () => {
     els.instagramCaptionHint.hidden = !isInstagram;
     if (isInstagram) {
         els.instagramCaptionHint.textContent = els.saveInstagramCaptions.checked
-            ? 'Instagram caption: if available, a separate .caption.txt file will be saved.'
-            : 'Instagram caption: off. Enable it in Settings to save a separate .caption.txt file.';
+            ? 'Instagram caption: if available, saved in the local database and as a .caption.txt file.'
+            : 'Instagram caption: off. Enable it in Settings to save a .caption.txt file and database copy.';
     }
 };
 

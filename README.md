@@ -12,7 +12,7 @@ No account. No cloud. Your files stay on your machine.
 
 ## What it does
 
-- Download videos from YouTube, TikTok and Instagram
+- Download videos from YouTube, TikTok, Instagram, Facebook, Twitch and X
 - Save Instagram captions alongside your downloads and in the local SQLite database
 - Extract MP3 or Opus audio
 - Create local transcripts with Whisper

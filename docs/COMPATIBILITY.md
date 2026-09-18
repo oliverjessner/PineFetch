@@ -7,8 +7,11 @@ PineFetch passes downloads to yt-dlp. This list describes the link types PineFet
 | YouTube | Video URLs (`watch`), Shorts, `youtu.be` links, and video links using `/live`, `/embed`, or `/v` | Attempted through yt-dlp | No |
 | TikTok | `/@user/video/...` links and `vm.tiktok.com`, `vt.tiktok.com`, or `/t/...` share links | Attempted through yt-dlp | No |
 | Instagram | Posts (`/p/...`), Reels (`/reel/...`), and `/tv/...` links | Attempted through yt-dlp when the post contains downloadable video | Yes, if **Save Instagram captions** is enabled and the post has a nonempty description |
+| Facebook (`facebook.com`, `fb.watch`) | No | Attempted through yt-dlp from a direct link | No |
+| Twitch (`twitch.tv`) | No | Attempted through yt-dlp from a direct link | No |
+| X (`x.com`, `twitter.com`) | No | Attempted through yt-dlp from a direct link | No |
 
-For a single download, PineFetch accepts any `http://` or `https://` URL and passes it to yt-dlp. Downloads from other sites depend on yt-dlp; TXT and Browser Import accept only the YouTube, TikTok, and Instagram link types above. Playlist downloads are disabled.
+For a single download, PineFetch accepts any `http://` or `https://` URL and passes it to yt-dlp. Downloads from other sites also depend on yt-dlp; TXT and Browser Import accept only the YouTube, TikTok, and Instagram link types above. Playlist downloads are disabled.
 
 **Post captions** are the text accompanying a post. For supported Instagram downloads, PineFetch writes them to a `.caption.txt` file beside the downloaded media and stores them in its local SQLite database. The setting is off by default. A post without a description produces no caption file.
 

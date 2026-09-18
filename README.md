@@ -1,21 +1,99 @@
 # PineFetch 🍍
 
-A local-first desktop app for macOS and Windows that wraps **yt-dlp** with a clean UI: paste links, pick a preset, queue downloads, export audio, or create transcripts. Transparent, minimal, and built for everyday workflows.
+**Download videos, audio, captions and transcripts without fighting the command line.**
 
-> PineFetch is designed for content you **own** or where you have **explicit permission** to download. Please respect platform Terms of Service and local laws.
+PineFetch is a local-first desktop app built around [yt-dlp](https://github.com/yt-dlp/yt-dlp).
+
+Paste a link, choose what you want, and PineFetch takes care of the rest.
+
+No account. No cloud. Your files stay on your machine.
 
 ![PineFetch download screen](src/images/mockups/download.webp)
 
-## Development and builds
+## What it does
 
-Install the Node.js dependencies and start PineFetch in development mode:
+- Download videos from YouTube, TikTok and Instagram
+- Save Instagram captions alongside your downloads
+- Extract MP3 or Opus audio
+- Create local transcripts with Whisper
+- Generate transcripts with timestamps
+- Queue multiple downloads
+- Import lists of links from TXT files
+- Keep a local download history
+- Control PineFetch from the command line
+- Send links to PineFetch through its local Link Dump API
+
+PineFetch is intentionally local-first. Downloads, transcripts and history stay on your computer.
+
+## Install
+
+### macOS
 
 ```bash
+brew tap oliverjessner/tap
+brew install --cask oliverjessner/tap/pinefetch
+```
+
+Or download from the [releases](https://github.com/oliverjessner/PineFetch/releases).
+
+## Presets
+
+Pick what you need:
+
+`Best` · `Max 1080p` · `MP3` · `Opus` · `Text` · `Text with timestamps`
+
+Transcription runs locally using `faster-whisper`.
+
+You can choose between faster or more accurate Whisper models in Settings.
+
+## Queue, history and batch imports
+
+Drop in one link or queue a whole list.
+
+PineFetch can import YouTube, TikTok and Instagram URLs from a simple TXT file and process them one after another.
+
+Your completed downloads are stored in a local history with useful stats like total downloads, storage used and runtime.
+
+![PineFetch history screen](src/images/mockups/history.webp)
+
+## CLI
+
+The desktop app also includes a command-line interface.
+
+```bash
+PineFetch queue add --link 'https://www.youtube.com/watch?v=VIDEO_ID'
+PineFetch queue list
+PineFetch history list
+PineFetch stats
+```
+
+See the [CLI documentation](docs/CLI.md) for all available commands.
+
+## Link Dump
+
+PineFetch can receive links from browser extensions, scripts and other local tools through its Link Dump API.
+
+Everything runs locally on:
+
+```text
+http://127.0.0.1:2255
+```
+
+Connections are protected with a locally generated secret.
+
+![PineFetch Browser Import screen](src/images/mockups/browser_import.webp)
+
+## Build it yourself
+
+You'll need Node.js, Rust, Tauri and yt-dlp.
+
+```bash
+git clone https://github.com/oliverjessner/PineFetch.git
+cd PineFetch
+
 npm install
 npm run dev
 ```
-
-Development requires Node.js, the Rust toolchain, `yt-dlp`, and the platform-specific Tauri system dependencies.
 
 Create a macOS release build with:
 
@@ -23,233 +101,30 @@ Create a macOS release build with:
 npm run build
 ```
 
-Published macOS releases can be installed through the Homebrew tap:
+Release notes are available in the [changelog](docs/changelog.md).
 
-```bash
-brew tap oliverjessner/tap
-brew install --cask oliverjessner/tap/pinefetch
-```
+## Settings
 
-### Windows
+PineFetch lets you configure things like:
 
-Run this on Windows with the Rust MSVC toolchain, Node.js, ffmpeg/ffprobe, Deno, and Python 3.10+ installed:
-
-```powershell
-npm run build:windows
-```
-
-> Note: The Windows build is not currently tested by the maintainer.
-
-## Version synchronization
-
-`package.json` is the source of truth for the PineFetch version. `npm run dev` and both build commands run `npm run sync:version` before starting Tauri; the sync updates `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the PineFetch entry in `src-tauri/Cargo.lock`. The [publish script](scripts/publish.sh) performs the same sync before creating its release commit and Git tag. Release notes are in the [changelog](docs/changelog.md).
-
-## Publishing
-
-Run `npm run publish` from a clean `../homebrew-tap` checkout. The release workflow:
-
-1. Synchronizes the version and commits pending PineFetch changes, including untracked files.
-2. Builds and verifies the macOS app and creates the DMG.
-3. Pushes PineFetch and creates the GitHub release.
-4. Calculates the DMG SHA256 and generates `Casks/pinefetch.rb`.
-5. Updates the Homebrew tap README, commits the tap changes, and pushes them.
-
-Set `HOMEBREW_TAP_DIR=/path/to/homebrew-tap` to use a tap checkout outside the default `../homebrew-tap` location. The workflow stops before publishing if the tap is dirty or not synchronized with its remote branch.
-
-## Command-line interface
-
-See the [CLI reference](docs/CLI.md) for installation, commands, presets, and troubleshooting.
-
-The desktop executable also includes the PineFetch CLI. CLI commands connect to the running desktop app, opening it automatically if necessary. Configure the output folder and yt-dlp in the app before adding your first download.
-
-```bash
-PineFetch queue add --link 'https://www.youtube.com/watch?v=VIDEO_ID' --preset 'best'
-PineFetch queue add --link 'https://www.youtube.com/watch?v=VIDEO_ID' --preset 'text with timestamps'
-PineFetch queue list
-PineFetch queue remove 1
-PineFetch history list
-PineFetch stats
-PineFetch --help
-```
-
-`--preset` accepts `best` (the default), `max` (up to 1080p), `mp3`, `opus`, `text`, or `text with timestamps`. Quote presets containing spaces. Downloads use the app's saved output folder, timestamp, and transcription settings, and follow its current auto-start mode.
-
-`queue list` numbers the waiting downloads in processing order. `queue remove 1` removes the first waiting item; active downloads are excluded. Numbers refer to the queue at command execution time, so they can change as downloads start.
-
-`history list` shows the latest 25 successful downloads, newest first. **CLI history access is read-only: there are no delete, remove, or clear commands for history.** `stats` shows the same downloaded-video count, total data, and total runtime as the History sidebar, across the entire history.
-
-The CLI uses a separate authenticated loopback connection and works even when the Link Dump server is disabled. Successful commands exit with code `0`, execution errors with `1`, and invalid arguments with `2`. Errors go to stderr.
-
-### Accessing the command
-
-Homebrew releases generated with CLI support install the `PineFetch` command automatically. For a manual macOS app installation, invoke the bundled executable directly:
-
-```bash
-/Applications/PineFetch.app/Contents/MacOS/PineFetch stats
-```
-
-To use the shorter command, add this alias to your shell configuration:
-
-```bash
-alias PineFetch='/Applications/PineFetch.app/Contents/MacOS/PineFetch'
-```
-
-On Windows, run `PineFetch.exe` from the installation directory, or add that directory to your user `PATH` to use `PineFetch` from any terminal. In PowerShell, use `& 'C:\path\to\PineFetch.exe' stats` when specifying a full path.
-
-For development, start the app with `npm run dev`, then run `src-tauri/target/debug/pinefetch --help` or any of the commands above. A debug executable needs the development web server for its desktop window; release builds include the UI.
-
-## yt-dlp location
-
-- If `yt-dlp` is in your PATH, the app will find it automatically.
-- Otherwise, set the full path in **Settings → yt-dlp path**.
-- Release builds bundle `ffmpeg`/`ffprobe` for post-processing.
-- PineFetch also tries `ffmpeg`/`ffprobe` from the same directory as `yt-dlp`, Homebrew paths, and `PATH`.
-
-## Transcription presets
-
-PineFetch provides two `faster-whisper` text presets:
-
-- **Text** writes a plain UTF-8 `.txt` transcript.
-- **Text with timestamps** writes a separate `_timestamps.txt` transcript with start and end times for every detected segment:
-
-```text
-[00:00:03 → 00:00:08] Welcome to this video.
-[00:00:09 → 00:00:14] Today we are looking at PineFetch.
-```
-
-The transcription quality can be selected in **Settings → Transcription**:
-
-- **Fast** uses the `base` model (default).
-- **Balanced** uses the `small` model.
-- **High** uses the `medium` model.
-- **Best** uses the `large-v3` model.
-
-Larger models can improve transcription accuracy, but require more download time, memory, and processing time. The selected model is stored when a download enters the queue, so queued jobs keep their original quality setting.
-
-Enable **Settings → Options → Transcription → Download video with transcript** to keep the video file alongside the generated TXT transcript. PineFetch prepares a temporary 16 kHz mono audio file for faster transcription and removes it afterward. The option is stored per queued job.
-
-Successful transcripts are also stored in SQLite table `transcriptions`. Each row contains its own primary key, the complete transcript text, a foreign key to `history_entries`, and a checked type of either `text` or `text with timestamps`. Deleting the related history entry also deletes its stored transcript.
-
-The timestamped preset uses segment-level timestamps and keeps the regular text preset unchanged.
-
-## Import YouTube, TikTok, and Instagram links from TXT
-
-Use **Import TXT** on the Download screen to add multiple YouTube, TikTok, and Instagram videos to the queue at once:
-
-1. Select the preset you want to use.
-2. Click **Import TXT** and choose a `.txt` file.
-3. PineFetch validates the file and queues every new supported link using the selected preset and output folder.
-
-The file expects one YouTube, TikTok, or Instagram URL per line. Empty lines and lines beginning with `#` are ignored, so comments and groups can be added freely:
-
-```text
-# Tutorials
-https://www.youtube.com/watch?v=abc123
-https://youtu.be/def456
-
-# Start at 1 minute 30 seconds
-https://www.youtube.com/watch?v=ghi789&t=1m30s
-
-# TikTok
-https://www.tiktok.com/@creator/video/7412345678901234567
-https://vm.tiktok.com/ZMexample/
-
-# Instagram
-https://www.instagram.com/reel/ABC_def-123/?igsh=example
-https://www.instagram.com/p/PostCode9/
-```
-
-Supported URLs include regular YouTube links as well as `youtu.be`, Shorts, Live, and Embed variants. TikTok video, photo, and short share links from `vm.tiktok.com`, `vt.tiktok.com`, or `/t/...` are also supported. Instagram post (`/p/`), Reel (`/reel/`), and TV (`/tv/`) links are supported. Invalid lines are skipped. Duplicate URLs in the same file or already present in the current queue are not added again. The same YouTube video with a different start timestamp is treated as a separate queue item. When **Cut at timestamp** is enabled, timestamps in imported YouTube URLs are handled like manually queued links.
-
-After the import, PineFetch reports how many links were added, invalid, duplicated, or failed to queue. Imported items follow the current queue auto-start setting.
-
-## Legal/Use-Case Notes
-
-- This app is for legitimate usage only: your own uploads, Creative Commons/Public Domain, or content with explicit permission to download.
-- No DRM or paywall circumvention is supported or promoted.
-
-## Local Link Dump API
-
-PineFetch starts a local loopback server for browser extensions at:
-
-```text
-http://127.0.0.1:2255
-```
-
-Open **Link Dump** and create a connection secret under **Connections**. Copy it immediately; PineFetch stores only a hash and will not show the secret again.
-
-YouTube, TikTok, and Instagram links sent through Link Dump are queued with the currently selected PineFetch preset.
-Supported variants include YouTube watch, short, Shorts, Live, Embed, and `/v/` URLs; TikTok `/@creator/video/`, `vm.`, `vt.`, and `/t/` URLs; and Instagram post, Reel, and TV URLs.
-
-![PineFetch Browser Import screen](src/images/mockups/browser_import.webp)
-
-Single link:
-
-```bash
-curl -X POST http://127.0.0.1:2255/addVideoLinkToQueue/ \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://www.tiktok.com/@creator/video/7412345678901234567","secret":"pfld_REPLACE_ME"}'
-```
-
-Multiple links:
-
-```bash
-curl -X POST http://127.0.0.1:2255/addVideoLinksToQueue/ \
-  -H "Content-Type: application/json" \
-  -d '{"urls":["https://www.youtube.com/watch?v=abc123","https://www.instagram.com/reel/ABC_def-123/"],"secret":"pfld_REPLACE_ME"}'
-```
-
-Preflight:
-
-```bash
-curl -X OPTIONS http://127.0.0.1:2255/addVideoLinksToQueue/ -i
-```
-
-## Features
-
-- **Queue-based downloads** (multiple URLs, processed in order)
-- **Presets** for Best, Max 1080p, MP3, Opus, Text, and Text with timestamps
-- **Terminal logs** for transparency and troubleshooting, limited to the latest 500 lines
-- **Persistent history statistics** for downloaded videos, storage usage, and runtime
-- **Local-first**: no accounts, no cloud processing, files stay on your device
-
-## Queue and keyboard controls
-
-Queue items start automatically by default. Disable **Auto-start** to collect multiple items and start them together with **Download**. Right-click a queue item to copy its link, download it again with another preset, cancel an active job, or remove a completed job. Clicking a completed item opens its output location.
-
-When the URL field is focused:
-
-- `Enter` adds the current URL to the queue.
-- `Cmd + I` loads information for the current URL.
-- `Esc` clears the URL and its loaded information.
-
-## Other menus
-
-The Settings screen contains the output folder, `yt-dlp` path, **Magic import**, **Cut at timestamp**, and a **Transcription** group for quality and video-retention settings. The **Diagnostics** group shows installed and latest `yt-dlp` versions and the terminal log. Versions are checked the first time Settings opens and again when the `yt-dlp` path changes.
-
-**Magic import** reads a supported URL from the clipboard when the PineFetch logo is clicked while the URL field is empty. **Cut at timestamp** starts supported downloads at timestamps embedded in their URLs.
+- Output folder
+- yt-dlp path
+- Transcription quality
+- Keep video with transcript
+- Cut downloads at timestamps
+- Magic clipboard import
 
 ![PineFetch settings screen](src/images/mockups/settings.webp)
 
-History keeps successful downloads in the local SQLite database. Each entry includes the source URL, source service, uploader, medium (`video`, `audio`, or `transcript`), title, filename, thumbnail, platform, output path, upload date, completion time, duration in seconds, and final file size in bytes when available. The source service is derived locally from the URL hostname by removing the protocol, subdomain, and TLD; known short domains such as `youtu.be` are normalized to their canonical service name. Sources are also backfilled from the URLs of existing History entries during migration.
+## A small note
 
-The History view also provides an overview of:
+PineFetch is made for content you own or have permission to download.
 
-- **Completed downloads** — the number of entries currently stored in History
-- **Total data** — the combined size of downloaded files
-- **Total runtime** — the combined duration of downloaded media
-- **Sources** — the number of downloads from each source, such as YouTube or Instagram
+Please respect platform terms and local laws. PineFetch does not attempt to bypass DRM or paywalls.
 
-Removing an entry or clearing History immediately updates these totals. Existing entries created before duration and file-size tracking was introduced remain available, but missing metadata is not included in the totals.
+## Built with
 
-History loads 20 entries per page. Use **Load more** to append the next page; previously loaded entries remain cached while switching between views.
-
-![PineFetch history screen](src/images/mockups/history.webp)
-
-## Credits
-
-- yt-dlp: [https://github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp)
-- FFmpeg: [https://ffmpeg.org/](https://ffmpeg.org/)
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) · [FFmpeg](https://ffmpeg.org/) · Tauri · Rust
 
 ## License
 

@@ -3,6 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DIR="$ROOT_DIR/src-tauri/resources/whisper-runtime"
+WHISPER_VERSION="$(tr -d '\r\n' < "$ROOT_DIR/scripts/whisper-runtime.version")"
+
+if [[ ! "$WHISPER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Invalid faster-whisper version in scripts/whisper-runtime.version."
+  exit 1
+fi
 
 if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || "${OSTYPE:-}" == win32* ]]; then
   echo "Windows runtime bundling via this script is not supported yet."
@@ -24,26 +30,42 @@ if [[ -z "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
+PYTHON_VERSION="$("$PYTHON_BIN" -c 'import sys; print(sys.version.split()[0])')"
+RUNTIME_PYTHON_BIN="$RUNTIME_DIR/bin/python"
+RUNTIME_METADATA="$RUNTIME_DIR/.pinefetch-whisper-runtime"
+
+if [[ -f "$RUNTIME_METADATA" && -x "$RUNTIME_PYTHON_BIN" ]] &&
+   grep -Fqx "faster-whisper=$WHISPER_VERSION" "$RUNTIME_METADATA" &&
+   grep -Fqx "python=$PYTHON_VERSION" "$RUNTIME_METADATA" &&
+   "$RUNTIME_PYTHON_BIN" -c "import faster_whisper, sys; assert faster_whisper.__version__ == '$WHISPER_VERSION'; assert sys.version.split()[0] == '$PYTHON_VERSION'" >/dev/null 2>&1; then
+  echo "Reusing bundled whisper runtime at: $RUNTIME_DIR"
+  exit 0
+fi
+
 mkdir -p "$ROOT_DIR/src-tauri/resources"
 rm -rf "$RUNTIME_DIR"
 
 echo "Creating bundled whisper runtime using: $PYTHON_BIN"
 "$PYTHON_BIN" -m venv "$RUNTIME_DIR"
 
-"$RUNTIME_DIR/bin/python" -m pip install --upgrade pip
-"$RUNTIME_DIR/bin/python" -m pip install --upgrade faster-whisper
+"$RUNTIME_PYTHON_BIN" -m pip install --disable-pip-version-check "faster-whisper==$WHISPER_VERSION"
 
-RUNTIME_VERSION="$($RUNTIME_DIR/bin/python - <<'PY'
+RUNTIME_VERSION="$($RUNTIME_PYTHON_BIN - <<'PY'
 import faster_whisper
 print(faster_whisper.__version__)
 PY
 )"
 
-RUNTIME_PYTHON="$($RUNTIME_DIR/bin/python - <<'PY'
+RUNTIME_PYTHON="$($RUNTIME_PYTHON_BIN - <<'PY'
 import sys
 print(sys.version.split()[0])
 PY
 )"
+
+if [[ "$RUNTIME_VERSION" != "$WHISPER_VERSION" || "$RUNTIME_PYTHON" != "$PYTHON_VERSION" ]]; then
+  echo "Bundled whisper runtime version check failed."
+  exit 1
+fi
 
 cat > "$RUNTIME_DIR/.pinefetch-whisper-runtime" <<META
 faster-whisper=$RUNTIME_VERSION

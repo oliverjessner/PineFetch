@@ -1,4 +1,24 @@
+mod browser_import;
 mod cli;
+mod config;
+mod download;
+mod history;
+mod platform;
+mod presets;
+mod queue;
+
+use browser_import::*;
+use config::*;
+use download::*;
+use history::*;
+#[cfg(test)]
+use platform::TIKTOK_FORMAT_SORT;
+use platform::{detect_platform, site_format_sort};
+use presets::{
+    download_preset_for_key, normalize_download_preset_key, DownloadPreset,
+    DEFAULT_DOWNLOAD_PRESET_KEY, DOWNLOAD_PRESETS,
+};
+use queue::*;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use regex::Regex;
@@ -7,21 +27,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     fs,
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, ClipboardManager, Manager, State};
 use uuid::Uuid;
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 fn default_magic_import_enabled() -> bool {
     true
@@ -341,6 +364,14 @@ struct LinkDumpServerRuntime {
     handle: Option<JoinHandle<()>>,
 }
 
+struct ActiveConnectionPermit(Arc<AtomicUsize>);
+
+impl Drop for ActiveConnectionPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 impl Default for LinkDumpServerRuntime {
     fn default() -> Self {
         Self {
@@ -375,6 +406,7 @@ struct DownloadRunResult {
     exit_code: i32,
     output_path: Option<String>,
     error: Option<String>,
+    info: Option<InfoResponse>,
 }
 
 #[derive(Debug)]
@@ -433,76 +465,9 @@ const LINK_DUMP_DEFAULT_HOST: &str = "127.0.0.1";
 const LINK_DUMP_DEFAULT_PORT: u16 = 2255;
 const LINK_DUMP_MAX_BATCH_SIZE: usize = 500;
 const LINK_DUMP_MAX_BODY_BYTES: usize = 1024 * 1024;
-const DEFAULT_DOWNLOAD_PRESET_KEY: &str = "best";
-const TIKTOK_FORMAT_SORT: &str = "vcodec:h264";
-
-#[derive(Debug, Clone, Copy)]
-struct DownloadPreset {
-    key: &'static str,
-    format: &'static str,
-    extract_audio: bool,
-    audio_format: Option<&'static str>,
-    transcribe_text: bool,
-    transcribe_timestamps: bool,
-    filename_suffix: Option<&'static str>,
-}
-
-const DOWNLOAD_PRESETS: &[DownloadPreset] = &[
-    DownloadPreset {
-        key: "best",
-        format: "bestvideo+bestaudio/best",
-        extract_audio: false,
-        audio_format: None,
-        transcribe_text: false,
-        transcribe_timestamps: false,
-        filename_suffix: Some("_best"),
-    },
-    DownloadPreset {
-        key: "1080",
-        format: "bv*[height<=1080]+ba/b[height<=1080]",
-        extract_audio: false,
-        audio_format: None,
-        transcribe_text: false,
-        transcribe_timestamps: false,
-        filename_suffix: Some("__max"),
-    },
-    DownloadPreset {
-        key: "audio_mp3",
-        format: "ba/b",
-        extract_audio: true,
-        audio_format: Some("mp3"),
-        transcribe_text: false,
-        transcribe_timestamps: false,
-        filename_suffix: None,
-    },
-    DownloadPreset {
-        key: "audio_opus",
-        format: "ba/b",
-        extract_audio: true,
-        audio_format: Some("opus"),
-        transcribe_text: false,
-        transcribe_timestamps: false,
-        filename_suffix: None,
-    },
-    DownloadPreset {
-        key: "text",
-        format: "ba/b",
-        extract_audio: true,
-        audio_format: Some("mp3"),
-        transcribe_text: true,
-        transcribe_timestamps: false,
-        filename_suffix: None,
-    },
-    DownloadPreset {
-        key: "text_timestamps",
-        format: "ba/b",
-        extract_audio: true,
-        audio_format: Some("mp3"),
-        transcribe_text: true,
-        transcribe_timestamps: true,
-        filename_suffix: Some("_timestamps"),
-    },
-];
+const LINK_DUMP_MAX_CONNECTIONS: usize = 8;
+const INFO_TIMEOUT: Duration = Duration::from_secs(90);
+const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct AppState {
     config: Mutex<AppConfig>,
@@ -512,9 +477,13 @@ struct AppState {
     queue_auto_start: Mutex<bool>,
     queue_paused: Mutex<bool>,
     worker_running: Mutex<bool>,
+    worker_handle: Mutex<Option<JoinHandle<()>>>,
     current_job_id: Mutex<Option<String>>,
+    active_video_key: Mutex<Option<String>>,
     current_child: Mutex<Option<Arc<Mutex<Child>>>>,
+    utility_children: Mutex<Vec<Arc<Mutex<Child>>>>,
     cancel_requested: Mutex<Option<String>>,
+    shutting_down: AtomicBool,
 }
 
 impl AppState {
@@ -527,122 +496,20 @@ impl AppState {
             queue_auto_start: Mutex::new(true),
             queue_paused: Mutex::new(false),
             worker_running: Mutex::new(false),
+            worker_handle: Mutex::new(None),
             current_job_id: Mutex::new(None),
+            active_video_key: Mutex::new(None),
             current_child: Mutex::new(None),
+            utility_children: Mutex::new(Vec::new()),
             cancel_requested: Mutex::new(None),
+            shutting_down: AtomicBool::new(false),
         }
     }
 }
 
-fn download_preset_for_key(preset_key: Option<&str>) -> &'static DownloadPreset {
-    let key = preset_key
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .unwrap_or(DEFAULT_DOWNLOAD_PRESET_KEY);
-
-    DOWNLOAD_PRESETS
-        .iter()
-        .find(|preset| preset.key == key)
-        .unwrap_or(&DOWNLOAD_PRESETS[0])
-}
-
-fn normalize_download_preset_key(preset_key: Option<&str>) -> String {
-    download_preset_for_key(preset_key).key.to_string()
-}
-
-fn normalize_app_config(mut config: AppConfig) -> AppConfig {
-    config.selected_preset_key = Some(normalize_download_preset_key(
-        config.selected_preset_key.as_deref(),
-    ));
-    config.faster_whisper_model = normalize_faster_whisper_model(&config.faster_whisper_model);
-    config
-}
-
-fn normalize_faster_whisper_model(model: &str) -> String {
-    let model = model.trim();
-    FASTER_WHISPER_MODELS
-        .iter()
-        .find(|candidate| **candidate == model)
-        .copied()
-        .unwrap_or(DEFAULT_FASTER_WHISPER_MODEL)
-        .to_string()
-}
-
 #[tauri::command]
-fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
-    let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-    Ok(cfg.clone())
-}
-
-#[tauri::command]
-fn set_config(state: State<AppState>, config: AppConfig) -> Result<(), String> {
-    let config = normalize_app_config(config);
-    save_config_to_db(state.inner(), &config)?;
-    {
-        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-        *cfg = config.clone();
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn set_selected_preset_key(
-    state: State<AppState>,
-    preset_key: String,
-) -> Result<AppConfig, String> {
-    let selected_preset_key = normalize_download_preset_key(Some(&preset_key));
-    let next_config = {
-        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-        let mut cfg = cfg.clone();
-        cfg.selected_preset_key = Some(selected_preset_key);
-        cfg.clone()
-    };
-
-    save_config_to_db(state.inner(), &next_config)?;
-    {
-        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-        *cfg = next_config.clone();
-    }
-    Ok(next_config)
-}
-
-#[tauri::command]
-fn set_save_instagram_captions(state: State<AppState>, enabled: bool) -> Result<AppConfig, String> {
-    let next_config = {
-        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-        let mut cfg = cfg.clone();
-        cfg.save_instagram_captions = enabled;
-        cfg
-    };
-
-    save_config_to_db(state.inner(), &next_config)?;
-    {
-        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-        *cfg = next_config.clone();
-    }
-    Ok(next_config)
-}
-
-#[tauri::command]
-fn cache_last_download_url(state: State<AppState>, url: String) -> Result<(), String> {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return Ok(());
-    }
-
-    let next_config = {
-        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-        let mut cfg = cfg.clone();
-        cfg.last_download_url = Some(trimmed.to_string());
-        cfg.clone()
-    };
-
-    save_config_to_db(state.inner(), &next_config)?;
-    {
-        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-        *cfg = next_config;
-    }
-    Ok(())
+fn get_download_presets() -> Vec<DownloadPreset> {
+    DOWNLOAD_PRESETS.to_vec()
 }
 
 #[tauri::command]
@@ -721,15 +588,20 @@ async fn load_info(
     let yt_dlp = resolve_yt_dlp(&app, &state)?;
     let deno = resolve_deno_executable(&app);
 
-    tauri::async_runtime::spawn_blocking(move || load_info_with_yt_dlp(yt_dlp, deno, url))
-        .await
-        .map_err(|e| format!("Info task failed: {e}"))?
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle.state::<AppState>();
+        load_info_with_yt_dlp(yt_dlp, deno, url, state.inner())
+    })
+    .await
+    .map_err(|e| format!("Info task failed: {e}"))?
 }
 
 fn load_info_with_yt_dlp(
     yt_dlp: String,
     deno: Option<String>,
     url: String,
+    state: &AppState,
 ) -> Result<InfoResponse, String> {
     let mut command = Command::new(&yt_dlp);
     command.args(["--dump-json", "--no-playlist", "--no-warnings"]);
@@ -738,9 +610,8 @@ fn load_info_with_yt_dlp(
         command.arg(format!("deno:{deno}"));
     }
 
-    let output = command
-        .arg(&url)
-        .output()
+    command.arg(&url);
+    let output = run_command_output(command, None, Some(state), Some(INFO_TIMEOUT))
         .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
 
     if !output.status.success() {
@@ -812,6 +683,200 @@ fn load_info_with_yt_dlp(
     })
 }
 
+fn register_current_child(state: &AppState, child: &Arc<Mutex<Child>>) -> Result<(), String> {
+    let mut slot = state
+        .current_child
+        .lock()
+        .map_err(|_| "Child lock poisoned")?;
+    *slot = Some(child.clone());
+    // Cancel may have been requested between process creation and registration.
+    let current = state
+        .current_job_id
+        .lock()
+        .map_err(|_| "Current job lock poisoned")?;
+    let cancelled = state.shutting_down.load(Ordering::SeqCst)
+        || current.is_some()
+            && state
+                .cancel_requested
+                .lock()
+                .map_err(|_| "Cancel lock poisoned")?
+                .as_deref()
+                == current.as_deref();
+    if cancelled {
+        if let Ok(mut process) = child.lock() {
+            let _ = terminate_child_process_tree(&mut process);
+        }
+    }
+    Ok(())
+}
+
+fn register_utility_child(state: &AppState, child: &Arc<Mutex<Child>>) -> Result<(), String> {
+    let mut children = state
+        .utility_children
+        .lock()
+        .map_err(|_| "Utility child lock poisoned")?;
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return Err("Application is shutting down".to_string());
+    }
+    children.push(child.clone());
+    Ok(())
+}
+
+fn clear_utility_child(state: &AppState, child: &Arc<Mutex<Child>>) {
+    if let Ok(mut children) = state.utility_children.lock() {
+        children.retain(|active| !Arc::ptr_eq(active, child));
+    }
+}
+
+fn clear_current_child(state: &AppState, child: &Arc<Mutex<Child>>) {
+    if let Ok(mut slot) = state.current_child.lock() {
+        if slot
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, child))
+        {
+            *slot = None;
+        }
+    }
+}
+
+fn configure_child_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+fn terminate_child_process_tree(process: &mut Child) -> std::io::Result<()> {
+    // A running child is its own Unix process-group leader. Only signal the
+    // group while that leader is still alive, so the PGID cannot be reused.
+    if process.try_wait()?.is_some() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        let group_id = i32::try_from(process.id())
+            .map_err(|_| std::io::Error::other("Child process ID is out of range"))?;
+        if unsafe { libc::kill(-group_id, libc::SIGKILL) } == 0 {
+            return Ok(());
+        }
+        let group_error = std::io::Error::last_os_error();
+        let _ = process.kill();
+        return Err(group_error);
+    }
+    #[cfg(not(unix))]
+    process.kill()
+}
+
+fn run_command_output(
+    mut command: Command,
+    active_state: Option<&AppState>,
+    utility_state: Option<&AppState>,
+    timeout: Option<Duration>,
+) -> Result<Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    configure_child_process_group(&mut command);
+    let mut child = command.spawn().map_err(|err| err.to_string())?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let child = Arc::new(Mutex::new(child));
+    if let Some(state) = active_state {
+        if let Err(err) = register_current_child(state, &child) {
+            if let Ok(mut process) = child.lock() {
+                let _ = terminate_child_process_tree(&mut process);
+                let _ = process.wait();
+            }
+            return Err(err);
+        }
+    }
+    if let Some(state) = utility_state {
+        if let Err(err) = register_utility_child(state, &child) {
+            if let Ok(mut process) = child.lock() {
+                let _ = terminate_child_process_tree(&mut process);
+                let _ = process.wait();
+            }
+            return Err(err);
+        }
+    }
+
+    let (output_sender, output_receiver) = std::sync::mpsc::channel();
+    let stdout_sender = output_sender.clone();
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        if let Some(mut stdout) = stdout {
+            let _ = stdout.read_to_end(&mut output);
+        }
+        let _ = stdout_sender.send((true, output));
+    });
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        if let Some(mut stderr) = stderr {
+            let _ = stderr.read_to_end(&mut output);
+        }
+        let _ = output_sender.send((false, output));
+    });
+
+    let started = Instant::now();
+    let mut failure = None;
+    let status = loop {
+        let result = child
+            .lock()
+            .map_err(|_| "Child lock poisoned".to_string())
+            .and_then(|mut process| process.try_wait().map_err(|err| err.to_string()));
+        match result {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(err) => {
+                failure = Some(err);
+                break None;
+            }
+        }
+        if timeout.is_some_and(|limit| started.elapsed() >= limit) {
+            failure = Some("process timed out".to_string());
+            break None;
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+    if status.is_none() {
+        if let Ok(mut process) = child.lock() {
+            let _ = terminate_child_process_tree(&mut process);
+            let _ = process.wait();
+        }
+    }
+    if let Some(state) = active_state {
+        clear_current_child(state, &child);
+    }
+    if let Some(state) = utility_state {
+        clear_utility_child(state, &child);
+    }
+    if let Some(err) = failure {
+        // A descendant may still own a pipe after the direct child exits.
+        // Do not let that keep a timed-out metadata request blocked here.
+        return Err(err);
+    }
+    let mut drain_deadline = Instant::now() + OUTPUT_DRAIN_TIMEOUT;
+    if let Some(limit) = timeout.and_then(|limit| started.checked_add(limit)) {
+        drain_deadline = drain_deadline.min(limit);
+    }
+    let mut stdout = None;
+    let mut stderr = None;
+    for _ in 0..2 {
+        let remaining = drain_deadline.saturating_duration_since(Instant::now());
+        let (is_stdout, output) = output_receiver
+            .recv_timeout(remaining)
+            .map_err(|_| "Process output did not close after exit".to_string())?;
+        if is_stdout {
+            stdout = Some(output);
+        } else {
+            stderr = Some(output);
+        }
+    }
+    Ok(Output {
+        status: status.ok_or_else(|| "Process status unavailable".to_string())?,
+        stdout: stdout.ok_or_else(|| "Process stdout missing".to_string())?,
+        stderr: stderr.ok_or_else(|| "Process stderr missing".to_string())?,
+    })
+}
+
 fn json_value_to_i64(value: &serde_json::Value) -> Option<i64> {
     value
         .as_i64()
@@ -832,10 +897,15 @@ fn get_yt_dlp_installed_version(
     path: Option<String>,
 ) -> Result<InstalledYtDlpVersion, String> {
     let yt_dlp = resolve_yt_dlp_for_version(&app, &state, path)?;
-    let output = Command::new(&yt_dlp)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
+    let mut command = Command::new(&yt_dlp);
+    command.arg("--version");
+    let output = run_command_output(
+        command,
+        None,
+        Some(state.inner()),
+        Some(Duration::from_secs(15)),
+    )
+    .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
 
     if !output.status.success() {
         let code = output.status.code().unwrap_or(-1);
@@ -866,222 +936,6 @@ fn get_yt_dlp_installed_version(
 }
 
 #[tauri::command]
-fn get_queue_status(state: State<AppState>) -> Result<QueueStatus, String> {
-    snapshot_queue_status(state.inner())
-}
-
-#[tauri::command]
-fn set_queue_auto_start(
-    app: AppHandle,
-    state: State<AppState>,
-    enabled: bool,
-) -> Result<QueueStatus, String> {
-    {
-        let mut auto_start = state
-            .queue_auto_start
-            .lock()
-            .map_err(|_| "Queue auto-start lock poisoned")?;
-        *auto_start = enabled;
-    }
-
-    if enabled {
-        ensure_worker(&app, state.inner())?;
-    }
-    emit_queue_status(&app, state.inner());
-
-    snapshot_queue_status(state.inner())
-}
-
-#[tauri::command]
-fn start_queue(app: AppHandle, state: State<AppState>) -> Result<QueueStatus, String> {
-    set_queue_paused(state.inner(), false)?;
-    ensure_worker(&app, state.inner())?;
-    emit_queue_status(&app, state.inner());
-    snapshot_queue_status(state.inner())
-}
-
-#[tauri::command]
-fn pause_queue(app: AppHandle, state: State<AppState>) -> Result<QueueStatus, String> {
-    set_queue_paused(state.inner(), true)?;
-    emit_queue_status(&app, state.inner());
-    snapshot_queue_status(state.inner())
-}
-
-#[tauri::command]
-fn resume_queue(app: AppHandle, state: State<AppState>) -> Result<QueueStatus, String> {
-    set_queue_paused(state.inner(), false)?;
-    ensure_worker(&app, state.inner())?;
-    emit_queue_status(&app, state.inner());
-    snapshot_queue_status(state.inner())
-}
-
-fn set_queue_paused(state: &AppState, paused: bool) -> Result<(), String> {
-    let mut value = state
-        .queue_paused
-        .lock()
-        .map_err(|_| "Queue pause lock poisoned")?;
-    *value = paused;
-    Ok(())
-}
-
-#[tauri::command]
-fn enqueue_download(
-    app: AppHandle,
-    state: State<AppState>,
-    request: DownloadRequest,
-) -> Result<String, String> {
-    enqueue_download_request(&app, state.inner(), request)
-}
-
-fn enqueue_download_request(
-    app: &AppHandle,
-    state: &AppState,
-    request: DownloadRequest,
-) -> Result<String, String> {
-    let job = build_download_job(state, request)?;
-    let id = job.id.clone();
-    enqueue_download_jobs(app, state, vec![job])?;
-    Ok(id)
-}
-
-fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<DownloadJob, String> {
-    if !is_valid_url(&request.url) {
-        return Err("URL must start with http:// or https://".to_string());
-    }
-
-    let output_dir = resolve_output_dir(state, request.output_dir.clone())?;
-    let cut_start_time = resolve_cut_start_time(
-        request.cut_at_timestamp_enabled,
-        request.cut_start_time,
-        &request.url,
-    );
-    let (faster_whisper_model, download_video_with_transcript, save_instagram_captions) = {
-        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-        (
-            normalize_faster_whisper_model(&cfg.faster_whisper_model),
-            cfg.download_video_with_transcript,
-            cfg.save_instagram_captions,
-        )
-    };
-    let id = Uuid::new_v4().to_string();
-    Ok(DownloadJob {
-        id: id.clone(),
-        url: request.url,
-        format: request.format,
-        output_dir,
-        extract_audio: request.extract_audio,
-        audio_format: request.audio_format,
-        transcribe_text: request.transcribe_text,
-        transcribe_timestamps: request.transcribe_timestamps,
-        faster_whisper_model,
-        download_video_with_transcript,
-        save_instagram_captions,
-        title: request.title,
-        uploader: request.uploader,
-        thumbnail: request.thumbnail,
-        upload_date: request.upload_date,
-        timestamp: request.timestamp,
-        duration_seconds: request.duration_seconds,
-        cut_start_time,
-        filename_suffix: normalize_filename_suffix(request.filename_suffix.as_deref()),
-    })
-}
-
-fn enqueue_download_jobs(
-    app: &AppHandle,
-    state: &AppState,
-    jobs: Vec<DownloadJob>,
-) -> Result<Vec<String>, String> {
-    if jobs.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let ids = jobs.iter().map(|job| job.id.clone()).collect::<Vec<_>>();
-
-    {
-        let mut queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
-        queue.extend(jobs);
-    }
-
-    emit_queue(app, state)?;
-    if is_queue_auto_start_enabled(state)? {
-        ensure_worker(app, state)?;
-    }
-    Ok(ids)
-}
-
-#[tauri::command]
-fn cancel_download(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
-    let removed = {
-        let mut queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
-        let before = queue.len();
-        queue.retain(|job| job.id != id);
-        before != queue.len()
-    };
-
-    if removed {
-        emit_queue(&app, &state)?;
-        emit_state(
-            &app,
-            DownloadStateEvent {
-                id,
-                state: "cancelled".to_string(),
-                exit_code: None,
-                error: None,
-                output_path: None,
-            },
-        );
-        return Ok(());
-    }
-
-    let is_current = {
-        let current = state
-            .current_job_id
-            .lock()
-            .map_err(|_| "Current job lock poisoned")?;
-        current.as_deref() == Some(&id)
-    };
-
-    if !is_current {
-        return Err("Job not found in queue".to_string());
-    }
-
-    {
-        let mut cancel = state
-            .cancel_requested
-            .lock()
-            .map_err(|_| "Cancel lock poisoned")?;
-        *cancel = Some(id.clone());
-    }
-
-    let child = {
-        let child_guard = state
-            .current_child
-            .lock()
-            .map_err(|_| "Child lock poisoned")?;
-        child_guard.clone()
-    };
-
-    if let Some(child) = child {
-        if let Ok(mut guard) = child.lock() {
-            let _ = guard.kill();
-        }
-    }
-
-    emit_state(
-        &app,
-        DownloadStateEvent {
-            id,
-            state: "cancelling".to_string(),
-            exit_code: None,
-            error: None,
-            output_path: None,
-        },
-    );
-    Ok(())
-}
-
-#[tauri::command]
 fn get_history(
     state: State<AppState>,
     limit: Option<u32>,
@@ -1096,45 +950,6 @@ fn get_history(
 #[tauri::command]
 fn get_history_stats(state: State<AppState>) -> Result<HistoryStats, String> {
     get_history_stats_from_db(state.inner())
-}
-
-fn detect_platform(url: &str) -> Option<String> {
-    if let Ok(parsed) = url::Url::parse(url) {
-        let host = parsed.host_str().unwrap_or("").to_lowercase();
-        let host = host.strip_prefix("www.").unwrap_or(&host);
-
-        if host == "youtu.be" || host.ends_with("youtube.com") {
-            return Some("youtube".to_string());
-        }
-        if host.ends_with("facebook.com") || host == "fb.watch" {
-            return Some("facebook".to_string());
-        }
-        if host.ends_with("twitch.tv") {
-            return Some("twitch".to_string());
-        }
-        if host == "x.com" || host.ends_with(".x.com") || host.ends_with("twitter.com") {
-            return Some("x".to_string());
-        }
-        if host.ends_with("tiktok.com") {
-            return Some("tiktok".to_string());
-        }
-        if host.ends_with("instagram.com") || host.ends_with("instagr.am") {
-            return Some("instagram".to_string());
-        }
-    }
-    None
-}
-
-fn site_format_sort(url: &str) -> Option<&'static str> {
-    // Some TikTok HEVC renditions are marked as AAC by the API even though the
-    // downloaded container has no audio stream. Prefer the H.264 rendition,
-    // which contains the muxed audio, while keeping yt-dlp's normal fallback.
-    let parsed = url::Url::parse(url).ok()?;
-    let host = parsed
-        .host_str()?
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    (host == "tiktok.com" || host.ends_with(".tiktok.com")).then_some(TIKTOK_FORMAT_SORT)
 }
 
 fn source_from_url(url: &str) -> Option<String> {
@@ -1229,10 +1044,9 @@ struct HydratedHistoryMetadata {
 }
 
 fn hydrate_history_metadata(
-    app: &AppHandle,
-    state: &AppState,
     job: &DownloadJob,
     filename: Option<&str>,
+    info: Option<&InfoResponse>,
 ) -> HydratedHistoryMetadata {
     let mut title = trim_optional_string(job.title.clone());
     let mut uploader = trim_optional_string(job.uploader.clone());
@@ -1241,35 +1055,24 @@ fn hydrate_history_metadata(
     let mut timestamp = job.timestamp;
     let mut duration_seconds = job.duration_seconds;
 
-    if title.is_none()
-        || uploader.is_none()
-        || thumbnail.is_none()
-        || upload_date.is_none()
-        || timestamp.is_none()
-        || duration_seconds.is_none()
-    {
-        if let Ok(yt_dlp) = resolve_yt_dlp(app, state) {
-            let deno = resolve_deno_executable(app);
-            if let Ok(info) = load_info_with_yt_dlp(yt_dlp, deno, job.url.clone()) {
-                if title.is_none() {
-                    title = trim_optional_string(info.title);
-                }
-                if uploader.is_none() {
-                    uploader = trim_optional_string(info.uploader);
-                }
-                if thumbnail.is_none() {
-                    thumbnail = trim_optional_string(info.thumbnail);
-                }
-                if upload_date.is_none() {
-                    upload_date = trim_optional_string(info.upload_date);
-                }
-                if timestamp.is_none() {
-                    timestamp = info.timestamp;
-                }
-                if duration_seconds.is_none() {
-                    duration_seconds = info.duration;
-                }
-            }
+    if let Some(info) = info {
+        if title.is_none() {
+            title = trim_optional_string(info.title.clone());
+        }
+        if uploader.is_none() {
+            uploader = trim_optional_string(info.uploader.clone());
+        }
+        if thumbnail.is_none() {
+            thumbnail = trim_optional_string(info.thumbnail.clone());
+        }
+        if upload_date.is_none() {
+            upload_date = trim_optional_string(info.upload_date.clone());
+        }
+        if timestamp.is_none() {
+            timestamp = info.timestamp;
+        }
+        if duration_seconds.is_none() {
+            duration_seconds = info.duration;
         }
     }
 
@@ -1307,9 +1110,10 @@ fn add_history_entry_on_success(
     state: &AppState,
     job: &DownloadJob,
     output_path: Option<&str>,
+    info: Option<&InfoResponse>,
 ) -> Result<String, String> {
     let filename = filename_from_path(output_path);
-    let metadata = hydrate_history_metadata(app, state, job, filename.as_deref());
+    let metadata = hydrate_history_metadata(job, filename.as_deref(), info);
     let file_size_bytes = file_size_bytes_from_path(output_path);
     let now = current_timestamp_millis();
     let history_entry_id = Uuid::new_v4().to_string();
@@ -1347,1539 +1151,6 @@ fn remove_history_entry(state: State<AppState>, id: String) -> Result<(), String
 fn clear_history(state: State<AppState>) -> Result<(), String> {
     clear_history_entries_in_db(state.inner())?;
     Ok(())
-}
-
-fn snapshot_queue_status(state: &AppState) -> Result<QueueStatus, String> {
-    let auto_start = *state
-        .queue_auto_start
-        .lock()
-        .map_err(|_| "Queue auto-start lock poisoned")?;
-    let worker_running = *state
-        .worker_running
-        .lock()
-        .map_err(|_| "Worker lock poisoned")?;
-    let paused = *state
-        .queue_paused
-        .lock()
-        .map_err(|_| "Queue pause lock poisoned")?;
-
-    Ok(QueueStatus {
-        auto_start,
-        worker_running,
-        paused,
-    })
-}
-
-fn emit_queue_status(app: &AppHandle, state: &AppState) {
-    if let Ok(status) = snapshot_queue_status(state) {
-        let _ = app.emit_all("queue:status", status);
-    }
-}
-
-fn is_queue_auto_start_enabled(state: &AppState) -> Result<bool, String> {
-    let auto_start = state
-        .queue_auto_start
-        .lock()
-        .map_err(|_| "Queue auto-start lock poisoned")?;
-    Ok(*auto_start)
-}
-
-#[derive(Default)]
-struct QueueRunSummary {
-    started: usize,
-    succeeded: usize,
-}
-
-impl QueueRunSummary {
-    fn should_notify(&self, enabled: bool) -> bool {
-        enabled && self.started > 1 && self.succeeded == self.started
-    }
-}
-
-fn notify_queue_completed(app: &AppHandle, state: &AppState, summary: &QueueRunSummary) {
-    let enabled = state
-        .config
-        .lock()
-        .map(|config| config.notifications_enabled)
-        .unwrap_or(false);
-    if !summary.should_notify(enabled) {
-        return;
-    }
-    let body = format!("All {} downloads finished successfully.", summary.succeeded);
-    if let Err(err) = show_queue_notification(app, &body) {
-        emit_log(
-            app,
-            LogEvent {
-                id: String::new(),
-                line: format!("[notification] {err}"),
-                is_error: true,
-            },
-        );
-    }
-}
-
-fn show_queue_notification(app: &AppHandle, body: &str) -> Result<(), String> {
-    let icon = app
-        .path_resolver()
-        .resolve_resource("icons/icon.png")
-        .filter(|path| path.is_file())
-        .ok_or("Bundled notification icon unavailable")?;
-    let icon = icon.to_string_lossy();
-    let title = "PineFetch — Queue complete";
-
-    #[cfg(target_os = "macos")]
-    {
-        // Tauri's notification wrapper ignores custom icons on macOS. Use the
-        // native app_icon option, retaining Tauri's delivery identity in dev.
-        let identifier = if cfg!(feature = "custom-protocol") {
-            app.config().tauri.bundle.identifier.clone()
-        } else {
-            "com.apple.Terminal".to_string()
-        };
-        match mac_notification_sys::set_application(&identifier) {
-            Ok(()) => {}
-            Err(mac_notification_sys::error::Error::Application(
-                mac_notification_sys::error::ApplicationError::AlreadySet(_),
-            )) => {}
-            Err(err) => return Err(err.to_string()),
-        }
-        mac_notification_sys::Notification::new()
-            .title(title)
-            .message(body)
-            .app_icon(&icon)
-            .send()
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        tauri::api::notification::Notification::new(&app.config().tauri.bundle.identifier)
-            .title(title)
-            .body(body)
-            .icon(icon.as_ref())
-            .show()
-            .map_err(|err| err.to_string())
-    }
-}
-
-fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    let paused = state
-        .queue_paused
-        .lock()
-        .map_err(|_| "Queue pause lock poisoned")?;
-    if *paused {
-        return Ok(());
-    }
-    let mut running = state
-        .worker_running
-        .lock()
-        .map_err(|_| "Worker lock poisoned")?;
-    if *running {
-        return Ok(());
-    }
-    *running = true;
-    drop(running);
-    drop(paused);
-    emit_queue_status(app, state);
-
-    let app_handle = app.clone();
-
-    thread::spawn(move || {
-        let mut summary = QueueRunSummary::default();
-        loop {
-            let state_handle = app_handle.state::<AppState>();
-            let (job_opt, paused) = match next_worker_job(&state_handle) {
-                Ok(next) => next,
-                Err(_) => break,
-            };
-
-            let job = match job_opt {
-                Some(job) => job,
-                None => {
-                    if !paused {
-                        notify_queue_completed(&app_handle, &state_handle, &summary);
-                    }
-                    let _ = emit_queue(&app_handle, &state_handle);
-                    emit_queue_status(&app_handle, &state_handle);
-                    break;
-                }
-            };
-
-            // The waiting queue no longer includes this active job. Publish the
-            // new snapshot before its state changes so counts stay accurate.
-            let _ = emit_queue(&app_handle, &state_handle);
-
-            summary.started += 1;
-
-            if let Ok(mut current) = state_handle.current_job_id.lock() {
-                *current = Some(job.id.clone());
-            }
-
-            emit_state(
-                &app_handle,
-                DownloadStateEvent {
-                    id: job.id.clone(),
-                    state: "downloading".to_string(),
-                    exit_code: None,
-                    error: None,
-                    output_path: None,
-                },
-            );
-
-            let result = run_download_job(&app_handle, &state_handle, &job);
-
-            if let Ok(mut current) = state_handle.current_job_id.lock() {
-                *current = None;
-            }
-
-            match result {
-                Ok(run_result) => {
-                    let cancelled = if let Ok(mut cancel) = state_handle.cancel_requested.lock() {
-                        if cancel.as_deref() == Some(job.id.as_str()) {
-                            *cancel = None;
-                            true
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-
-                    if cancelled {
-                        emit_state(
-                            &app_handle,
-                            DownloadStateEvent {
-                                id: job.id.clone(),
-                                state: "cancelled".to_string(),
-                                exit_code: Some(run_result.exit_code),
-                                error: None,
-                                output_path: None,
-                            },
-                        );
-                    } else if run_result.exit_code != 0 {
-                        emit_state(
-                            &app_handle,
-                            DownloadStateEvent {
-                                id: job.id.clone(),
-                                state: "error".to_string(),
-                                exit_code: Some(run_result.exit_code),
-                                error: Some(run_result.error.unwrap_or_else(|| {
-                                    format!("yt-dlp failed (exit code {})", run_result.exit_code)
-                                })),
-                                output_path: None,
-                            },
-                        );
-                    } else if job.transcribe_text {
-                        if job.download_video_with_transcript {
-                            if let Some(video_path) = run_result.output_path.as_deref() {
-                                emit_log(
-                                    &app_handle,
-                                    LogEvent {
-                                        id: job.id.clone(),
-                                        line: format!("[video] saved: {video_path}"),
-                                        is_error: false,
-                                    },
-                                );
-                            }
-                        }
-                        emit_state(
-                            &app_handle,
-                            DownloadStateEvent {
-                                id: job.id.clone(),
-                                state: "transcribing".to_string(),
-                                exit_code: Some(run_result.exit_code),
-                                error: None,
-                                output_path: if job.download_video_with_transcript {
-                                    run_result.output_path.clone()
-                                } else {
-                                    None
-                                },
-                            },
-                        );
-
-                        match run_faster_whisper_transcription(
-                            &app_handle,
-                            &state_handle,
-                            &job,
-                            run_result.output_path.as_deref(),
-                        ) {
-                            Ok(transcript_path) => {
-                                summary.succeeded += 1;
-                                emit_log(
-                                    &app_handle,
-                                    LogEvent {
-                                        id: job.id.clone(),
-                                        line: format!("[transcript] saved: {transcript_path}"),
-                                        is_error: false,
-                                    },
-                                );
-                                emit_state(
-                                    &app_handle,
-                                    DownloadStateEvent {
-                                        id: job.id.clone(),
-                                        state: "success".to_string(),
-                                        exit_code: Some(run_result.exit_code),
-                                        error: None,
-                                        output_path: Some(transcript_path.clone()),
-                                    },
-                                );
-                                match add_history_entry_on_success(
-                                    &app_handle,
-                                    &state_handle,
-                                    &job,
-                                    Some(&transcript_path),
-                                ) {
-                                    Ok(history_entry_id) => {
-                                        if let Err(err) = store_transcription_for_history_entry(
-                                            &state_handle,
-                                            &job,
-                                            &history_entry_id,
-                                            &transcript_path,
-                                        ) {
-                                            emit_log(
-                                                &app_handle,
-                                                LogEvent {
-                                                    id: job.id.clone(),
-                                                    line: format!(
-                                                        "[transcript] database save failed: {err}"
-                                                    ),
-                                                    is_error: true,
-                                                },
-                                            );
-                                        }
-                                    }
-                                    Err(err) => emit_log(
-                                        &app_handle,
-                                        LogEvent {
-                                            id: job.id.clone(),
-                                            line: format!("[history] database save failed: {err}"),
-                                            is_error: true,
-                                        },
-                                    ),
-                                }
-                            }
-                            Err(err) => {
-                                emit_state(
-                                    &app_handle,
-                                    DownloadStateEvent {
-                                        id: job.id.clone(),
-                                        state: "error".to_string(),
-                                        exit_code: Some(run_result.exit_code),
-                                        error: Some(err),
-                                        output_path: None,
-                                    },
-                                );
-                            }
-                        }
-                    } else {
-                        summary.succeeded += 1;
-                        emit_state(
-                            &app_handle,
-                            DownloadStateEvent {
-                                id: job.id.clone(),
-                                state: "success".to_string(),
-                                exit_code: Some(run_result.exit_code),
-                                error: None,
-                                output_path: run_result.output_path.clone(),
-                            },
-                        );
-                        // Add to history on success
-                        let _ = add_history_entry_on_success(
-                            &app_handle,
-                            &state_handle,
-                            &job,
-                            run_result.output_path.as_deref(),
-                        );
-                    }
-                }
-                Err(err) => {
-                    emit_state(
-                        &app_handle,
-                        DownloadStateEvent {
-                            id: job.id.clone(),
-                            state: "error".to_string(),
-                            exit_code: None,
-                            error: Some(err),
-                            output_path: None,
-                        },
-                    );
-                }
-            }
-
-            let _ = emit_queue(&app_handle, &state_handle);
-        }
-    });
-
-    Ok(())
-}
-
-fn next_worker_job(state: &AppState) -> Result<(Option<DownloadJob>, bool), String> {
-    let pause_guard = state
-        .queue_paused
-        .lock()
-        .map_err(|_| "Queue pause lock poisoned")?;
-    let paused = *pause_guard;
-    let mut queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
-    let job = if paused { None } else { queue.pop_front() };
-    // Keep the queue locked until idle is published so an enqueue or resume
-    // cannot miss starting a worker between the empty check and shutdown.
-    if job.is_none() {
-        let mut running = state
-            .worker_running
-            .lock()
-            .map_err(|_| "Worker lock poisoned")?;
-        *running = false;
-    }
-    Ok((job, paused))
-}
-
-fn run_download_job(
-    app: &AppHandle,
-    state: &AppState,
-    job: &DownloadJob,
-) -> Result<DownloadRunResult, String> {
-    let effective_job = effective_download_job(job);
-    let job = &effective_job;
-    let yt_dlp = resolve_yt_dlp(app, state)?;
-    let ffmpeg_location = resolve_ffmpeg_location(app, &yt_dlp);
-    let deno_path = resolve_deno_executable(app);
-    let output_template = build_output_template(&job.output_dir, job.filename_suffix.as_deref());
-    let output_template_for_fallback = output_template.clone();
-    let save_instagram_captions =
-        job.save_instagram_captions && detect_platform(&job.url).as_deref() == Some("instagram");
-
-    let mut args = vec![
-        "--no-playlist".to_string(),
-        "--newline".to_string(),
-        "--progress".to_string(),
-        "--no-color".to_string(),
-        "--print".to_string(),
-        "after_move:filepath".to_string(),
-        "--print".to_string(),
-        "after_video:filepath".to_string(),
-        "-f".to_string(),
-        job.format.clone(),
-        "-o".to_string(),
-        output_template,
-    ];
-
-    if save_instagram_captions {
-        args.push("--print".to_string());
-        args.push("after_move:pinefetch_caption:%(.{filepath,description})j".to_string());
-    }
-
-    let needs_ffmpeg = job.extract_audio
-        || job.transcribe_text
-        || job.format.contains('+')
-        || job.cut_start_time.is_some();
-    if let Some(location) = ffmpeg_location.as_ref() {
-        args.push("--ffmpeg-location".to_string());
-        args.push(location.clone());
-    } else if needs_ffmpeg {
-        return Err(
-            "ffmpeg and ffprobe not found. Install ffmpeg (or make sure it is in the same directory as yt-dlp) and try again."
-                .to_string(),
-        );
-    }
-
-    if let Some(deno) = deno_path.as_ref() {
-        args.push("--js-runtimes".to_string());
-        args.push(format!("deno:{deno}"));
-    }
-
-    if job.extract_audio {
-        args.push("--extract-audio".to_string());
-        if let Some(fmt) = job.audio_format.as_ref() {
-            args.push("--audio-format".to_string());
-            args.push(fmt.to_string());
-        }
-    }
-
-    if let Some(cut_start_time) = job.cut_start_time {
-        let cut_timestamp = format_yt_dlp_timestamp(cut_start_time);
-        emit_log(
-            app,
-            LogEvent {
-                id: job.id.clone(),
-                line: format!("[cut] URL timestamp detected; downloading full file before local cut at {cut_timestamp}s"),
-                is_error: false,
-            },
-        );
-    }
-
-    if let Some(format_sort) = site_format_sort(&job.url) {
-        args.push("--format-sort".to_string());
-        args.push(format_sort.to_string());
-    }
-
-    args.push(job.url.clone());
-
-    let mut command = Command::new(&yt_dlp);
-    command.args(args);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-    let child = command.spawn().map_err(|e| format!("Spawn failed: {e}"))?;
-    let child = Arc::new(Mutex::new(child));
-
-    {
-        let mut child_guard = state
-            .current_child
-            .lock()
-            .map_err(|_| "Child lock poisoned")?;
-        *child_guard = Some(child.clone());
-    }
-
-    let (stdout, stderr) = {
-        let mut guard = child.lock().map_err(|_| "Child lock poisoned")?;
-        (guard.stdout.take(), guard.stderr.take())
-    };
-
-    let progress_re = Regex::new(r"\[download\]\s+([\d\.]+)%.*?at\s+([^\s]+).*?ETA\s+([^\s]+)")
-        .map_err(|e| format!("Regex error: {e}"))?;
-    let output_path_capture: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let caption_capture: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
-    let error_capture: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-
-    let app_stdout = app.clone();
-    let id_stdout = job.id.clone();
-    let output_path_for_stdout = output_path_capture.clone();
-    let captions_for_stdout = caption_capture.clone();
-    let handle_out = thread::spawn(move || {
-        if let Some(out) = stdout {
-            let reader = BufReader::new(out);
-            for line in reader.lines().flatten() {
-                if !line.starts_with("pinefetch_caption:") {
-                    emit_log(
-                        &app_stdout,
-                        LogEvent {
-                            id: id_stdout.clone(),
-                            line: line.clone(),
-                            is_error: false,
-                        },
-                    );
-                }
-
-                if let Some(caps) = progress_re.captures(&line) {
-                    let percent = caps.get(1).and_then(|m| m.as_str().parse::<f32>().ok());
-                    let speed = caps.get(2).map(|m| m.as_str().to_string());
-                    let eta = caps.get(3).map(|m| m.as_str().to_string());
-                    emit_progress(
-                        &app_stdout,
-                        DownloadProgress {
-                            id: id_stdout.clone(),
-                            percent,
-                            speed,
-                            eta,
-                        },
-                    );
-                }
-
-                if let Some(path_line) = parse_yt_dlp_filepath(&line) {
-                    if let Ok(mut slot) = output_path_for_stdout.lock() {
-                        slot.push(path_line);
-                    }
-                }
-                if let Some(caption) = parse_instagram_caption_line(&line) {
-                    if let Ok(mut captions) = captions_for_stdout.lock() {
-                        captions.push(caption);
-                    }
-                }
-            }
-        }
-    });
-
-    let app_stderr = app.clone();
-    let id_stderr = job.id.clone();
-    let error_for_stderr = error_capture.clone();
-    let handle_err = thread::spawn(move || {
-        if let Some(err) = stderr {
-            let reader = BufReader::new(err);
-            for line in reader.lines().flatten() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    if let Ok(mut reason) = error_for_stderr.lock() {
-                        if trimmed.starts_with("ERROR:") || reason.is_none() {
-                            *reason = Some(trimmed.to_string());
-                        }
-                    }
-                }
-                emit_log(
-                    &app_stderr,
-                    LogEvent {
-                        id: id_stderr.clone(),
-                        line,
-                        is_error: true,
-                    },
-                );
-            }
-        }
-    });
-
-    let status = loop {
-        let maybe_status = {
-            let mut guard = child.lock().map_err(|_| "Child lock poisoned")?;
-            guard.try_wait().map_err(|e| format!("Wait failed: {e}"))?
-        };
-
-        if let Some(status) = maybe_status {
-            break status;
-        }
-
-        thread::sleep(Duration::from_millis(100));
-    };
-    {
-        let mut child_guard = state
-            .current_child
-            .lock()
-            .map_err(|_| "Child lock poisoned")?;
-        *child_guard = None;
-    }
-    let _ = handle_out.join();
-    let _ = handle_err.join();
-
-    let mut output_path = output_path_capture
-        .lock()
-        .ok()
-        .and_then(|guard| select_existing_output_path(&guard));
-
-    if status.success() {
-        if output_path.is_none() {
-            output_path = resolve_existing_output_path_fallback(
-                job,
-                &yt_dlp,
-                deno_path.as_deref(),
-                &output_template_for_fallback,
-            );
-        }
-
-        let original_output_path = output_path.clone();
-        if let Some(cut_start_time) = job.cut_start_time {
-            let trimmed_path = trim_downloaded_file(
-                app,
-                job,
-                output_path.as_deref(),
-                ffmpeg_location.as_deref(),
-                cut_start_time,
-            )?;
-            output_path = Some(trimmed_path);
-        }
-
-        if save_instagram_captions {
-            let captions = caption_capture
-                .lock()
-                .map_err(|_| "Caption capture lock poisoned")?;
-            if captions.is_empty() {
-                emit_log(
-                    app,
-                    LogEvent {
-                        id: job.id.clone(),
-                        line: "[caption] Instagram did not provide a caption for this download"
-                            .to_string(),
-                        is_error: false,
-                    },
-                );
-            }
-            for (downloaded_path, caption) in captions.iter() {
-                let final_path = if original_output_path.as_deref() == Some(downloaded_path) {
-                    output_path.as_deref().unwrap_or(downloaded_path)
-                } else {
-                    downloaded_path
-                };
-                let caption_path = write_instagram_caption_sidecar(Path::new(final_path), caption)?;
-                emit_log(
-                    app,
-                    LogEvent {
-                        id: job.id.clone(),
-                        line: format!("[caption] saved: {}", caption_path.display()),
-                        is_error: false,
-                    },
-                );
-            }
-        }
-    }
-
-    Ok(DownloadRunResult {
-        exit_code: status.code().unwrap_or(-1),
-        output_path,
-        error: error_capture.lock().ok().and_then(|reason| reason.clone()),
-    })
-}
-
-fn parse_instagram_caption_line(line: &str) -> Option<(String, String)> {
-    let json = line.strip_prefix("pinefetch_caption:")?;
-    let value: serde_json::Value = serde_json::from_str(json).ok()?;
-    let path = value.get("filepath")?.as_str()?.trim();
-    let caption = value.get("description")?.as_str()?;
-    if path.is_empty() || caption.trim().is_empty() {
-        return None;
-    }
-    Some((path.to_string(), caption.to_string()))
-}
-
-fn write_instagram_caption_sidecar(media_path: &Path, caption: &str) -> Result<PathBuf, String> {
-    if !media_path.is_file() {
-        return Err(format!(
-            "Caption media file not found: {}",
-            media_path.display()
-        ));
-    }
-    let caption_path = media_path.with_extension("caption.txt");
-    fs::write(&caption_path, caption).map_err(|e| {
-        format!(
-            "Failed to save Instagram caption to {}: {e}",
-            caption_path.display()
-        )
-    })?;
-    Ok(caption_path)
-}
-
-fn effective_download_job(job: &DownloadJob) -> DownloadJob {
-    let mut download_job = job.clone();
-    if job.transcribe_text && job.download_video_with_transcript {
-        download_job.format = download_preset_for_key(Some(DEFAULT_DOWNLOAD_PRESET_KEY))
-            .format
-            .to_string();
-        download_job.extract_audio = false;
-        download_job.audio_format = None;
-    }
-    download_job
-}
-
-fn trim_downloaded_file(
-    app: &AppHandle,
-    job: &DownloadJob,
-    output_path: Option<&str>,
-    ffmpeg_location: Option<&str>,
-    cut_start_time: f64,
-) -> Result<String, String> {
-    let input_path = output_path
-        .ok_or_else(|| "Could not determine downloaded file path for timestamp cut".to_string())?;
-    let input_path = Path::new(input_path);
-    if !input_path.exists() {
-        return Err(format!(
-            "Downloaded file not found for timestamp cut: {}",
-            input_path.to_string_lossy()
-        ));
-    }
-
-    let ffmpeg_location =
-        ffmpeg_location.ok_or_else(|| "ffmpeg not available for timestamp cut".to_string())?;
-    let ffmpeg_path = Path::new(ffmpeg_location).join(ffmpeg_tool_name());
-    if !ffmpeg_path.exists() {
-        return Err(format!(
-            "ffmpeg executable not found for timestamp cut: {}",
-            ffmpeg_path.to_string_lossy()
-        ));
-    }
-
-    let cut_timestamp = format_yt_dlp_timestamp(cut_start_time);
-    emit_progress(
-        app,
-        DownloadProgress {
-            id: job.id.clone(),
-            percent: Some(100.0),
-            speed: Some("cutting".to_string()),
-            eta: Some("-".to_string()),
-        },
-    );
-    emit_log(
-        app,
-        LogEvent {
-            id: job.id.clone(),
-            line: format!("[cut] trimming local file from {cut_timestamp}s"),
-            is_error: false,
-        },
-    );
-
-    let final_path = build_timestamp_cut_output_path(input_path, cut_start_time)?;
-    let temp_path = build_cut_sidecar_path(input_path, "cut")?;
-    let backup_path = build_cut_sidecar_path(input_path, "original")?;
-
-    let input_path_str = input_path.to_string_lossy().to_string();
-    let temp_path_str = temp_path.to_string_lossy().to_string();
-
-    let output = Command::new(&ffmpeg_path)
-        .args([
-            "-hide_banner",
-            "-y",
-            "-ss",
-            cut_timestamp.as_str(),
-            "-i",
-            input_path_str.as_str(),
-            "-map",
-            "0",
-            "-c",
-            "copy",
-            "-avoid_negative_ts",
-            "make_zero",
-            temp_path_str.as_str(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to run ffmpeg timestamp cut: {e}"))?;
-
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        emit_log(
-            app,
-            LogEvent {
-                id: job.id.clone(),
-                line: format!("[ffmpeg] {line}"),
-                is_error: false,
-            },
-        );
-    }
-    for line in String::from_utf8_lossy(&output.stderr).lines() {
-        emit_log(
-            app,
-            LogEvent {
-                id: job.id.clone(),
-                line: format!("[ffmpeg] {line}"),
-                is_error: !output.status.success(),
-            },
-        );
-    }
-
-    if !output.status.success() {
-        let _ = fs::remove_file(&temp_path);
-        let code = output.status.code().unwrap_or(-1);
-        return Err(format!("ffmpeg timestamp cut failed with exit code {code}"));
-    }
-
-    if !temp_path.exists() {
-        return Err("ffmpeg finished but no cut file was created".to_string());
-    }
-
-    fs::rename(input_path, &backup_path)
-        .map_err(|e| format!("Could not back up full file before cut replace: {e}"))?;
-    if final_path.exists() {
-        let _ = fs::remove_file(&final_path);
-    }
-    if let Err(err) = fs::rename(&temp_path, &final_path) {
-        let _ = fs::rename(&backup_path, input_path);
-        return Err(format!("Could not move cut file into final path: {err}"));
-    }
-    let _ = fs::remove_file(&backup_path);
-
-    emit_log(
-        app,
-        LogEvent {
-            id: job.id.clone(),
-            line: format!("[cut] saved: {}", final_path.to_string_lossy()),
-            is_error: false,
-        },
-    );
-
-    Ok(final_path.to_string_lossy().to_string())
-}
-
-fn build_cut_sidecar_path(input_path: &Path, label: &str) -> Result<PathBuf, String> {
-    let parent = input_path
-        .parent()
-        .ok_or_else(|| "Downloaded file has no parent directory".to_string())?;
-    let extension = input_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("tmp");
-    Ok(parent.join(format!(
-        ".pinefetch-{label}-{}.{}",
-        Uuid::new_v4(),
-        extension
-    )))
-}
-
-fn build_timestamp_cut_output_path(
-    input_path: &Path,
-    cut_start_time: f64,
-) -> Result<PathBuf, String> {
-    let parent = input_path
-        .parent()
-        .ok_or_else(|| "Downloaded file has no parent directory".to_string())?;
-    let stem = input_path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| "Downloaded file has no usable file name".to_string())?;
-    let cut_suffix = format_timestamp_filename_suffix(cut_start_time);
-
-    let mut filename = format!("{stem}{cut_suffix}");
-    if let Some(extension) = input_path.extension().and_then(|value| value.to_str()) {
-        if !extension.is_empty() {
-            filename.push('.');
-            filename.push_str(extension);
-        }
-    }
-
-    Ok(parent.join(filename))
-}
-
-fn format_timestamp_filename_suffix(seconds: f64) -> String {
-    let mut timestamp = format_yt_dlp_timestamp(seconds);
-    timestamp = timestamp
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    format!("_t{timestamp}")
-}
-
-fn select_existing_output_path(candidates: &[String]) -> Option<String> {
-    let existing = candidates
-        .iter()
-        .enumerate()
-        .filter_map(|(index, candidate)| {
-            let path = Path::new(candidate.as_str());
-            let metadata = path.metadata().ok()?;
-            if !metadata.is_file() {
-                return None;
-            }
-            Some((index, candidate, metadata.len(), is_format_part_path(path)))
-        })
-        .collect::<Vec<_>>();
-
-    if let Some((_, candidate, _, _)) = existing.iter().rev().find(|(_, _, _, is_part)| !*is_part) {
-        return Some((*candidate).clone());
-    }
-
-    existing
-        .into_iter()
-        .max_by(|left, right| left.2.cmp(&right.2).then_with(|| left.0.cmp(&right.0)))
-        .map(|(_, candidate, _, _)| candidate.clone())
-}
-
-fn is_format_part_path(path: &Path) -> bool {
-    path.file_stem()
-        .and_then(|value| value.to_str())
-        .and_then(|stem| stem.rsplit_once(".f"))
-        .map(|(_, suffix)| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
-        .unwrap_or(false)
-}
-
-fn parse_yt_dlp_filepath(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with("pinefetch_caption:") {
-        return None;
-    }
-
-    for prefix in [
-        "[download] Destination:",
-        "[ExtractAudio] Destination:",
-        "[Metadata] Writing metadata to:",
-    ] {
-        if let Some(candidate) = trimmed.strip_prefix(prefix) {
-            return normalize_filepath_candidate(candidate);
-        }
-    }
-
-    if let Some(candidate) = trimmed.strip_prefix("[Merger] Merging formats into ") {
-        return normalize_filepath_candidate(candidate);
-    }
-
-    if let Some(candidate) = trimmed
-        .strip_prefix("[download] ")
-        .and_then(|value| value.strip_suffix(" has already been downloaded"))
-    {
-        return normalize_filepath_candidate(candidate);
-    }
-
-    if trimmed.starts_with('[') {
-        return None;
-    }
-
-    normalize_filepath_candidate(trimmed)
-}
-
-fn normalize_filepath_candidate(raw: &str) -> Option<String> {
-    let mut candidate = raw.trim();
-    if candidate.len() >= 2 {
-        let bytes = candidate.as_bytes();
-        if (bytes[0] == b'"' && bytes[candidate.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[candidate.len() - 1] == b'\'')
-        {
-            candidate = &candidate[1..candidate.len() - 1];
-        }
-    }
-    let candidate = candidate.trim();
-    if matches!(candidate, "" | "NA" | "N/A" | "None" | "null") {
-        return None;
-    }
-    if candidate.starts_with("http://") || candidate.starts_with("https://") {
-        return None;
-    }
-    Some(candidate.to_string())
-}
-
-fn resolve_existing_output_path_fallback(
-    job: &DownloadJob,
-    yt_dlp: &str,
-    deno_path: Option<&str>,
-    output_template: &str,
-) -> Option<String> {
-    let expected_path =
-        probe_expected_output_filename(job, yt_dlp, deno_path, output_template).ok()??;
-    let candidates = existing_output_candidates_from_expected(&expected_path, job);
-    select_existing_output_path(&candidates)
-}
-
-fn probe_expected_output_filename(
-    job: &DownloadJob,
-    yt_dlp: &str,
-    deno_path: Option<&str>,
-    output_template: &str,
-) -> Result<Option<String>, String> {
-    let mut command = Command::new(yt_dlp);
-    command.args([
-        "--simulate",
-        "--no-playlist",
-        "--no-warnings",
-        "--print",
-        "filename",
-        "-f",
-    ]);
-    command.arg(&job.format);
-    command.arg("-o");
-    command.arg(output_template);
-
-    if let Some(deno) = deno_path {
-        command.arg("--js-runtimes");
-        command.arg(format!("deno:{deno}"));
-    }
-
-    if job.extract_audio {
-        command.arg("--extract-audio");
-        if let Some(fmt) = job.audio_format.as_ref() {
-            command.arg("--audio-format");
-            command.arg(fmt);
-        }
-    }
-
-    if let Some(format_sort) = site_format_sort(&job.url) {
-        command.arg("--format-sort");
-        command.arg(format_sort);
-    }
-
-    command.arg(&job.url);
-
-    let output = command
-        .output()
-        .map_err(|e| format!("Failed to probe output filename with yt-dlp: {e}"))?;
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .rev()
-        .find_map(parse_yt_dlp_filepath))
-}
-
-fn existing_output_candidates_from_expected(expected_path: &str, job: &DownloadJob) -> Vec<String> {
-    let mut candidates = vec![expected_path.to_string()];
-    let expected = Path::new(expected_path);
-
-    if job.extract_audio {
-        if let Some(audio_format) = job.audio_format.as_deref() {
-            candidates.push(
-                expected
-                    .with_extension(audio_format)
-                    .to_string_lossy()
-                    .to_string(),
-            );
-        }
-    }
-
-    if let Some(cut_start_time) = job.cut_start_time {
-        for candidate in candidates.clone() {
-            if let Ok(cut_path) =
-                build_timestamp_cut_output_path(Path::new(&candidate), cut_start_time)
-            {
-                candidates.push(cut_path.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    candidates.extend(related_existing_output_paths(expected));
-    candidates.sort();
-    candidates.dedup();
-    candidates
-}
-
-fn related_existing_output_paths(expected: &Path) -> Vec<String> {
-    let Some(parent) = expected.parent() else {
-        return Vec::new();
-    };
-    let Some(expected_stem) = expected.file_stem().and_then(|value| value.to_str()) else {
-        return Vec::new();
-    };
-    let format_part_prefix = format!("{expected_stem}.f");
-
-    fs::read_dir(parent)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.flatten())
-        .filter_map(|entry| {
-            let path = entry.path();
-            if !path.is_file() {
-                return None;
-            }
-            let stem = path.file_stem().and_then(|value| value.to_str())?;
-            if stem == expected_stem || stem.starts_with(&format_part_prefix) {
-                Some(path.to_string_lossy().to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-fn ffmpeg_tool_name() -> &'static str {
-    if cfg!(windows) {
-        "ffmpeg.exe"
-    } else {
-        "ffmpeg"
-    }
-}
-
-fn ffprobe_tool_name() -> &'static str {
-    if cfg!(windows) {
-        "ffprobe.exe"
-    } else {
-        "ffprobe"
-    }
-}
-
-fn ffmpeg_tool_is_usable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-
-    Command::new(path)
-        .arg("-version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-fn has_usable_ffmpeg_tools_in_dir(dir: &Path) -> bool {
-    ffmpeg_tool_is_usable(&dir.join(ffmpeg_tool_name()))
-        && ffmpeg_tool_is_usable(&dir.join(ffprobe_tool_name()))
-}
-
-fn normalize_ffmpeg_location(path: &Path) -> Option<String> {
-    if path.is_dir() {
-        if has_usable_ffmpeg_tools_in_dir(path) {
-            return Some(path.to_string_lossy().to_string());
-        }
-        return None;
-    }
-
-    if path.is_file() {
-        if let Some(parent) = path.parent() {
-            if has_usable_ffmpeg_tools_in_dir(parent) {
-                return Some(parent.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    None
-}
-
-fn resolve_bundled_ffmpeg_location(app: &AppHandle) -> Option<String> {
-    for relative in [
-        "ffmpeg-runtime/bin",
-        "ffmpeg-runtime",
-        "resources/ffmpeg-runtime/bin",
-        "resources/ffmpeg-runtime",
-    ] {
-        if let Some(path) = app.path_resolver().resolve_resource(relative) {
-            if let Some(location) = normalize_ffmpeg_location(&path) {
-                return Some(location);
-            }
-        }
-    }
-    None
-}
-
-fn resolve_ffmpeg_location(app: &AppHandle, yt_dlp_path: &str) -> Option<String> {
-    if let Ok(raw) = std::env::var("PINEFETCH_FFMPEG_LOCATION") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            if let Some(location) = normalize_ffmpeg_location(Path::new(trimmed)) {
-                return Some(location);
-            }
-        }
-    }
-
-    if let Some(location) = resolve_bundled_ffmpeg_location(app) {
-        return Some(location);
-    }
-
-    if let Some(location) = normalize_ffmpeg_location(Path::new(yt_dlp_path)) {
-        return Some(location);
-    }
-
-    for candidate in ["/opt/homebrew/bin", "/usr/local/bin"] {
-        if let Some(location) = normalize_ffmpeg_location(Path::new(candidate)) {
-            return Some(location);
-        }
-    }
-
-    if let Some(ffmpeg_path) = find_in_path("ffmpeg") {
-        if let Some(location) = normalize_ffmpeg_location(Path::new(&ffmpeg_path)) {
-            return Some(location);
-        }
-    }
-
-    if let Some(ffprobe_path) = find_in_path("ffprobe") {
-        if let Some(location) = normalize_ffmpeg_location(Path::new(&ffprobe_path)) {
-            return Some(location);
-        }
-    }
-
-    None
-}
-
-fn resolve_bundled_python(app: &AppHandle) -> Option<String> {
-    #[cfg(target_os = "windows")]
-    let candidates = vec![
-        "whisper-runtime/Scripts/python.exe",
-        "resources/whisper-runtime/Scripts/python.exe",
-    ];
-
-    #[cfg(not(target_os = "windows"))]
-    let candidates = vec![
-        "whisper-runtime/bin/python3.12",
-        "whisper-runtime/bin/python3.11",
-        "whisper-runtime/bin/python3.10",
-        "whisper-runtime/bin/python3",
-        "whisper-runtime/bin/python",
-        "resources/whisper-runtime/bin/python3.12",
-        "resources/whisper-runtime/bin/python3.11",
-        "resources/whisper-runtime/bin/python3.10",
-        "resources/whisper-runtime/bin/python3",
-        "resources/whisper-runtime/bin/python",
-    ];
-
-    for relative in candidates {
-        if let Some(path) = app.path_resolver().resolve_resource(relative) {
-            if path.exists() {
-                return Some(path.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    None
-}
-
-fn resolve_bundled_deno(app: &AppHandle) -> Option<String> {
-    #[cfg(target_os = "windows")]
-    let candidates = vec![
-        "deno-runtime/bin/deno.exe",
-        "resources/deno-runtime/bin/deno.exe",
-    ];
-
-    #[cfg(not(target_os = "windows"))]
-    let candidates = vec!["deno-runtime/bin/deno", "resources/deno-runtime/bin/deno"];
-
-    for relative in candidates {
-        if let Some(path) = app.path_resolver().resolve_resource(relative) {
-            if path.exists() {
-                return Some(path.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    None
-}
-
-fn resolve_deno_executable(app: &AppHandle) -> Option<String> {
-    if let Ok(raw) = std::env::var("PINEFETCH_DENO_PATH") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() && Path::new(trimmed).exists() {
-            return Some(trimmed.to_string());
-        }
-    }
-
-    if let Some(path) = resolve_bundled_deno(app) {
-        return Some(path);
-    }
-
-    find_in_path("deno")
-}
-
-fn resolve_python_executable(app: &AppHandle) -> Option<String> {
-    if let Ok(raw) = std::env::var("PINEFETCH_FASTER_WHISPER_PYTHON") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() && Path::new(trimmed).exists() {
-            return Some(trimmed.to_string());
-        }
-    }
-
-    if let Some(path) = resolve_bundled_python(app) {
-        return Some(path);
-    }
-
-    for candidate in [
-        "python3.12",
-        "python3.11",
-        "python3.10",
-        "python3",
-        "python",
-    ] {
-        if let Some(path) = find_in_path(candidate) {
-            return Some(path);
-        }
-    }
-
-    None
-}
-
-fn run_faster_whisper_transcription(
-    app: &AppHandle,
-    state: &AppState,
-    job: &DownloadJob,
-    output_path: Option<&str>,
-) -> Result<String, String> {
-    let media_path = output_path
-        .ok_or_else(|| "Could not determine downloaded file path for transcription".to_string())?;
-    if !Path::new(media_path).exists() {
-        return Err(format!(
-            "Downloaded file not found for transcription: {media_path}"
-        ));
-    }
-
-    let temporary_audio = if job.download_video_with_transcript {
-        Some(extract_temporary_transcription_audio(
-            app, state, job, media_path,
-        )?)
-    } else {
-        None
-    };
-    let transcription_input = temporary_audio
-        .as_ref()
-        .map(|audio| audio.path.as_path())
-        .unwrap_or_else(|| Path::new(media_path));
-
-    let python = resolve_python_executable(app).ok_or_else(|| {
-    "No Python runtime found for faster-whisper (bundled runtime missing and no compatible Python in PATH)"
-      .to_string()
-  })?;
-    emit_log(
-        app,
-        LogEvent {
-            id: job.id.clone(),
-            line: format!("[faster-whisper] using python: {python}"),
-            is_error: false,
-        },
-    );
-
-    let transcript_path = Path::new(media_path).with_extension("txt");
-    let transcript_path_str = transcript_path.to_string_lossy().to_string();
-    let model_name = normalize_faster_whisper_model(&job.faster_whisper_model);
-    emit_log(
-        app,
-        LogEvent {
-            id: job.id.clone(),
-            line: format!("[faster-whisper] model: {model_name}"),
-            is_error: false,
-        },
-    );
-
-    let mut command = Command::new(python);
-    command
-        .arg("-c")
-        .arg(FASTER_WHISPER_TRANSCRIBE_SNIPPET)
-        .arg(transcription_input)
-        .arg(&transcript_path_str)
-        .arg(&model_name)
-        .arg(if job.transcribe_timestamps { "1" } else { "0" })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("Failed to start faster-whisper transcription: {e}"))?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let app_stdout = app.clone();
-    let job_id_stdout = job.id.clone();
-    let handle_out = thread::spawn(move || {
-        if let Some(out) = stdout {
-            let reader = BufReader::new(out);
-            for line in reader.lines().flatten() {
-                emit_log(
-                    &app_stdout,
-                    LogEvent {
-                        id: job_id_stdout.clone(),
-                        line: format!("[faster-whisper] {line}"),
-                        is_error: false,
-                    },
-                );
-            }
-        }
-    });
-
-    let app_stderr = app.clone();
-    let job_id_stderr = job.id.clone();
-    let handle_err = thread::spawn(move || {
-        if let Some(err) = stderr {
-            let reader = BufReader::new(err);
-            for line in reader.lines().flatten() {
-                emit_log(
-                    &app_stderr,
-                    LogEvent {
-                        id: job_id_stderr.clone(),
-                        line: format!("[faster-whisper] {line}"),
-                        is_error: true,
-                    },
-                );
-            }
-        }
-    });
-
-    let status = child
-        .wait()
-        .map_err(|e| format!("Failed while waiting for faster-whisper: {e}"))?;
-    let _ = handle_out.join();
-    let _ = handle_err.join();
-
-    if !status.success() {
-        let code = status.code().unwrap_or(-1);
-        return Err(format!(
-      "faster-whisper failed (exit code {code}). Ensure Python deps are installed (`pip install faster-whisper`)."
-    ));
-    }
-
-    if !transcript_path.exists() {
-        return Err("faster-whisper finished but no transcript file was created".to_string());
-    }
-
-    Ok(transcript_path_str)
-}
-
-fn extract_temporary_transcription_audio(
-    app: &AppHandle,
-    state: &AppState,
-    job: &DownloadJob,
-    video_path: &str,
-) -> Result<TemporaryTranscriptionAudio, String> {
-    let yt_dlp = resolve_yt_dlp(app, state)?;
-    let ffmpeg_location = resolve_ffmpeg_location(app, &yt_dlp)
-        .ok_or_else(|| "ffmpeg not available for transcription audio extraction".to_string())?;
-    let ffmpeg_path = Path::new(&ffmpeg_location).join(ffmpeg_tool_name());
-    if !ffmpeg_path.exists() {
-        return Err(format!(
-            "ffmpeg executable not found for transcription: {}",
-            ffmpeg_path.to_string_lossy()
-        ));
-    }
-
-    let video_path = Path::new(video_path);
-    let parent = video_path
-        .parent()
-        .ok_or_else(|| "Downloaded video has no parent directory".to_string())?;
-    let audio_path = parent.join(format!(".pinefetch-transcription-{}.wav", Uuid::new_v4()));
-    let video_path_str = video_path.to_string_lossy().to_string();
-    let audio_path_str = audio_path.to_string_lossy().to_string();
-
-    emit_log(
-        app,
-        LogEvent {
-            id: job.id.clone(),
-            line: "[transcript] preparing audio from video".to_string(),
-            is_error: false,
-        },
-    );
-
-    let output = Command::new(&ffmpeg_path)
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            video_path_str.as_str(),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "pcm_s16le",
-            audio_path_str.as_str(),
-        ])
-        .output()
-        .map_err(|e| format!("Failed to prepare audio for transcription: {e}"))?;
-
-    if !output.status.success() {
-        let _ = fs::remove_file(&audio_path);
-        let details = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if details.is_empty() {
-            format!(
-                "ffmpeg transcription audio extraction failed with exit code {}",
-                output.status.code().unwrap_or(-1)
-            )
-        } else {
-            format!("ffmpeg transcription audio extraction failed: {details}")
-        });
-    }
-    if !audio_path.exists() {
-        return Err("ffmpeg finished but no transcription audio was created".to_string());
-    }
-
-    Ok(TemporaryTranscriptionAudio { path: audio_path })
-}
-
-fn build_output_template(output_dir: &str, filename_suffix: Option<&str>) -> String {
-    let mut path = PathBuf::from(output_dir);
-    // Use title, but fallback to uploader and id for platforms where title might be missing or duplicate
-    // %(title)s - video title
-    // %(uploader)s - uploader name
-    // %(id)s - unique video ID (ensures uniqueness for Instagram posts from same creator)
-    let suffix = filename_suffix.unwrap_or("");
-    path.push(format!("%(title)s - %(uploader)s - %(id)s{suffix}.%(ext)s"));
-    path.to_string_lossy().to_string()
-}
-
-fn normalize_filename_suffix(raw: Option<&str>) -> Option<String> {
-    let suffix = raw?.trim();
-    if suffix.is_empty()
-        || suffix.len() > 32
-        || !suffix.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '_' || character == '-'
-        })
-    {
-        return None;
-    }
-
-    Some(suffix.to_string())
-}
-
-fn emit_queue(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    let queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
-    app.emit_all("queue:update", queue.clone())
-        .map_err(|e| format!("Emit queue failed: {e}"))
-}
-
-fn emit_progress(app: &AppHandle, progress: DownloadProgress) {
-    let _ = app.emit_all("download:progress", progress);
-}
-
-fn emit_state(app: &AppHandle, state: DownloadStateEvent) {
-    let _ = app.emit_all("download:state", state);
-}
-
-fn emit_log(app: &AppHandle, log: LogEvent) {
-    let _ = app.emit_all("download:log", log);
 }
 
 fn is_valid_url(url: &str) -> bool {
@@ -3102,481 +1373,6 @@ fn find_in_path(binary: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir =
-        tauri::api::path::app_config_dir(&app.config()).ok_or("Config directory unavailable")?;
-    fs::create_dir_all(&dir).map_err(|e| format!("Config dir create failed: {e}"))?;
-    Ok(dir.join("config.json"))
-}
-
-fn legacy_history_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = tauri::api::path::app_data_dir(&app.config()).ok_or("Data directory unavailable")?;
-    fs::create_dir_all(&dir).map_err(|e| format!("Data dir create failed: {e}"))?;
-    Ok(dir.join("history.json"))
-}
-
-fn load_legacy_history_json(app: &AppHandle) -> Vec<HistoryEntry> {
-    if let Ok(path) = legacy_history_path(app) {
-        if let Ok(raw) = fs::read_to_string(path) {
-            if let Ok(history) = serde_json::from_str::<Vec<HistoryEntry>>(&raw) {
-                return history.into_iter().map(normalize_history_entry).collect();
-            }
-        }
-    }
-    Vec::new()
-}
-
-fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
-    entry.title = trim_optional_string(entry.title);
-    entry.uploader = trim_optional_string(entry.uploader);
-    entry.filename = trim_optional_string(entry.filename)
-        .or_else(|| filename_from_path(entry.output_path.as_deref()));
-    entry.thumbnail = trim_optional_string(entry.thumbnail);
-    entry.upload_date = trim_optional_string(entry.upload_date);
-    entry.timestamp = entry.timestamp.filter(|timestamp| *timestamp >= 0);
-    entry.duration_seconds = entry.duration_seconds.filter(|duration| *duration >= 0);
-    entry.file_size_bytes = entry.file_size_bytes.filter(|size| *size >= 0);
-    entry.medium = trim_optional_string(entry.medium)
-        .map(|medium| medium.to_ascii_lowercase())
-        .filter(|medium| matches!(medium.as_str(), "video" | "audio" | "transcript"));
-    entry.source = trim_optional_string(entry.source)
-        .map(|source| source.to_ascii_lowercase())
-        .or_else(|| source_from_url(&entry.url));
-    entry.platform = trim_optional_string(entry.platform).or_else(|| detect_platform(&entry.url));
-    entry.output_path = trim_optional_string(entry.output_path);
-    if entry.title.is_none() {
-        entry.title = title_from_filename(entry.filename.as_deref());
-    }
-    entry
-}
-
-fn millis_to_i64(value: u64) -> i64 {
-    value.min(i64::MAX as u64) as i64
-}
-
-fn i64_to_millis(value: i64) -> u64 {
-    if value < 0 {
-        0
-    } else {
-        value as u64
-    }
-}
-
-fn optional_i64_to_millis(value: Option<i64>) -> Option<u64> {
-    value.map(i64_to_millis)
-}
-
-fn count_history_entries_in_db(state: &AppState) -> Result<u64, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM history_entries", [], |row| row.get(0))
-        .map_err(|e| format!("History read failed: {e}"))?;
-    Ok(count.max(0) as u64)
-}
-
-fn list_history_page_from_db(
-    state: &AppState,
-    limit: u32,
-    offset: u32,
-) -> Result<HistoryPage, String> {
-    search_history_page_from_db(state, limit, offset, None)
-}
-
-fn search_history_page_from_db(
-    state: &AppState,
-    limit: u32,
-    offset: u32,
-    query: Option<&str>,
-) -> Result<HistoryPage, String> {
-    let pattern = history_search_pattern(query);
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    let total: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM history_entries
-             WHERE (?1 IS NULL OR title LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-                OR source LIKE ?1 ESCAPE '\\' COLLATE NOCASE)",
-            params![pattern],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("History read failed: {e}"))?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, medium, source, platform, output_path, created_at, completed_at
-             FROM history_entries
-             WHERE (?1 IS NULL OR title LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-                OR source LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
-             ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC, id DESC
-             LIMIT ?2 OFFSET ?3",
-        )
-        .map_err(|e| format!("History read failed: {e}"))?;
-
-    let rows = stmt
-        .query_map(
-            params![pattern, i64::from(limit), i64::from(offset)],
-            |row| {
-                let created_at: i64 = row.get(14)?;
-                let completed_at: Option<i64> = row.get(15)?;
-                Ok(HistoryEntry {
-                    id: row.get(0)?,
-                    url: row.get(1)?,
-                    title: row.get(2)?,
-                    uploader: row.get(3)?,
-                    filename: row.get(4)?,
-                    thumbnail: row.get(5)?,
-                    upload_date: row.get(6)?,
-                    timestamp: row.get(7)?,
-                    duration_seconds: row.get(8)?,
-                    file_size_bytes: row.get(9)?,
-                    medium: row.get(10)?,
-                    source: row.get(11)?,
-                    platform: row.get(12)?,
-                    output_path: row.get(13)?,
-                    created_at: i64_to_millis(created_at),
-                    completed_at: optional_i64_to_millis(completed_at),
-                })
-            },
-        )
-        .map_err(|e| format!("History read failed: {e}"))?;
-
-    let mut entries = Vec::new();
-    for row in rows {
-        entries.push(normalize_history_entry(
-            row.map_err(|e| format!("History read failed: {e}"))?,
-        ));
-    }
-
-    let loaded_count = u64::from(offset).saturating_add(entries.len() as u64);
-    Ok(HistoryPage {
-        entries,
-        has_more: loaded_count < total.max(0) as u64,
-    })
-}
-
-fn history_search_pattern(query: Option<&str>) -> Option<String> {
-    let query = query.map(str::trim).filter(|query| !query.is_empty())?;
-    let escaped = query
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    Some(format!("%{escaped}%"))
-}
-
-fn list_history_entries_from_db(state: &AppState) -> Result<Vec<HistoryEntry>, String> {
-    Ok(list_history_page_from_db(state, u32::MAX, 0)?.entries)
-}
-
-fn get_history_stats_from_db(state: &AppState) -> Result<HistoryStats, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    let mut stats = conn
-        .query_row(
-            "SELECT
-            COUNT(*),
-            COALESCE(SUM(duration_seconds), 0),
-            COALESCE(SUM(file_size_bytes), 0)
-         FROM history_entries",
-            [],
-            |row| {
-                let video_count: i64 = row.get(0)?;
-                let total_duration_seconds: i64 = row.get(1)?;
-                let total_file_size_bytes: i64 = row.get(2)?;
-                Ok(HistoryStats {
-                    video_count: video_count.max(0) as u64,
-                    total_duration_seconds: total_duration_seconds.max(0) as u64,
-                    total_file_size_bytes: total_file_size_bytes.max(0) as u64,
-                    source_counts: Vec::new(),
-                })
-            },
-        )
-        .map_err(|e| format!("History stats read failed: {e}"))?;
-
-    let mut stmt = conn
-        .prepare("SELECT source, url, platform FROM history_entries")
-        .map_err(|e| format!("History stats read failed: {e}"))?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, Option<String>>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-            ))
-        })
-        .map_err(|e| format!("History stats read failed: {e}"))?;
-    let mut counts = BTreeMap::<String, u64>::new();
-    for row in rows {
-        let (source, url, platform) = row.map_err(|e| format!("History stats read failed: {e}"))?;
-        let source = trim_optional_string(source)
-            .map(|value| value.to_ascii_lowercase())
-            .or_else(|| source_from_url(&url))
-            .or_else(|| trim_optional_string(platform).map(|value| value.to_ascii_lowercase()))
-            .unwrap_or_else(|| "unknown".to_string());
-        *counts.entry(source).or_default() += 1;
-    }
-    stats.source_counts = counts
-        .into_iter()
-        .map(|(source, count)| HistorySourceCount { source, count })
-        .collect();
-    stats
-        .source_counts
-        .sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.source.cmp(&b.source)));
-    Ok(stats)
-}
-
-fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<(), String> {
-    let entry = normalize_history_entry(entry.clone());
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute(
-        "INSERT OR REPLACE INTO history_entries (
-            id,
-            url,
-            title,
-            uploader,
-            filename,
-            thumbnail,
-            upload_date,
-            timestamp,
-            duration_seconds,
-            file_size_bytes,
-            medium,
-            source,
-            platform,
-            output_path,
-            created_at,
-            completed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-        params![
-            entry.id,
-            entry.url,
-            entry.title,
-            entry.uploader,
-            entry.filename,
-            entry.thumbnail,
-            entry.upload_date,
-            entry.timestamp,
-            entry.duration_seconds,
-            entry.file_size_bytes,
-            entry.medium,
-            entry.source,
-            entry.platform,
-            entry.output_path,
-            millis_to_i64(entry.created_at),
-            entry.completed_at.map(millis_to_i64),
-        ],
-    )
-    .map_err(|e| format!("History insert failed: {e}"))?;
-    Ok(())
-}
-
-fn store_transcription_for_history_entry(
-    state: &AppState,
-    job: &DownloadJob,
-    history_entry_id: &str,
-    transcript_path: &str,
-) -> Result<(), String> {
-    let text = fs::read_to_string(transcript_path)
-        .map_err(|e| format!("Transcript file could not be read: {e}"))?;
-    let transcription_type = if job.transcribe_timestamps {
-        "text with timestamps"
-    } else {
-        "text"
-    };
-    insert_transcription_in_db(state, history_entry_id, &text, transcription_type)
-}
-
-fn insert_transcription_in_db(
-    state: &AppState,
-    history_entry_id: &str,
-    text: &str,
-    transcription_type: &str,
-) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute(
-        "INSERT INTO transcriptions (id, history_entry_id, text, \"type\")
-         VALUES (?1, ?2, ?3, ?4)",
-        params![
-            Uuid::new_v4().to_string(),
-            history_entry_id,
-            text,
-            transcription_type,
-        ],
-    )
-    .map_err(|e| format!("Transcription insert failed: {e}"))?;
-    Ok(())
-}
-
-fn delete_history_entry_from_db(state: &AppState, id: &str) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute("DELETE FROM history_entries WHERE id = ?1", params![id])
-        .map_err(|e| format!("History delete failed: {e}"))?;
-    Ok(())
-}
-
-fn clear_history_entries_in_db(state: &AppState) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute("DELETE FROM history_entries", [])
-        .map_err(|e| format!("History clear failed: {e}"))?;
-    Ok(())
-}
-
-fn migrate_legacy_history_json(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    if count_history_entries_in_db(state)? > 0 {
-        return Ok(());
-    }
-
-    for entry in load_legacy_history_json(app) {
-        insert_history_entry_in_db(state, &entry)?;
-    }
-    Ok(())
-}
-
-fn load_legacy_config_json(app: &AppHandle) -> Option<AppConfig> {
-    if let Ok(path) = config_path(app) {
-        if let Ok(raw) = fs::read_to_string(path) {
-            if let Ok(cfg) = serde_json::from_str::<AppConfig>(&raw) {
-                return Some(normalize_app_config(cfg));
-            }
-        }
-    }
-    None
-}
-
-fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
-    conn.query_row(
-        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_instagram_captions
-         FROM app_config
-         WHERE id = 1",
-        [],
-        |row| {
-            Ok(normalize_app_config(AppConfig {
-                yt_dlp_path: row.get(0)?,
-                default_output_dir: row.get(1)?,
-                selected_preset_key: row.get(2)?,
-                faster_whisper_model: row.get(3)?,
-                download_video_with_transcript: row.get::<_, i64>(4)? != 0,
-                magic_import_enabled: row.get::<_, i64>(5)? != 0,
-                cut_at_timestamp_enabled: row.get::<_, i64>(6)? != 0,
-                last_download_url: row.get(7)?,
-                notifications_enabled: row.get::<_, i64>(8)? != 0,
-                save_instagram_captions: row.get::<_, i64>(9)? != 0,
-            }))
-        },
-    )
-}
-
-fn load_config_from_db(conn: &Connection) -> Result<AppConfig, String> {
-    get_app_config_from_conn(conn).map_err(|e| format!("Config read failed: {e}"))
-}
-
-fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite::Result<()> {
-    let config = normalize_app_config(config.clone());
-    conn.execute(
-        "INSERT INTO app_config (
-            id,
-            yt_dlp_path,
-            default_output_dir,
-            selected_preset_key,
-            faster_whisper_model,
-            download_video_with_transcript,
-            magic_import_enabled,
-            cut_at_timestamp_enabled,
-            last_download_url,
-            notifications_enabled,
-            save_instagram_captions,
-            created_at,
-            updated_at
-        ) VALUES (
-            1,
-            ?1,
-            ?2,
-            ?3,
-            ?4,
-            ?5,
-            ?6,
-            ?7,
-            ?8,
-            ?9,
-            ?10,
-            datetime('now'),
-            datetime('now')
-        )
-        ON CONFLICT(id) DO UPDATE SET
-            yt_dlp_path = excluded.yt_dlp_path,
-            default_output_dir = excluded.default_output_dir,
-            selected_preset_key = excluded.selected_preset_key,
-            faster_whisper_model = excluded.faster_whisper_model,
-            download_video_with_transcript = excluded.download_video_with_transcript,
-            magic_import_enabled = excluded.magic_import_enabled,
-            cut_at_timestamp_enabled = excluded.cut_at_timestamp_enabled,
-            last_download_url = excluded.last_download_url,
-            notifications_enabled = excluded.notifications_enabled,
-            save_instagram_captions = excluded.save_instagram_captions,
-            updated_at = datetime('now')",
-        params![
-            config.yt_dlp_path,
-            config.default_output_dir,
-            config.selected_preset_key,
-            config.faster_whisper_model,
-            if config.download_video_with_transcript {
-                1
-            } else {
-                0
-            },
-            if config.magic_import_enabled { 1 } else { 0 },
-            if config.cut_at_timestamp_enabled {
-                1
-            } else {
-                0
-            },
-            config.last_download_url,
-            config.notifications_enabled,
-            config.save_instagram_captions,
-        ],
-    )?;
-    Ok(())
-}
-
-fn save_config_to_db(state: &AppState, config: &AppConfig) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    upsert_app_config_in_conn(&conn, config).map_err(|e| format!("Config write failed: {e}"))
-}
-
-fn get_app_meta_value(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row(
-        "SELECT value FROM app_meta WHERE key = ?1",
-        params![key],
-        |row| row.get(0),
-    )
-    .optional()
-}
-
-fn set_app_meta_value(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![key, value],
-    )?;
-    Ok(())
-}
-
-fn migrate_legacy_config_json(app: &AppHandle, conn: &Connection) -> Result<(), String> {
-    let already_migrated = get_app_meta_value(conn, LEGACY_CONFIG_MIGRATION_KEY)
-        .map_err(|e| format!("Config migration check failed: {e}"))?
-        .as_deref()
-        == Some("1");
-
-    if already_migrated {
-        return Ok(());
-    }
-
-    if let Some(config) = load_legacy_config_json(app) {
-        upsert_app_config_in_conn(conn, &config)
-            .map_err(|e| format!("Config migration failed: {e}"))?;
-    }
-
-    set_app_meta_value(conn, LEGACY_CONFIG_MIGRATION_KEY, "1")
-        .map_err(|e| format!("Config migration marker failed: {e}"))?;
-    Ok(())
 }
 
 fn link_dump_db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -3859,1113 +1655,6 @@ fn ensure_history_entries_column(
     Ok(())
 }
 
-fn get_link_dump_settings_from_conn(conn: &Connection) -> rusqlite::Result<LinkDumpSettings> {
-    conn.query_row(
-        "SELECT server_enabled, host, port, created_at, updated_at FROM link_dump_settings WHERE id = 1",
-        [],
-        |row| {
-            Ok(LinkDumpSettings {
-                server_enabled: row.get::<_, i64>(0)? != 0,
-                host: row.get(1)?,
-                port: row.get::<_, i64>(2)? as u16,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-            })
-        },
-    )
-}
-
-fn get_link_dump_settings(state: &AppState) -> Result<LinkDumpSettings, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    get_link_dump_settings_from_conn(&conn)
-        .map_err(|e| format!("Link Dump settings read failed: {e}"))
-}
-
-fn update_link_dump_settings_in_db(
-    state: &AppState,
-    patch: LinkDumpSettingsPatch,
-) -> Result<LinkDumpSettings, String> {
-    let mut current = get_link_dump_settings(state)?;
-    if let Some(enabled) = patch.server_enabled {
-        current.server_enabled = enabled;
-    }
-    if let Some(host) = patch.host {
-        let trimmed = host.trim();
-        if !trimmed.is_empty() {
-            current.host = normalize_link_dump_host(trimmed);
-        }
-    }
-    if let Some(port) = patch.port {
-        if port == 0 {
-            return Err("Port must be between 1 and 65535".to_string());
-        }
-        current.port = port;
-    }
-
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute(
-        "UPDATE link_dump_settings
-         SET server_enabled = ?1, host = ?2, port = ?3, updated_at = datetime('now')
-         WHERE id = 1",
-        params![
-            if current.server_enabled { 1 } else { 0 },
-            current.host,
-            i64::from(current.port)
-        ],
-    )
-    .map_err(|e| format!("Link Dump settings update failed: {e}"))?;
-    get_link_dump_settings_from_conn(&conn)
-        .map_err(|e| format!("Link Dump settings read failed: {e}"))
-}
-
-fn list_link_dump_secrets_from_conn(
-    conn: &Connection,
-) -> rusqlite::Result<Vec<LinkDumpSecretView>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, created_at, last_used_at, revoked_at, deleted_at
-         FROM link_dump_secrets
-         WHERE deleted_at IS NULL
-         ORDER BY created_at DESC",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        let revoked_at: Option<String> = row.get(4)?;
-        let deleted_at: Option<String> = row.get(5)?;
-        let status = if deleted_at.is_some() {
-            "deleted"
-        } else if revoked_at.is_some() {
-            "revoked"
-        } else {
-            "active"
-        };
-        Ok(LinkDumpSecretView {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            created_at: row.get(2)?,
-            last_used_at: row.get(3)?,
-            revoked_at,
-            deleted_at,
-            status: status.to_string(),
-        })
-    })?;
-
-    rows.collect()
-}
-
-fn list_link_dump_secrets(state: &AppState) -> Result<Vec<LinkDumpSecretView>, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    list_link_dump_secrets_from_conn(&conn)
-        .map_err(|e| format!("Link Dump secrets read failed: {e}"))
-}
-
-fn next_link_dump_secret_name(conn: &Connection) -> rusqlite::Result<String> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM link_dump_secrets WHERE deleted_at IS NULL",
-        [],
-        |row| row.get(0),
-    )?;
-    Ok(format!("Link Dump Connection {}", count + 1))
-}
-
-fn generate_link_dump_secret_value() -> Result<String, String> {
-    let mut bytes = [0_u8; 32];
-    getrandom::getrandom(&mut bytes).map_err(|e| format!("Secret generation failed: {e}"))?;
-    Ok(format!("pfld_{}", URL_SAFE_NO_PAD.encode(bytes)))
-}
-
-fn hash_link_dump_secret(secret: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(secret.as_bytes());
-    bytes_to_hex(&hasher.finalize())
-}
-
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
-}
-
-fn constant_time_eq_str(left: &str, right: &str) -> bool {
-    let left = left.as_bytes();
-    let right = right.as_bytes();
-    let max_len = left.len().max(right.len());
-    let mut diff = left.len() ^ right.len();
-
-    for index in 0..max_len {
-        let left_byte = left.get(index).copied().unwrap_or(0);
-        let right_byte = right.get(index).copied().unwrap_or(0);
-        diff |= usize::from(left_byte ^ right_byte);
-    }
-
-    diff == 0
-}
-
-fn create_link_dump_secret_in_db(
-    state: &AppState,
-    name: Option<String>,
-) -> Result<GeneratedLinkDumpSecret, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    let clean_name = name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .map(Ok)
-        .unwrap_or_else(|| next_link_dump_secret_name(&conn))
-        .map_err(|e| format!("Link Dump name generation failed: {e}"))?;
-
-    let secret = generate_link_dump_secret_value()?;
-    let secret_hash = hash_link_dump_secret(&secret);
-    let id = Uuid::new_v4().to_string();
-    conn.execute(
-        "INSERT INTO link_dump_secrets (id, name, secret_hash, created_at)
-         VALUES (?1, ?2, ?3, datetime('now'))",
-        params![id, clean_name, secret_hash],
-    )
-    .map_err(|e| format!("Link Dump secret create failed: {e}"))?;
-
-    let connection = conn
-        .query_row(
-            "SELECT id, name, created_at, last_used_at, revoked_at, deleted_at
-             FROM link_dump_secrets
-             WHERE id = ?1",
-            params![id],
-            |row| {
-                Ok(LinkDumpSecretView {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    created_at: row.get(2)?,
-                    last_used_at: row.get(3)?,
-                    revoked_at: row.get(4)?,
-                    deleted_at: row.get(5)?,
-                    status: "active".to_string(),
-                })
-            },
-        )
-        .map_err(|e| format!("Link Dump secret read failed: {e}"))?;
-
-    Ok(GeneratedLinkDumpSecret { secret, connection })
-}
-
-fn revoke_link_dump_secret_in_db(state: &AppState, id: &str) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute(
-        "UPDATE link_dump_secrets
-         SET revoked_at = COALESCE(revoked_at, datetime('now'))
-         WHERE id = ?1 AND deleted_at IS NULL",
-        params![id],
-    )
-    .map_err(|e| format!("Link Dump secret revoke failed: {e}"))?;
-    Ok(())
-}
-
-fn delete_link_dump_secret_in_db(state: &AppState, id: &str) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute(
-        "UPDATE link_dump_secrets
-         SET deleted_at = COALESCE(deleted_at, datetime('now'))
-         WHERE id = ?1",
-        params![id],
-    )
-    .map_err(|e| format!("Link Dump secret delete failed: {e}"))?;
-    Ok(())
-}
-
-fn validate_link_dump_secret(
-    state: &AppState,
-    secret: Option<&str>,
-) -> Result<Option<ValidSecretResult>, String> {
-    let Some(secret) = secret.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(None);
-    };
-
-    let candidate_hash = hash_link_dump_secret(secret);
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, name, secret_hash
-             FROM link_dump_secrets
-             WHERE revoked_at IS NULL AND deleted_at IS NULL",
-        )
-        .map_err(|e| format!("Link Dump secret validation failed: {e}"))?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })
-        .map_err(|e| format!("Link Dump secret validation failed: {e}"))?;
-
-    let mut matched: Option<ValidSecretResult> = None;
-    for row in rows {
-        let (id, name, stored_hash) =
-            row.map_err(|e| format!("Link Dump secret validation failed: {e}"))?;
-        if constant_time_eq_str(&candidate_hash, &stored_hash) {
-            matched = Some(ValidSecretResult { id, name });
-        }
-    }
-
-    if let Some(valid) = matched.as_ref() {
-        conn.execute(
-            "UPDATE link_dump_secrets SET last_used_at = datetime('now') WHERE id = ?1",
-            params![valid.id],
-        )
-        .map_err(|e| format!("Link Dump secret last-used update failed: {e}"))?;
-    }
-
-    Ok(matched)
-}
-
-fn snapshot_link_dump_server_status(state: &AppState) -> LinkDumpServerStatus {
-    state
-        .link_dump_server
-        .lock()
-        .map(|runtime| runtime.status.clone())
-        .unwrap_or_default()
-}
-
-fn emit_link_dump_server_status(app: &AppHandle, state: &AppState) {
-    let _ = app.emit_all(
-        "link-dump:server-status",
-        snapshot_link_dump_server_status(state),
-    );
-}
-
-#[tauri::command]
-fn get_link_dump_overview(state: State<AppState>) -> Result<LinkDumpOverview, String> {
-    Ok(LinkDumpOverview {
-        settings: get_link_dump_settings(state.inner())?,
-        secrets: list_link_dump_secrets(state.inner())?,
-        server_status: snapshot_link_dump_server_status(state.inner()),
-    })
-}
-
-#[tauri::command]
-fn update_link_dump_settings(
-    app: AppHandle,
-    state: State<AppState>,
-    patch: LinkDumpSettingsPatch,
-) -> Result<LinkDumpOverview, String> {
-    let settings = update_link_dump_settings_in_db(state.inner(), patch)?;
-    let server_status = restart_link_dump_server_internal(&app, state.inner())?;
-    Ok(LinkDumpOverview {
-        settings,
-        secrets: list_link_dump_secrets(state.inner())?,
-        server_status,
-    })
-}
-
-#[tauri::command]
-fn create_link_dump_secret(
-    state: State<AppState>,
-    name: Option<String>,
-) -> Result<GeneratedLinkDumpSecret, String> {
-    create_link_dump_secret_in_db(state.inner(), name)
-}
-
-#[tauri::command]
-fn revoke_link_dump_secret(
-    state: State<AppState>,
-    id: String,
-) -> Result<Vec<LinkDumpSecretView>, String> {
-    revoke_link_dump_secret_in_db(state.inner(), &id)?;
-    list_link_dump_secrets(state.inner())
-}
-
-#[tauri::command]
-fn delete_link_dump_secret(
-    state: State<AppState>,
-    id: String,
-) -> Result<Vec<LinkDumpSecretView>, String> {
-    delete_link_dump_secret_in_db(state.inner(), &id)?;
-    list_link_dump_secrets(state.inner())
-}
-
-#[tauri::command]
-fn restart_link_dump_server(
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<LinkDumpServerStatus, String> {
-    restart_link_dump_server_internal(&app, state.inner())
-}
-
-fn normalize_link_dump_host(host: &str) -> String {
-    if host.trim() == "127.0.1" {
-        return LINK_DUMP_DEFAULT_HOST.to_string();
-    }
-    host.trim().to_string()
-}
-
-fn is_allowed_link_dump_host(host: &str) -> bool {
-    let normalized = normalize_link_dump_host(host);
-    if normalized.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    normalized
-        .parse::<std::net::IpAddr>()
-        .map(|addr| addr.is_loopback())
-        .unwrap_or(false)
-}
-
-fn link_dump_server_url(settings: &LinkDumpSettings) -> String {
-    format!("http://{}:{}", settings.host, settings.port)
-}
-
-fn restart_link_dump_server_internal(
-    app: &AppHandle,
-    state: &AppState,
-) -> Result<LinkDumpServerStatus, String> {
-    stop_link_dump_server(state);
-    start_link_dump_server_from_settings(app, state)
-}
-
-fn stop_link_dump_server(state: &AppState) {
-    let handle = {
-        let Ok(mut runtime) = state.link_dump_server.lock() else {
-            return;
-        };
-        if let Some(shutdown) = runtime.shutdown.take() {
-            shutdown.store(true, Ordering::SeqCst);
-        }
-        runtime.handle.take()
-    };
-
-    if let Some(handle) = handle {
-        let _ = handle.join();
-    }
-
-    if let Ok(mut runtime) = state.link_dump_server.lock() {
-        runtime.status.status = "stopped".to_string();
-        runtime.status.error_message = None;
-    }
-}
-
-fn set_link_dump_server_status(
-    app: &AppHandle,
-    state: &AppState,
-    status: LinkDumpServerStatus,
-) -> LinkDumpServerStatus {
-    if let Ok(mut runtime) = state.link_dump_server.lock() {
-        runtime.status = status.clone();
-    }
-    emit_link_dump_server_status(app, state);
-    status
-}
-
-fn start_link_dump_server_from_settings(
-    app: &AppHandle,
-    state: &AppState,
-) -> Result<LinkDumpServerStatus, String> {
-    let mut settings = get_link_dump_settings(state)?;
-    settings.host = normalize_link_dump_host(&settings.host);
-    let url = link_dump_server_url(&settings);
-
-    if !settings.server_enabled {
-        let status = LinkDumpServerStatus {
-            status: "stopped".to_string(),
-            url,
-            error_message: None,
-        };
-        return Ok(set_link_dump_server_status(app, state, status));
-    }
-
-    if !is_allowed_link_dump_host(&settings.host) {
-        let status = LinkDumpServerStatus {
-            status: "error".to_string(),
-            url,
-            error_message: Some("Link Dump Server only supports loopback hosts.".to_string()),
-        };
-        return Ok(set_link_dump_server_status(app, state, status));
-    }
-
-    let bind_addr = format!("{}:{}", settings.host, settings.port);
-    let listener = match TcpListener::bind(&bind_addr) {
-        Ok(listener) => listener,
-        Err(err) => {
-            let message = if err.kind() == std::io::ErrorKind::AddrInUse {
-                format!(
-                    "Link Dump Server could not start. Port {} is already in use.",
-                    settings.port
-                )
-            } else {
-                format!("Link Dump Server could not start: {err}")
-            };
-            let status = LinkDumpServerStatus {
-                status: "error".to_string(),
-                url,
-                error_message: Some(message),
-            };
-            return Ok(set_link_dump_server_status(app, state, status));
-        }
-    };
-
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("Link Dump listener setup failed: {e}"))?;
-
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let shutdown_thread = shutdown.clone();
-    let app_handle = app.clone();
-    let url_for_thread = url.clone();
-    let handle = thread::spawn(move || {
-        println!("Server started on {bind_addr}");
-        while !shutdown_thread.load(Ordering::SeqCst) {
-            match listener.accept() {
-                Ok((stream, _)) => {
-                    let request_app = app_handle.clone();
-                    thread::spawn(move || {
-                        if let Err(err) = handle_link_dump_stream(stream, request_app) {
-                            eprintln!("Link Dump request rejected: {err}");
-                        }
-                    });
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(50));
-                }
-                Err(err) => {
-                    let state = app_handle.state::<AppState>();
-                    let status = LinkDumpServerStatus {
-                        status: "error".to_string(),
-                        url: url_for_thread.clone(),
-                        error_message: Some(format!("Link Dump Server stopped: {err}")),
-                    };
-                    let _ = set_link_dump_server_status(&app_handle, &state, status);
-                    break;
-                }
-            }
-        }
-    });
-
-    let status = LinkDumpServerStatus {
-        status: "running".to_string(),
-        url,
-        error_message: None,
-    };
-    {
-        let mut runtime = state
-            .link_dump_server
-            .lock()
-            .map_err(|_| "Link Dump server lock poisoned")?;
-        runtime.status = status.clone();
-        runtime.shutdown = Some(shutdown);
-        runtime.handle = Some(handle);
-    }
-    emit_link_dump_server_status(app, state);
-    Ok(status)
-}
-
-fn handle_link_dump_stream(mut stream: TcpStream, app: AppHandle) -> Result<(), String> {
-    let request = match read_http_request(&mut stream) {
-        Ok(request) => request,
-        Err(err) => {
-            let _ = write_json_response(
-                &mut stream,
-                400,
-                &json!({ "ok": false, "error": "Bad request" }),
-            );
-            return Err(err);
-        }
-    };
-
-    let path = request.path.split('?').next().unwrap_or("").to_string();
-    if request.method == "OPTIONS" {
-        if is_link_dump_endpoint(&path) {
-            return write_options_response(&mut stream);
-        }
-        return write_json_response(
-            &mut stream,
-            404,
-            &json!({ "ok": false, "error": "Not found" }),
-        );
-    }
-
-    if request.method != "POST" {
-        return write_json_response(
-            &mut stream,
-            405,
-            &json!({ "ok": false, "error": "Method not allowed" }),
-        );
-    }
-
-    let state = app.state::<AppState>();
-    match path.as_str() {
-        "/addVideoLinkToQueue/" | "/addVideoLinkToQueue" => {
-            handle_add_video_link(&app, state.inner(), &mut stream, &request.body)
-        }
-        "/addVideoLinksToQueue/" | "/addVideoLinksToQueue" => {
-            handle_add_video_links(&app, state.inner(), &mut stream, &request.body)
-        }
-        _ => write_json_response(
-            &mut stream,
-            404,
-            &json!({ "ok": false, "error": "Not found" }),
-        ),
-    }
-}
-
-fn is_link_dump_endpoint(path: &str) -> bool {
-    matches!(
-        path,
-        "/addVideoLinkToQueue/"
-            | "/addVideoLinkToQueue"
-            | "/addVideoLinksToQueue/"
-            | "/addVideoLinksToQueue"
-    )
-}
-
-fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| format!("Read timeout setup failed: {e}"))?;
-    let mut buffer = Vec::new();
-    let mut temp = [0_u8; 4096];
-    let header_end;
-
-    loop {
-        let read = stream
-            .read(&mut temp)
-            .map_err(|e| format!("HTTP request read failed: {e}"))?;
-        if read == 0 {
-            return Err("HTTP request closed before headers".to_string());
-        }
-        buffer.extend_from_slice(&temp[..read]);
-        if buffer.len() > LINK_DUMP_MAX_BODY_BYTES {
-            return Err("HTTP request too large".to_string());
-        }
-        if let Some(index) = find_header_end(&buffer) {
-            header_end = index;
-            break;
-        }
-    }
-
-    let header_text = std::str::from_utf8(&buffer[..header_end])
-        .map_err(|_| "HTTP headers are not UTF-8".to_string())?;
-    let mut lines = header_text.split("\r\n");
-    let request_line = lines
-        .next()
-        .ok_or_else(|| "Missing HTTP request line".to_string())?;
-    let mut request_parts = request_line.split_whitespace();
-    let method = request_parts
-        .next()
-        .ok_or_else(|| "Missing HTTP method".to_string())?
-        .to_string();
-    let path = request_parts
-        .next()
-        .ok_or_else(|| "Missing HTTP path".to_string())?
-        .to_string();
-
-    let mut content_length = 0_usize;
-    for line in lines {
-        if let Some((name, value)) = line.split_once(':') {
-            if name.trim().eq_ignore_ascii_case("content-length") {
-                content_length = value
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| "Invalid Content-Length".to_string())?;
-            }
-        }
-    }
-
-    if content_length > LINK_DUMP_MAX_BODY_BYTES {
-        return Err("HTTP body too large".to_string());
-    }
-
-    let body_start = header_end + 4;
-    let mut body = buffer.get(body_start..).unwrap_or_default().to_vec();
-    while body.len() < content_length {
-        let read = stream
-            .read(&mut temp)
-            .map_err(|e| format!("HTTP body read failed: {e}"))?;
-        if read == 0 {
-            break;
-        }
-        body.extend_from_slice(&temp[..read]);
-    }
-    body.truncate(content_length);
-
-    Ok(HttpRequest { method, path, body })
-}
-
-fn find_header_end(buffer: &[u8]) -> Option<usize> {
-    buffer.windows(4).position(|window| window == b"\r\n\r\n")
-}
-
-fn write_options_response(stream: &mut TcpStream) -> Result<(), String> {
-    let response = concat!(
-        "HTTP/1.1 204 No Content\r\n",
-        "Access-Control-Allow-Origin: *\r\n",
-        "Access-Control-Allow-Methods: POST, OPTIONS\r\n",
-        "Access-Control-Allow-Headers: Content-Type\r\n",
-        "Access-Control-Max-Age: 86400\r\n",
-        "Content-Length: 0\r\n",
-        "Connection: close\r\n",
-        "\r\n"
-    );
-    stream
-        .write_all(response.as_bytes())
-        .map_err(|e| format!("HTTP response write failed: {e}"))
-}
-
-fn write_json_response(
-    stream: &mut TcpStream,
-    status_code: u16,
-    body: &serde_json::Value,
-) -> Result<(), String> {
-    let status_text = match status_code {
-        200 => "OK",
-        204 => "No Content",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        500 => "Internal Server Error",
-        _ => "OK",
-    };
-    let body = serde_json::to_string(body).map_err(|e| format!("JSON encode failed: {e}"))?;
-    let response = format!(
-        concat!(
-            "HTTP/1.1 {} {}\r\n",
-            "Content-Type: application/json\r\n",
-            "Access-Control-Allow-Origin: *\r\n",
-            "Access-Control-Allow-Methods: POST, OPTIONS\r\n",
-            "Access-Control-Allow-Headers: Content-Type\r\n",
-            "Access-Control-Max-Age: 86400\r\n",
-            "Content-Length: {}\r\n",
-            "Connection: close\r\n",
-            "\r\n",
-            "{}"
-        ),
-        status_code,
-        status_text,
-        body.as_bytes().len(),
-        body
-    );
-    stream
-        .write_all(response.as_bytes())
-        .map_err(|e| format!("HTTP response write failed: {e}"))
-}
-
-fn handle_add_video_link(
-    app: &AppHandle,
-    state: &AppState,
-    stream: &mut TcpStream,
-    body: &[u8],
-) -> Result<(), String> {
-    let parsed = serde_json::from_slice::<AddVideoLinkRequestBody>(body);
-    let parsed = match parsed {
-        Ok(parsed) => parsed,
-        Err(_) => {
-            return write_json_response(
-                stream,
-                400,
-                &json!({ "ok": false, "error": "Invalid request body" }),
-            );
-        }
-    };
-
-    let Some(_valid_secret) = validate_link_dump_secret(state, parsed.secret.as_deref())? else {
-        println!("Link Dump request rejected");
-        return write_json_response(
-            stream,
-            401,
-            &json!({ "ok": false, "error": "Unauthorized" }),
-        );
-    };
-
-    let Some(url) = parsed.url.as_deref().and_then(normalize_video_url) else {
-        return write_json_response(
-            stream,
-            400,
-            &json!({ "ok": false, "error": "Invalid video URL" }),
-        );
-    };
-
-    let mut summary = LinkDumpQueueSummary {
-        received: 1,
-        added: 0,
-        skipped: 0,
-        invalid: 0,
-    };
-    if add_normalized_video_urls_to_queue(app, state, &[url], &mut summary).is_err() {
-        return write_json_response(
-            stream,
-            500,
-            &json!({ "ok": false, "error": "Internal server error" }),
-        );
-    }
-    println!("Link Dump request accepted");
-    println!("Added {} links to queue", summary.added);
-    write_json_response(
-        stream,
-        200,
-        &json!({
-            "ok": true,
-            "added": summary.added,
-            "skipped": summary.skipped,
-            "message": format!("Added {} video link{} to queue.", summary.added, if summary.added == 1 { "" } else { "s" }),
-        }),
-    )
-}
-
-fn handle_add_video_links(
-    app: &AppHandle,
-    state: &AppState,
-    stream: &mut TcpStream,
-    body: &[u8],
-) -> Result<(), String> {
-    let parsed = serde_json::from_slice::<AddVideoLinksRequestBody>(body);
-    let parsed = match parsed {
-        Ok(parsed) => parsed,
-        Err(_) => {
-            return write_json_response(
-                stream,
-                400,
-                &json!({ "ok": false, "error": "Invalid request body" }),
-            );
-        }
-    };
-
-    let Some(_valid_secret) = validate_link_dump_secret(state, parsed.secret.as_deref())? else {
-        println!("Link Dump request rejected");
-        return write_json_response(
-            stream,
-            401,
-            &json!({ "ok": false, "error": "Unauthorized" }),
-        );
-    };
-
-    let urls = parsed.urls.unwrap_or_default();
-    if urls.is_empty() {
-        return write_json_response(
-            stream,
-            400,
-            &json!({ "ok": false, "error": "No valid video URLs" }),
-        );
-    }
-
-    let mut summary = LinkDumpQueueSummary {
-        received: urls.len(),
-        added: 0,
-        skipped: 0,
-        invalid: 0,
-    };
-    let mut seen = std::collections::HashSet::new();
-    let mut normalized_urls = Vec::new();
-
-    for raw_url in urls.iter().take(LINK_DUMP_MAX_BATCH_SIZE) {
-        let Some(normalized) = normalize_video_url(raw_url) else {
-            summary.invalid += 1;
-            continue;
-        };
-        if !seen.insert(normalized.key.clone()) {
-            summary.skipped += 1;
-            continue;
-        }
-        normalized_urls.push(normalized);
-    }
-
-    if urls.len() > LINK_DUMP_MAX_BATCH_SIZE {
-        summary.skipped += urls.len() - LINK_DUMP_MAX_BATCH_SIZE;
-    }
-
-    if normalized_urls.is_empty() {
-        return write_json_response(
-            stream,
-            400,
-            &json!({ "ok": false, "error": "No valid video URLs" }),
-        );
-    }
-
-    if add_normalized_video_urls_to_queue(app, state, &normalized_urls, &mut summary).is_err() {
-        return write_json_response(
-            stream,
-            500,
-            &json!({ "ok": false, "error": "Internal server error" }),
-        );
-    }
-
-    println!("Link Dump request accepted");
-    println!("Added {} links to queue", summary.added);
-    write_json_response(
-        stream,
-        200,
-        &json!({
-            "ok": true,
-            "received": summary.received,
-            "added": summary.added,
-            "skipped": summary.skipped,
-            "invalid": summary.invalid,
-            "message": format!("Added {} video link{} to queue.", summary.added, if summary.added == 1 { "" } else { "s" }),
-        }),
-    )
-}
-
-fn add_normalized_video_urls_to_queue(
-    app: &AppHandle,
-    state: &AppState,
-    normalized_urls: &[NormalizedVideoUrl],
-    summary: &mut LinkDumpQueueSummary,
-) -> Result<(), String> {
-    let mut queued_keys = queued_video_keys(state)?;
-    let mut jobs = Vec::new();
-
-    for normalized in normalized_urls {
-        if !queued_keys.insert(normalized.key.clone()) {
-            summary.skipped += 1;
-            continue;
-        }
-
-        let request = build_link_dump_download_request(state, normalized)?;
-        jobs.push(build_download_job(state, request)?);
-    }
-
-    let added_count = jobs.len();
-    enqueue_download_jobs(app, state, jobs)?;
-    summary.added += added_count;
-    Ok(())
-}
-
-fn build_link_dump_download_request(
-    state: &AppState,
-    normalized: &NormalizedVideoUrl,
-) -> Result<DownloadRequest, String> {
-    let (preset, cut_at_timestamp_enabled) = {
-        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-        (
-            download_preset_for_key(cfg.selected_preset_key.as_deref()),
-            cfg.cut_at_timestamp_enabled,
-        )
-    };
-
-    Ok(DownloadRequest {
-        url: normalized.url.clone(),
-        format: preset.format.to_string(),
-        output_dir: None,
-        extract_audio: preset.extract_audio,
-        audio_format: preset.audio_format.map(str::to_string),
-        transcribe_text: preset.transcribe_text,
-        transcribe_timestamps: preset.transcribe_timestamps,
-        cut_at_timestamp_enabled,
-        cut_start_time: None,
-        filename_suffix: preset.filename_suffix.map(str::to_string),
-        title: None,
-        uploader: None,
-        thumbnail: normalized.thumbnail.clone(),
-        upload_date: None,
-        timestamp: None,
-        duration_seconds: None,
-    })
-}
-
-fn queued_video_keys(state: &AppState) -> Result<std::collections::HashSet<String>, String> {
-    let queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
-    Ok(queue
-        .iter()
-        .filter_map(|job| normalize_video_url(&job.url).map(|normalized| normalized.key))
-        .collect())
-}
-
-fn normalize_video_url(input: &str) -> Option<NormalizedVideoUrl> {
-    normalize_youtube_url(input)
-        .or_else(|| normalize_tiktok_url(input))
-        .or_else(|| normalize_instagram_url(input))
-}
-
-fn normalize_youtube_url(input: &str) -> Option<NormalizedVideoUrl> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let parsed = url::Url::parse(trimmed).ok()?;
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return None;
-    }
-
-    let host = parsed
-        .host_str()?
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    let host_without_www = host.strip_prefix("www.").unwrap_or(&host);
-    let path_parts = parsed
-        .path_segments()
-        .map(|segments| segments.collect::<Vec<_>>())
-        .unwrap_or_default();
-
-    let video_id = if host_without_www == "youtu.be" {
-        path_parts.first().map(|part| (*part).to_string())
-    } else if matches!(
-        host_without_www,
-        "youtube.com" | "m.youtube.com" | "music.youtube.com"
-    ) {
-        match path_parts
-            .first()
-            .map(|part| part.to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("watch") => parsed.query_pairs().find_map(|(name, value)| {
-                if name == "v" {
-                    Some(value.into_owned())
-                } else {
-                    None
-                }
-            }),
-            Some("shorts") | Some("live") | Some("embed") | Some("v") => {
-                path_parts.get(1).map(|part| (*part).to_string())
-            }
-            _ => None,
-        }
-    } else {
-        None
-    }?;
-
-    if !is_plausible_youtube_video_id(&video_id) {
-        return None;
-    }
-
-    Some(NormalizedVideoUrl {
-        url: format!("https://www.youtube.com/watch?v={video_id}"),
-        key: format!("youtube:{video_id}"),
-        thumbnail: Some(format!("https://i.ytimg.com/vi/{video_id}/mqdefault.jpg")),
-    })
-}
-
-fn is_plausible_youtube_video_id(video_id: &str) -> bool {
-    let len = video_id.len();
-    (6..=64).contains(&len)
-        && video_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-}
-
-fn normalize_tiktok_url(input: &str) -> Option<NormalizedVideoUrl> {
-    let parsed = parse_http_url(input)?;
-    let host = normalized_url_host(&parsed)?;
-    if host != "tiktok.com" && !host.ends_with(".tiktok.com") {
-        return None;
-    }
-
-    let path_parts = parsed
-        .path_segments()
-        .map(|segments| segments.filter(|part| !part.is_empty()).collect::<Vec<_>>())
-        .unwrap_or_default();
-
-    if path_parts.len() >= 3
-        && path_parts[0].starts_with('@')
-        && path_parts[1].eq_ignore_ascii_case("video")
-    {
-        let handle = path_parts[0].strip_prefix('@')?;
-        let video_id = path_parts[2];
-        if is_plausible_tiktok_handle(handle) && is_plausible_numeric_id(video_id) {
-            return Some(NormalizedVideoUrl {
-                url: format!("https://www.tiktok.com/@{handle}/video/{video_id}"),
-                key: format!("tiktok:{video_id}"),
-                thumbnail: None,
-            });
-        }
-    }
-
-    let short_code = if matches!(host.as_str(), "vm.tiktok.com" | "vt.tiktok.com") {
-        path_parts.first().copied()
-    } else if path_parts
-        .first()
-        .is_some_and(|part| part.eq_ignore_ascii_case("t"))
-    {
-        path_parts.get(1).copied()
-    } else {
-        None
-    }?;
-
-    if !is_plausible_content_code(short_code) {
-        return None;
-    }
-
-    let url = if matches!(host.as_str(), "vm.tiktok.com" | "vt.tiktok.com") {
-        format!("https://{host}/{short_code}/")
-    } else {
-        format!("https://www.tiktok.com/t/{short_code}/")
-    };
-    Some(NormalizedVideoUrl {
-        url,
-        key: format!("tiktok-short:{short_code}"),
-        thumbnail: None,
-    })
-}
-
-fn normalize_instagram_url(input: &str) -> Option<NormalizedVideoUrl> {
-    let parsed = parse_http_url(input)?;
-    let host = normalized_url_host(&parsed)?;
-    let is_instagram_host = host == "instagram.com"
-        || host.ends_with(".instagram.com")
-        || host == "instagr.am"
-        || host.ends_with(".instagr.am");
-    if !is_instagram_host {
-        return None;
-    }
-
-    let path_parts = parsed
-        .path_segments()
-        .map(|segments| segments.filter(|part| !part.is_empty()).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let (route, content_code) = match path_parts.as_slice() {
-        [route, content_code, ..] if is_instagram_content_route(route) => {
-            ((*route).to_ascii_lowercase(), *content_code)
-        }
-        [_, route, content_code, ..] if is_instagram_content_route(route) => {
-            ((*route).to_ascii_lowercase(), *content_code)
-        }
-        _ => return None,
-    };
-    if !is_plausible_content_code(content_code) {
-        return None;
-    }
-
-    Some(NormalizedVideoUrl {
-        url: format!("https://www.instagram.com/{route}/{content_code}/"),
-        key: format!("instagram:{content_code}"),
-        thumbnail: None,
-    })
-}
-
-fn parse_http_url(input: &str) -> Option<url::Url> {
-    let parsed = url::Url::parse(input.trim()).ok()?;
-    matches!(parsed.scheme(), "http" | "https").then_some(parsed)
-}
-
-fn normalized_url_host(parsed: &url::Url) -> Option<String> {
-    Some(
-        parsed
-            .host_str()?
-            .trim_end_matches('.')
-            .to_ascii_lowercase(),
-    )
-}
-
-fn is_plausible_tiktok_handle(handle: &str) -> bool {
-    !handle.is_empty()
-        && handle.len() <= 64
-        && handle
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.'))
-}
-
-fn is_plausible_numeric_id(value: &str) -> bool {
-    (6..=32).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-fn is_plausible_content_code(value: &str) -> bool {
-    (3..=128).contains(&value.len())
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-}
-
-fn is_instagram_content_route(route: &str) -> bool {
-    matches!(route.to_ascii_lowercase().as_str(), "p" | "reel" | "tv")
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match cli::parse(&args) {
@@ -5005,7 +1694,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             cli::initialize_cli,
             get_config,
-            set_config,
+            get_download_presets,
+            patch_config,
             set_selected_preset_key,
             set_save_instagram_captions,
             cache_last_download_url,
@@ -5017,6 +1707,7 @@ fn main() {
             load_info,
             get_yt_dlp_installed_version,
             get_queue_status,
+            get_queue,
             set_queue_auto_start,
             start_queue,
             pause_queue,
@@ -5039,6 +1730,7 @@ fn main() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 let state = app_handle.state::<AppState>();
+                stop_active_download_on_exit(state.inner());
                 stop_link_dump_server(state.inner());
                 if let Some(server) = app_handle.try_state::<cli::CliServer>() {
                     server.stop();
@@ -5394,6 +2086,73 @@ mod tests {
     }
 
     #[test]
+    fn browser_import_deduplicates_while_inserting_into_queue() {
+        let state = link_dump_test_state_with_config(AppConfig {
+            default_output_dir: Some(std::env::temp_dir().to_string_lossy().into_owned()),
+            ..AppConfig::default()
+        });
+        let normalized = normalize_youtube_url("https://youtu.be/abc123").unwrap();
+        let request = build_link_dump_download_request(&state, &normalized).unwrap();
+        let first = build_download_job(&state, request.clone()).unwrap();
+        let second = build_download_job(&state, request).unwrap();
+        let mut queue = VecDeque::from([first]);
+        let mut summary = LinkDumpQueueSummary {
+            received: 2,
+            added: 0,
+            skipped: 0,
+            invalid: 0,
+        };
+
+        let added = insert_unique_video_jobs(
+            &mut queue,
+            None,
+            vec![(normalized.key.clone(), second)],
+            &mut summary,
+        );
+
+        assert_eq!(added, 0);
+        assert_eq!(summary.skipped, 1);
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn browser_import_skips_a_link_while_its_download_is_active() {
+        let state = link_dump_test_state_with_config(AppConfig {
+            default_output_dir: Some(std::env::temp_dir().to_string_lossy().into_owned()),
+            ..AppConfig::default()
+        });
+        let normalized = normalize_youtube_url("https://youtu.be/abc123").unwrap();
+        let request = build_link_dump_download_request(&state, &normalized).unwrap();
+        let first = build_download_job(&state, request.clone()).unwrap();
+        let second = build_download_job(&state, request).unwrap();
+        state.queue.lock().unwrap().push_back(first);
+
+        let (active, paused) = next_worker_job(&state).unwrap();
+        assert!(active.is_some());
+        assert!(!paused);
+        assert!(state.queue.lock().unwrap().is_empty());
+
+        let mut summary = LinkDumpQueueSummary {
+            received: 1,
+            added: 0,
+            skipped: 0,
+            invalid: 0,
+        };
+        let mut queue = state.queue.lock().unwrap();
+        let active_key = state.active_video_key.lock().unwrap();
+        let added = insert_unique_video_jobs(
+            &mut queue,
+            active_key.as_deref(),
+            vec![(normalized.key, second)],
+            &mut summary,
+        );
+
+        assert_eq!(added, 0);
+        assert_eq!(summary.skipped, 1);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
     fn timestamped_text_preset_enables_segment_timestamps() {
         let preset = download_preset_for_key(Some("text_timestamps"));
 
@@ -5422,6 +2181,127 @@ mod tests {
     #[test]
     fn sanitizes_decimal_timestamp_suffix() {
         assert_eq!(format_timestamp_filename_suffix(13.5), "_t13_5");
+    }
+
+    #[test]
+    fn timestamp_cut_keeps_an_existing_output_file() {
+        let dir = std::env::temp_dir().join(format!("pinefetch-cut-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("video.webm");
+        let temp = dir.join("cut.webm");
+        let existing = build_timestamp_cut_output_path(&input, 13.0).unwrap();
+        fs::write(&input, b"original").unwrap();
+        fs::write(&temp, b"new cut").unwrap();
+        fs::write(&existing, b"older cut").unwrap();
+
+        let output = preserve_unique_cut_output(&temp, &input, 13.0).unwrap();
+
+        assert_ne!(output, existing);
+        assert_eq!(fs::read(&existing).unwrap(), b"older cut");
+        assert_eq!(fs::read(&output).unwrap(), b"new cut");
+        assert_eq!(fs::read(&input).unwrap(), b"original");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn platform_detection_requires_a_domain_boundary() {
+        assert_eq!(
+            detect_platform("https://m.youtube.com/watch?v=123"),
+            Some("youtube".to_string())
+        );
+        assert_eq!(
+            detect_platform("https://www.instagram.com/p/abc/"),
+            Some("instagram".to_string())
+        );
+        assert_eq!(detect_platform("https://fakeinstagram.com/p/abc/"), None);
+        assert_eq!(detect_platform("https://notyoutube.com/watch?v=123"), None);
+        assert_eq!(
+            detect_platform("https://pretiktok.com/@user/video/123"),
+            None
+        );
+    }
+
+    #[test]
+    fn download_metadata_parser_keeps_fields_from_first_yt_dlp_run() {
+        let line = r#"pinefetch_metadata:{"filepath":"/tmp/video.mp4","title":"Clip","uploader":"Creator","duration":13.7,"thumbnail":"https://example.com/thumb.jpg"}"#;
+        let (path, info) = parse_download_metadata_line(line).unwrap();
+        assert_eq!(path, "/tmp/video.mp4");
+        assert_eq!(info.title.as_deref(), Some("Clip"));
+        assert_eq!(info.uploader.as_deref(), Some("Creator"));
+        assert_eq!(info.duration, Some(13));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timed_out_child_is_stopped_promptly() {
+        let mut command = Command::new("sleep");
+        command.arg("5");
+        let started = Instant::now();
+
+        let result = run_command_output(command, None, None, Some(Duration::from_millis(100)));
+
+        assert_eq!(result.unwrap_err(), "process timed out");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inherited_output_pipe_cannot_block_after_parent_exits() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 4 & exit 0"]);
+        let started = Instant::now();
+
+        let result = run_command_output(command, None, None, Some(Duration::from_secs(10)));
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Process output did not close after exit"
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_stops_a_child_and_its_process_group() {
+        let marker = std::env::temp_dir().join(format!("pinefetch-process-{}.txt", Uuid::new_v4()));
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "(sleep 1; printf alive > \"$1\") & wait", "sh"])
+            .arg(&marker);
+        configure_child_process_group(&mut command);
+        let mut child = command.spawn().unwrap();
+        let pid = i32::try_from(child.id()).unwrap();
+        assert_eq!(unsafe { libc::getpgid(pid) }, pid);
+
+        thread::sleep(Duration::from_millis(100));
+        terminate_child_process_tree(&mut child).unwrap();
+        let status = child.wait().unwrap();
+        assert!(!status.success());
+        thread::sleep(Duration::from_millis(1100));
+        assert!(!marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn app_exit_stops_registered_utility_child() {
+        let state = Arc::new(link_dump_test_state());
+        let worker_state = state.clone();
+        let handle = thread::spawn(move || {
+            let mut command = Command::new("sleep");
+            command.arg("5");
+            run_command_output(command, None, Some(&worker_state), None)
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while state.utility_children.lock().unwrap().is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(state.utility_children.lock().unwrap().len(), 1);
+
+        stop_active_download_on_exit(&state);
+
+        let output = handle.join().unwrap().unwrap();
+        assert!(!output.status.success());
+        assert!(state.utility_children.lock().unwrap().is_empty());
     }
 
     #[test]

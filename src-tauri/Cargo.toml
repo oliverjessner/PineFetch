@@ -1,6 +1,6 @@
 [package]
 name = "pinefetch"
-version = "1.0.0"
+version = "2.0.0"
 description = "Local yt-dlp desktop UI"
 authors = ["Oliver Jessner"]
 license = "MIT"
@@ -21,6 +21,9 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6.12"

@@ -42,13 +42,13 @@ npm run build:windows
 
 ## Version synchronization
 
-`package.json` is the source of truth for the PineFetch version. Before each macOS or Windows build, `npm run sync:version` copies it to `src-tauri/tauri.conf.json` under `package.version`. The [publish script](scripts/publish.sh) performs the same sync before creating its release commit and Git tag. Release notes are in the [changelog](docs/changelog.md).
+`package.json` is the source of truth for the PineFetch version. `npm run dev` and both build commands run `npm run sync:version` before starting Tauri; the sync updates `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the PineFetch entry in `src-tauri/Cargo.lock`. The [publish script](scripts/publish.sh) performs the same sync before creating its release commit and Git tag. Release notes are in the [changelog](docs/changelog.md).
 
 ## Publishing
 
 Run `npm run publish` from a clean `../homebrew-tap` checkout. The release workflow:
 
-1. Synchronizes the version and commits pending PineFetch changes.
+1. Synchronizes the version and commits pending PineFetch changes, including untracked files.
 2. Builds and verifies the macOS app and creates the DMG.
 3. Pushes PineFetch and creates the GitHub release.
 4. Calculates the DMG SHA256 and generates `Casks/pinefetch.rb`.
@@ -117,7 +117,7 @@ PineFetch provides two `faster-whisper` text presets:
 [00:00:09 → 00:00:14] Today we are looking at PineFetch.
 ```
 
-The transcription quality can be selected in **Settings → Options → Transcription**:
+The transcription quality can be selected in **Settings → Transcription**:
 
 - **Fast** uses the `base` model (default).
 - **Balanced** uses the `small` model.
@@ -215,7 +215,7 @@ curl -X OPTIONS http://127.0.0.1:2255/addVideoLinksToQueue/ -i
 
 ## Queue and keyboard controls
 
-Queue items start automatically by default. Disable **Auto-start** to collect multiple items and start them together with **Start queue**. Right-click a queue item to copy its link, download it again with another preset, cancel an active job, or remove a completed job. Clicking a completed item opens its output location.
+Queue items start automatically by default. Disable **Auto-start** to collect multiple items and start them together with **Download**. Right-click a queue item to copy its link, download it again with another preset, cancel an active job, or remove a completed job. Clicking a completed item opens its output location.
 
 When the URL field is focused:
 
@@ -225,7 +225,7 @@ When the URL field is focused:
 
 ## Other menus
 
-The Settings screen contains the output folder, `yt-dlp` path, installed and latest `yt-dlp` versions, and the terminal log. Versions are checked once per app run. The adjacent Options panel contains **Magic import**, **Cut at timestamp**, and a separate **Transcription** group for quality and video-retention settings.
+The Settings screen contains the output folder, `yt-dlp` path, **Magic import**, **Cut at timestamp**, and a **Transcription** group for quality and video-retention settings. The **Diagnostics** group shows installed and latest `yt-dlp` versions and the terminal log. Versions are checked the first time Settings opens and again when the `yt-dlp` path changes.
 
 **Magic import** reads a supported URL from the clipboard when the PineFetch logo is clicked while the URL field is empty. **Cut at timestamp** starts supported downloads at timestamps embedded in their URLs.
 

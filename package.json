@@ -2,7 +2,7 @@
     "name": "pinefetch",
     "version": "2.0.0",
     "scripts": {
-        "dev": "tauri dev",
+        "dev": "npm run sync:version && tauri dev",
         "sync:version": "node scripts/sync-tauri-version.mjs",
         "prepare:whisper-runtime": "bash scripts/prepare-whisper-runtime.sh",
         "prepare:ffmpeg-runtime": "bash scripts/prepare-ffmpeg-runtime.sh",

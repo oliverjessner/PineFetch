@@ -11,16 +11,17 @@
     <body>
         <div class="pf-app-shell pf-pinefetch-shell">
             <header class="pf-toolbar pf-pinefetch-top-bar">
-                <div
-                    id="magicImportTrigger"
-                    class="pf-pinefetch-brand"
-                    role="button"
-                    tabindex="0"
-                    aria-label="Magic import from clipboard"
-                >
-                    <img class="pf-pinefetch-brand-logo" src="images/logo.png" alt="PineFetch logo" />
-                    <h1 class="pf-title">PineFetch</h1>
-                </div>
+                <h1 class="pf-title" aria-label="PineFetch">
+                    <button
+                        id="magicImportTrigger"
+                        class="pf-pinefetch-brand"
+                        type="button"
+                        aria-label="Magic import from clipboard"
+                    >
+                        <img class="pf-pinefetch-brand-logo" src="images/logo.png" alt="" />
+                        <span>PineFetch</span>
+                    </button>
+                </h1>
                 <div class="pf-pinefetch-top-actions">
                     <nav class="pf-segmented" aria-label="Main view">
                         <button
@@ -195,7 +196,7 @@
                             <h3 id="settingsDiagnosticsTitle" class="pf-section-title">Diagnostics</h3>
                             <label class="pf-field" for="ytDlpPath">
                                 <span class="pf-label">yt-dlp path</span>
-                                <input id="ytDlpPath" class="pf-input" type="text" placeholder="/opt/homebrew/bin/yt-dlp" />
+                                <input id="ytDlpPath" class="pf-input" type="text" placeholder="Auto-detect from PATH" />
                             </label>
 
                             <div class="pf-field">
@@ -426,6 +427,6 @@
             </div>
         </div>
 
-        <script src="main.js"></script>
+        <script type="module" src="main.js"></script>
     </body>
 </html>

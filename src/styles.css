@@ -46,8 +46,13 @@ body {
     gap: var(--pf-space-3xl);
     margin: -6px -8px;
     padding: 6px 8px;
+    border: none;
     border-radius: var(--pf-radius-group);
+    background: var(--pf-transparent);
+    color: inherit;
     cursor: pointer;
+    font: inherit;
+    text-align: left;
     transition:
         background-color var(--pf-duration-fast) var(--pf-ease-standard),
         box-shadow var(--pf-duration-fast) var(--pf-ease-standard);
@@ -63,11 +68,11 @@ body {
     box-shadow: var(--pf-focus-ring-soft);
 }
 
-.pf-pinefetch-brand[aria-disabled='true'] {
+.pf-pinefetch-brand:disabled {
     cursor: default;
 }
 
-.pf-pinefetch-brand[aria-disabled='true']:hover {
+.pf-pinefetch-brand:disabled:hover {
     background: var(--pf-transparent);
     box-shadow: none;
 }
@@ -440,6 +445,11 @@ body {
     white-space: normal;
 }
 
+.pf-queue-warning {
+    color: var(--pf-warning);
+    white-space: normal;
+}
+
 .pf-progress-indeterminate .pf-progress-bar {
     animation: pf-pinefetch-processing 1.4s ease-in-out infinite alternate;
 }
@@ -631,5 +641,22 @@ body {
 
     80% {
         transform: translateX(6px);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pf-invalid-shake,
+    .pf-progress-indeterminate .pf-progress-bar {
+        animation: none;
+    }
+
+    .pf-invalid-shake {
+        transform: none;
+    }
+
+    .pf-progress-indeterminate .pf-progress-bar {
+        left: 0;
+        width: 35%;
+        transition: none;
     }
 }

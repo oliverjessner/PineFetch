@@ -69,10 +69,12 @@ if git rev-parse "$TAG" >/dev/null 2>&1 || gh release view "$TAG" --repo "$RELEA
     exit 1
 fi
 
-if ! git diff --quiet || ! git diff --cached --quiet; then
+if [ -n "$(git status --porcelain)" ]; then
     echo "Committing working tree before release..."
     git add -A
-    git commit -m "chore: release $TAG"
+    if ! git diff --cached --quiet; then
+        git commit -m "chore: release $TAG"
+    fi
 fi
 
 echo "Cleaning previous builds..."

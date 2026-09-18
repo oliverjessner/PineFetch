@@ -2598,10 +2598,11 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pinefetch"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.2.17",
+ "libc",
  "mac-notification-sys",
  "regex",
  "rusqlite",

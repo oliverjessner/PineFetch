@@ -1,3 +1,8 @@
+import { createBrowserImportView } from './browser-import-view.js';
+import { createSettingsView } from './settings-view.js';
+import { createHistoryView } from './history-view.js';
+import { detectPlatform, extractUrlStartTimestamp, isValidHttpUrl, normalizeTxtImportUrl, parseTxtImportLinks, resolveYouTubeThumbnail } from './url-utils.js';
+
 const tauriGlobal = window.__TAURI__;
 const invoke = tauriGlobal?.tauri?.invoke;
 const listen = tauriGlobal?.event?.listen;
@@ -10,22 +15,13 @@ const state = Object.seal({
     queuePaused: false,
     queueCollapsed: false,
     suppressedJobIds: new Set(),
+    pendingClearAfterTerminal: new Set(),
     selectedId: null,
     contextMenuJobId: null,
     logs: [],
     info: null,
     infoUrl: null,
-    config: null,
-    linkDump: null,
-    generatedLinkDumpSecret: null,
     activeView: 'download',
-    historyOffset: 0,
-    historyHasMore: false,
-    historyLoading: false,
-    historyLoaded: false,
-    historyDirty: true,
-    historyRevision: 0,
-    historyQuery: '',
 });
 const els = Object.seal({
     magicImportTrigger: document.getElementById('magicImportTrigger'),
@@ -112,84 +108,47 @@ const els = Object.seal({
     queueContextCancelBtn: document.getElementById('queueContextCancelBtn'),
     queueContextRemoveBtn: document.getElementById('queueContextRemoveBtn'),
 });
-const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
-const linkDumpExtensionRepoUrl = 'https://github.com/oliverjessner/PineFetch-Link-Dump';
-const presetOptions = Object.freeze([
+const presetLabels = Object.freeze([
     {
         key: 'best',
         selectLabel: 'Best (bestvideo+bestaudio)',
         queueLabel: 'Best',
         menuLabel: 'Download Best',
-        format: 'bestvideo+bestaudio/best',
-        extractAudio: false,
-        audioFormat: null,
-        transcribeText: false,
-        transcribeTimestamps: false,
-        filenameSuffix: '_best',
     },
     {
         key: '1080',
         selectLabel: 'Max 1080p',
         queueLabel: 'Max 1080p',
         menuLabel: 'Download Max 1080p',
-        format: 'bv*[height<=1080]+ba/b[height<=1080]',
-        extractAudio: false,
-        audioFormat: null,
-        transcribeText: false,
-        transcribeTimestamps: false,
-        filenameSuffix: '__max',
     },
     {
         key: 'audio_mp3',
         selectLabel: 'Audio only (mp3)',
         queueLabel: 'Audio only (mp3)',
         menuLabel: 'Download Audio only (mp3)',
-        format: 'ba/b',
-        extractAudio: true,
-        audioFormat: 'mp3',
-        transcribeText: false,
-        transcribeTimestamps: false,
-        filenameSuffix: null,
     },
     {
         key: 'audio_opus',
         selectLabel: 'Audio only (opus)',
         queueLabel: 'Audio only (opus)',
         menuLabel: 'Download Audio only (opus)',
-        format: 'ba/b',
-        extractAudio: true,
-        audioFormat: 'opus',
-        transcribeText: false,
-        transcribeTimestamps: false,
-        filenameSuffix: null,
     },
     {
         key: 'text',
         selectLabel: 'Transcribe to text',
         queueLabel: 'Transcription',
         menuLabel: 'Transcribe to text',
-        format: 'ba/b',
-        extractAudio: true,
-        audioFormat: 'mp3',
-        transcribeText: true,
-        transcribeTimestamps: false,
-        filenameSuffix: null,
     },
     {
         key: 'text_timestamps',
         selectLabel: 'Transcribe with timestamps',
         queueLabel: 'Transcription with timestamps',
         menuLabel: 'Transcribe with timestamps',
-        format: 'ba/b',
-        extractAudio: true,
-        audioFormat: 'mp3',
-        transcribeText: true,
-        transcribeTimestamps: true,
-        filenameSuffix: '_timestamps',
     },
 ]);
-const presets = Object.freeze(Object.fromEntries(presetOptions.map(preset => [preset.key, preset])));
-const normalizePresetKey = key => (presets[key] ? key : presetOptions[0]?.key || 'best');
+let presetOptions = [];
+let presets = Object.freeze({});
+const normalizePresetKey = key => (presets[key] ? key : presetLabels[0]?.key || 'best');
 const getSelectedPresetKey = () => normalizePresetKey(els.presetSelect.value);
 const findPresetForDownloadJob = job =>
     presetOptions.find(
@@ -201,30 +160,45 @@ const findPresetForDownloadJob = job =>
             Boolean(job?.transcribe_timestamps) === preset.transcribeTimestamps &&
             (job?.filename_suffix ?? null) === (preset.filenameSuffix ?? null)
     ) || null;
-const defaultYtDlpPath = '/opt/homebrew/bin/yt-dlp';
-const defaultFasterWhisperModel = 'base';
-const fasterWhisperModels = new Set(['base', 'small', 'medium', 'large-v3']);
-const normalizeFasterWhisperModel = model =>
-    fasterWhisperModels.has(model) ? model : defaultFasterWhisperModel;
-const historyPageSize = 20;
-const historySearchDelayMs = 250;
+
+const loadDownloadPresets = async () => {
+    const definitions = await invoke('get_download_presets');
+    if (!Array.isArray(definitions)) throw new Error('Backend did not return download formats.');
+    const byKey = new Map(definitions.map(definition => [definition.key, definition]));
+    presetOptions = presetLabels.map(label => {
+        const definition = byKey.get(label.key);
+        if (!definition || typeof definition.format !== 'string') {
+            throw new Error(`Download format “${label.key}” is unavailable.`);
+        }
+        return Object.freeze({
+            ...label,
+            format: definition.format,
+            extractAudio: Boolean(definition.extract_audio),
+            audioFormat: definition.audio_format ?? null,
+            transcribeText: Boolean(definition.transcribe_text),
+            transcribeTimestamps: Boolean(definition.transcribe_timestamps),
+            filenameSuffix: definition.filename_suffix ?? null,
+        });
+    });
+    presets = Object.freeze(Object.fromEntries(presetOptions.map(preset => [preset.key, preset])));
+    renderPresetOptions();
+    renderQueueContextMenu();
+    updateDownloadOptionHints();
+};
 const maxLogLines = 500;
 const cancellableJobStates = new Set(['downloading', 'transcribing']);
 const queueBusyJobStates = new Set(['downloading', 'transcribing', 'cancelling']);
 const removableJobStates = new Set(['queued', 'success', 'error', 'cancelled']);
 let urlShakeTimer = null;
-let historySearchTimer = null;
 let magicImportInFlight = false;
 let queueRenderFrame = null;
 let queueRenderDirty = true;
+const queueProgressDirtyIds = new Set();
+const queueCardElements = new Map();
 let logDomDirty = false;
 let settingsLogRenderReady = false;
 let viewActivationId = 0;
-let ytDlpVersionsChecked = false;
-let ytDlpVersionsPromise = null;
-let linkDumpSyncPromise = null;
-let configSaveQueue = Promise.resolve();
-let configSaveRevision = 0;
+let clearQueueInFlight = false;
 
 const formatDuration = seconds => {
     if (!seconds && seconds !== 0) return '-';
@@ -251,85 +225,6 @@ const formatFileSize = bytes => {
 const formatCutStartLabel = seconds => {
     if (!Number.isFinite(Number(seconds)) || Number(seconds) <= 0) return null;
     return `from ${formatDuration(Number(seconds))}`;
-};
-
-const timestampParamNames = new Set(['t', 'start', 'start_time', 'time_continue']);
-
-const normalizePositiveTimestamp = seconds => {
-    const value = Number(seconds);
-    return Number.isFinite(value) && value > 0 ? value : null;
-};
-
-const parseTimestampValue = raw => {
-    const value = `${raw || ''}`.trim().toLowerCase();
-    if (!value) return null;
-
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) return normalizePositiveTimestamp(numeric);
-
-    if (value.includes(':')) {
-        const parts = value.split(':');
-        if (parts.length < 2 || parts.length > 3) return null;
-
-        let total = 0;
-        for (const part of parts) {
-            if (!part) return null;
-            const amount = Number(part);
-            if (!Number.isFinite(amount) || amount < 0) return null;
-            total = total * 60 + amount;
-        }
-        return normalizePositiveTimestamp(total);
-    }
-
-    const matches = [...value.matchAll(/(\d+(?:\.\d+)?)([hms])/g)];
-    if (!matches.length || matches.map(match => match[0]).join('') !== value) return null;
-
-    const total = matches.reduce((sum, [, amount, unit]) => {
-        const multiplier = unit === 'h' ? 3600 : unit === 'm' ? 60 : 1;
-        return sum + Number(amount) * multiplier;
-    }, 0);
-    return normalizePositiveTimestamp(total);
-};
-
-const extractUrlStartTimestamp = url => {
-    try {
-        const parsed = new URL(url);
-        for (const [name, value] of parsed.searchParams.entries()) {
-            if (!timestampParamNames.has(name)) continue;
-            const seconds = parseTimestampValue(value);
-            if (seconds) return seconds;
-        }
-
-        if (parsed.hash) {
-            const fragment = parsed.hash.slice(1);
-            const fragmentParams = new URLSearchParams(fragment);
-            for (const [name, value] of fragmentParams.entries()) {
-                if (!timestampParamNames.has(name)) continue;
-                const seconds = parseTimestampValue(value);
-                if (seconds) return seconds;
-            }
-            return parseTimestampValue(fragment);
-        }
-    } catch {
-        return null;
-    }
-    return null;
-};
-
-const detectPlatform = url => {
-    try {
-        const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
-
-        if (host === 'youtu.be' || host.endsWith('youtube.com')) return 'youtube';
-        if (host.endsWith('facebook.com') || host === 'fb.watch') return 'facebook';
-        if (host.endsWith('twitch.tv')) return 'twitch';
-        if (host === 'x.com' || host.endsWith('.x.com') || host.endsWith('twitter.com')) return 'x';
-        if (host.endsWith('tiktok.com')) return 'tiktok';
-        if (host.endsWith('instagram.com') || host.endsWith('instagr.am')) return 'instagram';
-    } catch {
-        return null;
-    }
-    return null;
 };
 
 const svgNamespace = 'http://www.w3.org/2000/svg';
@@ -446,15 +341,6 @@ const appendTextSpans = (parent, values) => {
     });
 };
 
-const isValidHttpUrl = value => {
-    try {
-        const parsed = new URL(value);
-        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch {
-        return false;
-    }
-};
-
 const shakeUrlInput = () => {
     if (urlShakeTimer) {
         clearTimeout(urlShakeTimer);
@@ -468,14 +354,6 @@ const shakeUrlInput = () => {
         els.urlInput.classList.remove('pf-is-invalid', 'pf-invalid-shake');
         urlShakeTimer = null;
     }, 420);
-};
-
-const isMagicImportEnabled = () => Boolean(els.magicImportEnabled?.checked);
-
-const syncMagicImportTriggerState = () => {
-    const enabled = isMagicImportEnabled();
-    els.magicImportTrigger.setAttribute('aria-disabled', String(!enabled));
-    els.magicImportTrigger.title = enabled ? 'Magic import from clipboard' : 'Magic import is disabled in Settings';
 };
 
 const readClipboardText = async () => {
@@ -494,17 +372,18 @@ const readClipboardText = async () => {
 
 const tryMagicImport = async () => {
     if (magicImportInFlight) return;
-    if (!isMagicImportEnabled()) return;
+    if (!settings.isMagicImportEnabled()) return;
     if (state.activeView !== 'download') return;
-    if (els.urlInput.value.trim()) return;
+    if (els.urlInput.value) return;
 
     magicImportInFlight = true;
     try {
         const clipboardText = (await readClipboardText()).trim();
+        if (!settings.isMagicImportEnabled() || state.activeView !== 'download' || els.urlInput.value) return;
         if (!isValidHttpUrl(clipboardText)) return;
         const platform = detectPlatform(clipboardText);
         if (!platform) return;
-        const lastDownloadedUrl = `${state.config?.last_download_url || ''}`.trim();
+        const lastDownloadedUrl = `${settings.getConfig()?.last_download_url || ''}`.trim();
         if (lastDownloadedUrl && clipboardText === lastDownloadedUrl) return;
 
         els.urlInput.value = clipboardText;
@@ -522,203 +401,6 @@ const tryMagicImport = async () => {
     }
 };
 
-const cacheLastDownloadedUrl = async url => {
-    const nextUrl = url.trim();
-    if (!nextUrl) return;
-
-    state.config = {
-        ...(state.config || {}),
-        last_download_url: nextUrl,
-    };
-
-    if (!invoke) return;
-    const queuedCache = configSaveQueue.then(() => invoke('cache_last_download_url', { url: nextUrl }));
-    configSaveQueue = queuedCache.catch(() => {});
-    try {
-        await queuedCache;
-    } catch (err) {
-        appendLog(`[config] ${err}`, true);
-    }
-};
-
-const normalizeHostname = hostname => `${hostname || ''}`.replace(/\.$/, '').toLowerCase();
-
-const isYouTubeHostname = hostname => {
-    const host = normalizeHostname(hostname).replace(/^www\./, '');
-    return host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com');
-};
-
-const isTikTokHostname = hostname => {
-    const host = normalizeHostname(hostname);
-    return host === 'tiktok.com' || host.endsWith('.tiktok.com');
-};
-
-const isInstagramHostname = hostname => {
-    const host = normalizeHostname(hostname);
-    return host === 'instagram.com' || host.endsWith('.instagram.com') || host === 'instagr.am' || host.endsWith('.instagr.am');
-};
-
-const getYouTubeVideoIdFromParsedUrl = parsed => {
-    const host = normalizeHostname(parsed.hostname).replace(/^www\./, '');
-    const pathParts = parsed.pathname.split('/').filter(Boolean);
-
-    if (host === 'youtu.be') return pathParts[0] || null;
-    if (host !== 'youtube.com' && !host.endsWith('.youtube.com')) return null;
-
-    const route = (pathParts[0] || '').toLowerCase();
-    if (route === 'watch') return parsed.searchParams.get('v')?.trim() || null;
-    if (route === 'shorts' || route === 'embed' || route === 'v' || route === 'live') {
-        return pathParts[1] || null;
-    }
-
-    return null;
-};
-
-const extractYouTubeVideoId = url => {
-    try {
-        const parsed = new URL(url);
-        if (!isYouTubeHostname(parsed.hostname)) return null;
-        return getYouTubeVideoIdFromParsedUrl(parsed);
-    } catch {
-        return null;
-    }
-};
-
-const resolveYouTubeThumbnail = url => {
-    const videoId = extractYouTubeVideoId(url);
-    return videoId ? `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg` : null;
-};
-
-const getYouTubeImportTimestampKey = url => {
-    const seconds = extractUrlStartTimestamp(url);
-    return Number.isFinite(Number(seconds)) && Number(seconds) > 0 ? `${Number(seconds)}` : '';
-};
-
-const normalizeYouTubeUrl = value => {
-    const trimmed = `${value || ''}`.trim();
-    if (!trimmed) return null;
-
-    try {
-        const parsed = new URL(trimmed);
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-        if (!isYouTubeHostname(parsed.hostname)) return null;
-
-        const videoId = getYouTubeVideoIdFromParsedUrl(parsed);
-        if (!videoId) return null;
-
-        parsed.hostname = normalizeHostname(parsed.hostname);
-        const url = parsed.toString();
-        const timestampKey = getYouTubeImportTimestampKey(url);
-        return {
-            url,
-            key: `youtube:${videoId}:${timestampKey}`,
-        };
-    } catch {
-        return null;
-    }
-};
-
-const normalizeTikTokUrl = value => {
-    const trimmed = `${value || ''}`.trim();
-    if (!trimmed) return null;
-
-    try {
-        const parsed = new URL(trimmed);
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-        if (!isTikTokHostname(parsed.hostname)) return null;
-
-        const host = normalizeHostname(parsed.hostname);
-        const pathParts = parsed.pathname.split('/').filter(Boolean);
-        const contentId = pathParts
-            .map(part => part.replace(/\.html$/i, ''))
-            .find(part => /^\d{6,}$/.test(part));
-        const shortCode =
-            host === 'vm.tiktok.com' || host === 'vt.tiktok.com'
-                ? pathParts[0] || null
-                : pathParts[0]?.toLowerCase() === 't'
-                  ? pathParts[1] || null
-                  : null;
-
-        if (!contentId && !shortCode) return null;
-
-        parsed.protocol = 'https:';
-        parsed.hostname = host;
-        parsed.search = '';
-        parsed.hash = '';
-        const url = parsed.toString();
-        return {
-            url,
-            key: contentId ? `tiktok:${contentId}` : `tiktok-short:${shortCode}`,
-        };
-    } catch {
-        return null;
-    }
-};
-
-const normalizeInstagramUrl = value => {
-    const trimmed = `${value || ''}`.trim();
-    if (!trimmed) return null;
-
-    try {
-        const parsed = new URL(trimmed);
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-        if (!isInstagramHostname(parsed.hostname)) return null;
-
-        const pathParts = parsed.pathname.split('/').filter(Boolean);
-        const routeIndex = ['p', 'reel', 'tv'].includes(pathParts[0]?.toLowerCase()) ? 0 : 1;
-        const route = pathParts[routeIndex]?.toLowerCase();
-        const contentCode = pathParts[routeIndex + 1];
-        if (!['p', 'reel', 'tv'].includes(route) || !/^[a-zA-Z0-9_-]{3,128}$/.test(contentCode || '')) {
-            return null;
-        }
-
-        return {
-            url: `https://www.instagram.com/${route}/${contentCode}/`,
-            key: `instagram:${contentCode}`,
-        };
-    } catch {
-        return null;
-    }
-};
-
-const normalizeTxtImportUrl = value => normalizeYouTubeUrl(value) || normalizeTikTokUrl(value) || normalizeInstagramUrl(value);
-
-const parseTxtImportLinks = content => {
-    const rawContent = `${content || ''}`;
-    const seenKeys = new Set();
-    const result = {
-        items: [],
-        invalidCount: 0,
-        duplicateCount: 0,
-        ignoredCount: 0,
-        isEmpty: rawContent.trim().length === 0,
-    };
-
-    rawContent.split(/\r\n|\n|\r/).forEach(rawLine => {
-        const line = rawLine.trim();
-        if (!line || line.startsWith('#')) {
-            result.ignoredCount += 1;
-            return;
-        }
-
-        const normalized = normalizeTxtImportUrl(line);
-        if (!normalized) {
-            result.invalidCount += 1;
-            return;
-        }
-
-        if (seenKeys.has(normalized.key)) {
-            result.duplicateCount += 1;
-            return;
-        }
-
-        seenKeys.add(normalized.key);
-        result.items.push(normalized);
-    });
-
-    return result;
-};
-
 const getQueuedTxtImportKeys = () => {
     const keys = new Set();
     state.jobs.forEach(job => {
@@ -730,70 +412,6 @@ const getQueuedTxtImportKeys = () => {
 
 const setInfoBadge = text => {
     els.infoBadge.textContent = text;
-};
-
-const parseLatestYtDlpVersion = payload => {
-    if (!payload || typeof payload.tag_name !== 'string') return null;
-    const value = payload.tag_name.trim();
-    if (!value) return null;
-    return value.startsWith('v') ? value.slice(1) : value;
-};
-
-const fetchLatestYtDlpVersion = async () => {
-    const response = await fetch(ytDlpLatestReleaseUrl, {
-        headers: {
-            Accept: 'application/vnd.github+json',
-        },
-    });
-    if (!response.ok) {
-        throw new Error(`latest version request failed (${response.status})`);
-    }
-    const payload = await response.json();
-    const latest = parseLatestYtDlpVersion(payload);
-    if (!latest) {
-        throw new Error('latest version missing from response');
-    }
-    return latest;
-};
-
-const performYtDlpVersionCheck = async () => {
-    if (!invoke) return;
-    const path = els.ytDlpPath.value.trim() || null;
-    els.ytDlpInstalledVersion.textContent = 'Installed: checking...';
-    els.ytDlpInstalledVersion.removeAttribute('title');
-    els.ytDlpLatestVersion.textContent = 'Latest: checking...';
-
-    const [installedResult, latestResult] = await Promise.allSettled([
-        invoke('get_yt_dlp_installed_version', { path }),
-        fetchLatestYtDlpVersion(),
-    ]);
-
-    if (installedResult.status === 'fulfilled') {
-        const installed = installedResult.value;
-        els.ytDlpInstalledVersion.textContent = `Installed: ${installed.version}`;
-        els.ytDlpInstalledVersion.title = installed.path;
-    } else {
-        els.ytDlpInstalledVersion.textContent = 'Installed: unavailable';
-        const reason = `${installedResult.reason || ''}`.trim();
-        if (reason) els.ytDlpInstalledVersion.title = reason;
-    }
-
-    if (latestResult.status === 'fulfilled') {
-        els.ytDlpLatestVersion.textContent = `Latest: ${latestResult.value}`;
-    } else {
-        els.ytDlpLatestVersion.textContent = 'Latest: unavailable';
-    }
-};
-
-const refreshYtDlpVersionsOnce = () => {
-    if (!invoke) return Promise.resolve();
-    if (ytDlpVersionsChecked) return ytDlpVersionsPromise || Promise.resolve();
-
-    ytDlpVersionsChecked = true;
-    ytDlpVersionsPromise = performYtDlpVersionCheck().finally(() => {
-        ytDlpVersionsPromise = null;
-    });
-    return ytDlpVersionsPromise;
 };
 
 const setActiveView = view => {
@@ -851,14 +469,14 @@ const setActiveView = view => {
         els.queueBadge.style.display = 'none';
         els.infoBadge.style.display = 'none';
         runAfterViewPaint(() => {
-            void renderHistory();
+            void historyView.render();
         });
     } else if (isLinkDump) {
         els.leftPanelTitle.textContent = 'Browser Import';
         els.rightPanelTitle.textContent = 'Connections';
         els.queueBadge.style.display = 'none';
         els.infoBadge.style.display = 'none';
-        if (!state.linkDump) {
+        if (!browserImport.hasOverview()) {
             runAfterViewPaint(() => {
                 void syncLinkDumpOverview();
             });
@@ -871,7 +489,7 @@ const setActiveView = view => {
         runAfterViewPaint(() => {
             settingsLogRenderReady = true;
             renderLogs();
-            void refreshYtDlpVersionsOnce();
+            if (settings.getConfig()) void settings.refreshYtDlpVersionsOnce();
         });
     }
 };
@@ -1010,7 +628,7 @@ const renderQueueControls = () => {
     els.queueAutoStartBtn.setAttribute('aria-pressed', String(state.queueAutoStartEnabled));
 
     els.startQueueBtn.disabled = (state.queueAutoStartEnabled && !state.queuePaused) || queuedCount === 0 || isBusy;
-    els.clearQueueBtn.disabled = state.jobs.size === 0;
+    els.clearQueueBtn.disabled = state.jobs.size === 0 || clearQueueInFlight;
     els.pauseQueueBtn.disabled = !state.queuePaused && queuedCount === 0 && !isBusy;
     els.pauseQueueBtn.textContent = state.queuePaused ? 'Resume queue' : 'Pause after current';
 
@@ -1046,12 +664,28 @@ const toggleQueueCollapsed = () => {
     if (!state.queueCollapsed) scheduleQueueRender();
 };
 
+const getQueueMetaItems = job => {
+    const items = [job.formatLabel || ''];
+    if (job.state === 'downloading') {
+        if (Number.isFinite(job.percent)) items.push(`Progress: ${Math.round(job.percent)}%`);
+        if (job.speed && job.speed !== '-') items.push(`Speed: ${job.speed}`);
+        if (job.eta && job.eta !== '-') items.push(`ETA: ${job.eta}`);
+    }
+    if (job.state === 'transcribing' || job.state === 'cancelling') {
+        items.push(job.state === 'transcribing' ? 'Creating transcript' : 'Stopping download');
+    }
+    const cutStartLabel = formatCutStartLabel(job.cutStartTime);
+    if (cutStartLabel) items.push(cutStartLabel);
+    return items;
+};
+
 const renderQueue = () => {
     const items = Array.from(state.jobs.values()).sort((a, b) => a.createdAt - b.createdAt);
     const focusedItem = document.activeElement?.closest?.('.pf-queue-item');
     const focusedJobId = focusedItem?.dataset.jobId;
     const focusedMoreButton = document.activeElement?.classList?.contains('pf-queue-more-btn');
     els.queueList.replaceChildren();
+    queueCardElements.clear();
     items.forEach(job => {
         const item = document.createElement('div');
         item.className = `pf-list-card pf-queue-item ${job.id === state.selectedId ? 'pf-is-active' : ''}`;
@@ -1137,26 +771,18 @@ const renderQueue = () => {
 
         const meta = document.createElement('div');
         meta.className = 'pf-queue-meta';
-        const metaItems = [job.formatLabel || ''];
-        if (isDownloading) {
-            if (Number.isFinite(job.percent)) metaItems.push(`Progress: ${Math.round(job.percent)}%`);
-            if (job.speed && job.speed !== '-') metaItems.push(`Speed: ${job.speed}`);
-            if (job.eta && job.eta !== '-') metaItems.push(`ETA: ${job.eta}`);
-        }
-        if (isProcessing) metaItems.push(job.state === 'transcribing' ? 'Creating transcript' : 'Stopping download');
-        const cutStartLabel = formatCutStartLabel(job.cutStartTime);
-        if (cutStartLabel) metaItems.push(cutStartLabel);
-        appendTextSpans(meta, metaItems);
+        appendTextSpans(meta, getQueueMetaItems(job));
         const main = document.createElement('div');
         main.className = 'pf-list-card-layout pf-queue-main';
 
         const content = document.createElement('div');
         content.className = 'pf-queue-content';
         content.append(header, progress, meta);
-        if (job.state === 'error' && job.error) {
+        if (job.clearError || job.error) {
             const errorText = document.createElement('p');
-            errorText.className = 'pf-status pf-status-error pf-queue-error';
-            errorText.textContent = job.error;
+            const isHistoryWarning = job.state === 'success' && !job.clearError;
+            errorText.className = `pf-status ${isHistoryWarning ? 'pf-queue-warning' : 'pf-status-error'} pf-queue-error`;
+            errorText.textContent = job.clearError || (job.state === 'success' ? `History warning: ${job.error}` : job.error);
             content.appendChild(errorText);
         }
         main.appendChild(content);
@@ -1173,6 +799,7 @@ const renderQueue = () => {
 
         item.append(main);
         els.queueList.appendChild(item);
+        queueCardElements.set(job.id, item);
     });
     if (focusedJobId) {
         const restoredItem = Array.from(els.queueList.children).find(item => item.dataset.jobId === focusedJobId);
@@ -1190,264 +817,42 @@ const renderQueue = () => {
     renderQueueControls();
 };
 
+const renderQueueProgress = () => {
+    for (const id of queueProgressDirtyIds) {
+        const item = queueCardElements.get(id);
+        const job = state.jobs.get(id);
+        if (!item || !job || job.state !== 'downloading') {
+            queueRenderDirty = true;
+            return;
+        }
+        const progress = item.querySelector('.pf-progress');
+        const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
+        progress.setAttribute('aria-valuenow', String(Math.round(percent)));
+        progress.querySelector('.pf-progress-bar').style.width = `${percent}%`;
+        const meta = item.querySelector('.pf-queue-meta');
+        meta.replaceChildren();
+        appendTextSpans(meta, getQueueMetaItems(job));
+    }
+};
+
 const flushQueueRender = () => {
-    if (state.activeView !== 'download' || queueRenderFrame !== null || !queueRenderDirty) return;
+    if (state.activeView !== 'download' || queueRenderFrame !== null || (!queueRenderDirty && queueProgressDirtyIds.size === 0)) return;
 
     queueRenderFrame = requestAnimationFrame(() => {
         queueRenderFrame = null;
-        if (state.activeView !== 'download' || !queueRenderDirty) return;
-        queueRenderDirty = false;
-        renderQueue();
+        if (state.activeView !== 'download') return;
+        if (!queueRenderDirty && queueProgressDirtyIds.size > 0) renderQueueProgress();
+        if (queueRenderDirty) {
+            queueRenderDirty = false;
+            renderQueue();
+        }
+        queueProgressDirtyIds.clear();
     });
 };
 
-const scheduleQueueRender = () => {
-    queueRenderDirty = true;
+const scheduleQueueRender = ({ progressOnly = false } = {}) => {
+    if (!progressOnly) queueRenderDirty = true;
     flushQueueRender();
-};
-
-const formatHistoryDate = timestamp => {
-    if (!timestamp) return '-';
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) {
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else if (diffDays === 1) {
-        return 'Yesterday';
-    } else if (diffDays < 7) {
-        return date.toLocaleDateString([], { weekday: 'short' });
-    } else {
-        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    }
-};
-
-const formatUploadDate = uploadDate => {
-    const raw = `${uploadDate || ''}`.trim();
-    if (!raw) return null;
-
-    if (/^\d{8}$/.test(raw)) {
-        const year = raw.slice(0, 4);
-        const month = raw.slice(4, 6);
-        const day = raw.slice(6, 8);
-        return `${year}-${month}-${day}`;
-    }
-
-    return raw;
-};
-
-const formatUploadTimestamp = timestamp => {
-    const seconds = Number(timestamp);
-    if (!Number.isFinite(seconds) || seconds <= 0) return null;
-
-    const date = new Date(seconds * 1000);
-    if (Number.isNaN(date.getTime())) return null;
-
-    return date.toLocaleString([], {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
-};
-
-const setHistoryLoading = isLoading => {
-    state.historyLoading = isLoading;
-    els.loadMoreHistoryBtn.disabled = isLoading;
-    els.clearHistoryBtn.disabled = isLoading;
-    els.loadMoreHistoryBtn.textContent = isLoading ? 'Loading...' : 'Load more';
-};
-
-const updateHistoryActions = () => {
-    els.loadMoreHistoryBtn.hidden = !state.historyHasMore;
-};
-
-const formatHistorySource = source => {
-    const name = `${source || 'unknown'}`.trim().toLowerCase();
-    const known = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', twitch: 'Twitch', linkedin: 'LinkedIn', x: 'X' };
-    return known[name] || (name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Unknown');
-};
-
-const renderHistorySources = sourceCounts => {
-    const fragment = document.createDocumentFragment();
-    for (const entry of Array.isArray(sourceCounts) ? sourceCounts : []) {
-        const count = Number(entry?.count);
-        if (!Number.isFinite(count) || count <= 0) continue;
-        const row = document.createElement('li');
-        const name = document.createElement('span');
-        name.textContent = formatHistorySource(entry?.source);
-        const value = document.createElement('strong');
-        value.textContent = count.toLocaleString();
-        row.append(name, value);
-        fragment.appendChild(row);
-    }
-    els.historySourcesList.replaceChildren(fragment);
-    els.historySourcesEmpty.hidden = els.historySourcesList.childElementCount > 0;
-};
-
-const renderHistoryStats = async () => {
-    if (!invoke) return;
-
-    try {
-        const stats = await invoke('get_history_stats');
-        els.historyVideoCount.textContent = Number(stats?.video_count || 0).toLocaleString();
-        els.historyTotalSize.textContent = formatFileSize(stats?.total_file_size_bytes);
-        els.historyTotalDuration.textContent = formatDuration(Number(stats?.total_duration_seconds || 0));
-        renderHistorySources(stats?.source_counts);
-    } catch (err) {
-        appendLog(`[history] ${err}`, true);
-    }
-};
-
-const invalidateHistoryCache = () => {
-    state.historyDirty = true;
-    state.historyRevision += 1;
-};
-
-const createHistoryItem = entry => {
-    const item = document.createElement('div');
-    item.className = 'pf-list-card pf-history-item';
-    const entryLabel = entry.title || entry.filename || entry.url || 'download';
-    const openBtn = document.createElement('button');
-    openBtn.type = 'button';
-    openBtn.className = `pf-history-open-btn pf-list-card-layout ${entry.thumbnail ? '' : 'pf-no-media'}`;
-    openBtn.setAttribute('aria-label', `Open downloaded file: ${entryLabel}`);
-
-    openBtn.onclick = async () => {
-        // Rust uses snake_case: output_path, not outputPath
-        const outputPath = entry.output_path || entry.outputPath;
-        if (outputPath && invoke) {
-            try {
-                const exists = await invoke('open_file_path', { path: outputPath });
-                if (!exists) {
-                    appendLog(`[history] File not found: ${outputPath}`, true);
-                }
-            } catch (err) {
-                appendLog(`[open] ${err}`, true);
-            }
-        }
-    };
-
-    const content = document.createElement('div');
-    content.className = 'pf-history-content';
-
-    const title = document.createElement('div');
-    title.className = 'pf-history-title';
-    title.textContent = entryLabel;
-    content.appendChild(title);
-
-    const meta = document.createElement('div');
-    meta.className = 'pf-history-meta';
-    const dateStr = formatHistoryDate(entry.completed_at);
-    const source = entry.source || entry.platform || detectPlatform(entry.url) || 'unknown';
-    const uploadDate = formatUploadTimestamp(entry.timestamp) || formatUploadDate(entry.upload_date);
-    appendTextSpans(meta, [
-        source,
-        entry.medium || '',
-        entry.uploader ? `by ${entry.uploader}` : '',
-        entry.filename || '',
-        uploadDate ? `uploaded ${uploadDate}` : '',
-        dateStr,
-    ]);
-    content.appendChild(meta);
-
-    openBtn.appendChild(content);
-
-    if (entry.thumbnail) {
-        const thumb = document.createElement('div');
-        thumb.className = 'pf-media-thumbnail pf-history-thumb';
-        thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
-        openBtn.appendChild(thumb);
-    }
-    item.appendChild(openBtn);
-
-    const removeBtn = document.createElement('button');
-    removeBtn.className = 'pf-icon-btn pf-icon-btn-danger pf-history-item-remove-btn';
-    removeBtn.textContent = '×';
-    removeBtn.title = 'Remove from history';
-    removeBtn.setAttribute('aria-label', `Remove from history: ${entryLabel}`);
-    removeBtn.onclick = async event => {
-        event.stopPropagation();
-        try {
-            await invoke('remove_history_entry', { id: entry.id });
-            invalidateHistoryCache();
-            void renderHistory({ force: true });
-        } catch (err) {
-            appendLog(`[history] ${err}`, true);
-        }
-    };
-    item.appendChild(removeBtn);
-
-    return item;
-};
-
-const renderHistory = async ({ append = false, force = false } = {}) => {
-    if (!append && !force && state.historyLoaded && !state.historyDirty) return;
-
-    if (!invoke) {
-        els.historyList.replaceChildren();
-        els.historyHint.hidden = true;
-        state.historyHasMore = false;
-        state.historyLoaded = true;
-        state.historyDirty = false;
-        updateHistoryActions();
-        return;
-    }
-
-    if (state.historyLoading) return;
-
-    if (!append) void renderHistoryStats();
-    const requestedRevision = state.historyRevision;
-    const requestedQuery = state.historyQuery;
-    let needsFollowUpRefresh = false;
-    const offset = append ? state.historyOffset : 0;
-    setHistoryLoading(true);
-
-    try {
-        const page = await invoke('get_history', {
-            limit: historyPageSize,
-            offset,
-            ...(requestedQuery ? { query: requestedQuery } : {}),
-        });
-        if (state.historyRevision !== requestedRevision) {
-            needsFollowUpRefresh = true;
-            return;
-        }
-        const entries = Array.isArray(page) ? page : page?.entries || [];
-        const hasMore = Array.isArray(page)
-            ? entries.length === historyPageSize
-            : Boolean(page?.has_more ?? page?.hasMore);
-
-        const fragment = document.createDocumentFragment();
-        entries.forEach(entry => fragment.appendChild(createHistoryItem(entry)));
-        if (append) {
-            els.historyList.appendChild(fragment);
-        } else {
-            els.historyList.replaceChildren(fragment);
-        }
-
-        els.historyHint.textContent = requestedQuery
-            ? `No history results for “${requestedQuery}”.`
-            : 'No history yet. Downloaded items will appear here.';
-        els.historyHint.hidden = entries.length > 0 || append;
-        state.historyOffset = offset + entries.length;
-        state.historyHasMore = hasMore;
-        state.historyLoaded = true;
-        needsFollowUpRefresh = state.historyRevision !== requestedRevision;
-        state.historyDirty = needsFollowUpRefresh;
-    } catch (err) {
-        appendLog(`[history] ${err}`, true);
-        state.historyDirty = true;
-    } finally {
-        setHistoryLoading(false);
-        updateHistoryActions();
-        if (needsFollowUpRefresh && state.activeView === 'history') {
-            void renderHistory({ force: true });
-        }
-    }
 };
 
 const createLogLine = ({ text, isError }) => {
@@ -1501,74 +906,61 @@ const clearLogs = () => {
 };
 
 const updateJob = (id, patch) => {
-    const existing = state.jobs.get(id) || { id, createdAt: Date.now() };
+    const previous = state.jobs.get(id);
+    const existing = previous || { id, createdAt: Date.now() };
     state.jobs.set(id, { ...existing, ...patch });
-    scheduleQueueRender();
+    const changedKeys = Object.keys(patch);
+    if (previous && changedKeys.length === 1 && changedKeys[0] === 'previewLoading') return;
+    const progressOnly = previous && changedKeys.length > 0 &&
+        changedKeys.every(key => key === 'percent' || key === 'speed' || key === 'eta');
+    if (progressOnly) queueProgressDirtyIds.add(id);
+    scheduleQueueRender({ progressOnly });
+};
+
+const thumbnailHydrationQueue = [];
+const maxConcurrentThumbnailHydrations = 2;
+let activeThumbnailHydrations = 0;
+
+const drainThumbnailHydrationQueue = () => {
+    while (activeThumbnailHydrations < maxConcurrentThumbnailHydrations && thumbnailHydrationQueue.length > 0) {
+        const id = thumbnailHydrationQueue.shift();
+        const job = state.jobs.get(id);
+        if (!job?.previewLoading || job.previewResolved) continue;
+        activeThumbnailHydrations += 1;
+        void (async () => {
+            try {
+                const info = await invoke('load_info', { url: job.url });
+                const current = state.jobs.get(id);
+                if (!current) return;
+
+                const patch = {
+                    previewLoading: false,
+                    previewResolved: true,
+                };
+                if (info?.thumbnail) patch.thumbnail = info.thumbnail;
+                if (info?.title && (!current.label || current.label === current.url)) {
+                    patch.label = info.title;
+                }
+                updateJob(id, patch);
+            } catch {
+                if (state.jobs.has(id)) {
+                    updateJob(id, { previewLoading: false, previewResolved: true });
+                }
+            } finally {
+                activeThumbnailHydrations -= 1;
+                drainThumbnailHydrationQueue();
+            }
+        })();
+    }
 };
 
 const maybeHydrateQueueThumbnail = id => {
     if (!invoke) return;
     const job = state.jobs.get(id);
-    if (!job || !job.url) return;
-    if (job.thumbnail || job.previewResolved || job.previewLoading) return;
-
+    if (!job?.url || job.thumbnail || job.previewResolved || job.previewLoading) return;
     updateJob(id, { previewLoading: true });
-    void (async () => {
-        try {
-            const info = await invoke('load_info', { url: job.url });
-            const current = state.jobs.get(id);
-            if (!current) return;
-
-            const patch = {
-                previewLoading: false,
-                previewResolved: true,
-            };
-            if (info?.thumbnail) patch.thumbnail = info.thumbnail;
-            if (info?.title && (!current.label || current.label === current.url)) {
-                patch.label = info.title;
-            }
-            updateJob(id, patch);
-        } catch {
-            if (state.jobs.has(id)) {
-                updateJob(id, { previewLoading: false, previewResolved: true });
-            }
-        }
-    })();
-};
-
-const syncConfig = async () => {
-    try {
-        state.config = await invoke('get_config');
-        els.notificationsEnabled.checked = state.config.notifications_enabled ?? false;
-        els.saveInstagramCaptions.checked = state.config.save_instagram_captions ?? false;
-        els.outputDir.value = state.config.default_output_dir || '';
-        els.ytDlpPath.value = state.config.yt_dlp_path || defaultYtDlpPath;
-        els.fasterWhisperModel.value = normalizeFasterWhisperModel(state.config.faster_whisper_model);
-        els.downloadVideoWithTranscript.checked = state.config.download_video_with_transcript ?? false;
-        els.presetSelect.value = normalizePresetKey(state.config.selected_preset_key);
-        els.magicImportEnabled.checked = state.config.magic_import_enabled ?? true;
-        els.cutAtTimestampEnabled.checked = state.config.cut_at_timestamp_enabled ?? true;
-        syncMagicImportTriggerState();
-        updateDownloadOptionHints();
-    } catch (err) {
-        appendLog(`[config] ${err}`, true);
-    }
-};
-
-const persistSelectedPresetKey = async () => {
-    const selectedPresetKey = getSelectedPresetKey();
-    await saveSettings({ selected_preset_key: selectedPresetKey });
-};
-
-const persistInstagramCaptionSetting = async () => {
-    const enabled = Boolean(els.saveInstagramCaptions.checked);
-    els.saveInstagramCaptions.disabled = true;
-    try {
-        await saveSettings({ save_instagram_captions: enabled });
-    } finally {
-        els.saveInstagramCaptions.disabled = false;
-        updateDownloadOptionHints();
-    }
+    thumbnailHydrationQueue.push(id);
+    drainThumbnailHydrationQueue();
 };
 
 const syncQueueStatus = async () => {
@@ -1579,278 +971,17 @@ const syncQueueStatus = async () => {
         state.queueWorkerRunning = Boolean(status?.worker_running);
         state.queuePaused = Boolean(status?.paused);
         renderQueueControls();
+        return status;
     } catch (err) {
         appendLog(`[queue] ${err}`, true);
     }
 };
 
-const formatDateTime = value => {
-    if (!value) return '-';
-    const date = new Date(`${value.replace(' ', 'T')}Z`);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString([], {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
-};
-
-const statusLabel = value => {
-    const normalized = `${value || ''}`.trim().toLowerCase();
-    return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Stopped';
-};
-
-const setLinkDumpStatusText = (message, isError = false) => {
-    if (!els.linkDumpServerStatusText) return;
-    els.linkDumpServerStatusText.textContent = message || '';
-    els.linkDumpServerStatusText.classList.toggle('pf-status-error', Boolean(message && isError));
-    els.linkDumpServerStatusText.classList.toggle('pf-status-success', Boolean(message && !isError));
-};
-
-const setLinkDumpSecretStatus = (message, isError = false) => {
-    if (!els.linkDumpSecretStatus) return;
-    els.linkDumpSecretStatus.textContent = message || '';
-    els.linkDumpSecretStatus.classList.toggle('pf-status-error', Boolean(message && isError));
-    els.linkDumpSecretStatus.classList.toggle('pf-status-success', Boolean(message && !isError));
-};
-
-const applyLinkDumpServerStatus = serverStatus => {
-    if (!serverStatus || !els.linkDumpServerStatusBadge) return;
-    if (state.linkDump) {
-        state.linkDump = { ...state.linkDump, server_status: serverStatus };
-    }
-    const status = `${serverStatus.status || 'stopped'}`.toLowerCase();
-    els.linkDumpServerStatusBadge.textContent = statusLabel(status);
-    els.linkDumpServerStatusBadge.classList.toggle('pf-badge-danger', status === 'error');
-    els.linkDumpServerStatusBadge.classList.toggle('pf-badge-warning', status === 'stopped');
-    els.linkDumpServerStatusBadge.classList.toggle('pf-badge-muted', status !== 'running' && status !== 'error');
-    els.linkDumpServerStatusBadge.classList.toggle('pf-badge', true);
-
-    if (status === 'running') {
-        setLinkDumpStatusText('Browser extensions can send YouTube, TikTok, and Instagram links to this PineFetch instance.');
-    } else if (status === 'error') {
-        setLinkDumpStatusText(serverStatus.error_message || 'Link Dump Server could not start.', true);
-    } else {
-        setLinkDumpStatusText('Link Dump Server is stopped.', false);
-    }
-};
-
-const renderLinkDumpSecrets = secrets => {
-    if (!els.linkDumpSecretList) return;
-    if (state.linkDump) {
-        state.linkDump = { ...state.linkDump, secrets };
-    }
-    const visibleSecrets = Array.isArray(secrets)
-        ? secrets.filter(connection => `${connection.status || ''}`.toLowerCase() !== 'deleted')
-        : [];
-    els.linkDumpSecretHint.hidden = visibleSecrets.length > 0;
-    const fragment = document.createDocumentFragment();
-
-    visibleSecrets.forEach(connection => {
-        const item = document.createElement('div');
-        item.className = 'pf-link-dump-secret-item';
-
-        const content = document.createElement('div');
-        content.className = 'pf-link-dump-secret-content';
-
-        const title = document.createElement('div');
-        title.className = 'pf-link-dump-secret-title';
-        title.textContent = connection.name || 'Link Dump Connection';
-
-        const meta = document.createElement('div');
-        meta.className = 'pf-link-dump-secret-meta';
-        appendTextSpans(meta, [
-            `Created ${formatDateTime(connection.created_at)}`,
-            `Last used ${formatDateTime(connection.last_used_at)}`,
-        ]);
-
-        content.append(title, meta);
-
-        const actions = document.createElement('div');
-        actions.className = 'pf-row pf-link-dump-secret-actions';
-
-        const badge = document.createElement('span');
-        const status = `${connection.status || 'active'}`.toLowerCase();
-        badge.className = `pf-badge ${
-            status === 'active' ? '' : status === 'revoked' ? 'pf-badge-warning' : 'pf-badge-muted'
-        }`;
-        badge.textContent = statusLabel(status);
-        actions.appendChild(badge);
-
-        if (status === 'active') {
-            const revokeBtn = document.createElement('button');
-            revokeBtn.className = 'pf-btn pf-btn-ghost';
-            revokeBtn.type = 'button';
-            revokeBtn.textContent = 'Revoke';
-            revokeBtn.onclick = () => {
-                if (!window.confirm('Revoke this connection? Extensions using this secret will no longer be able to send links.')) {
-                    return;
-                }
-                void revokeLinkDumpSecret(connection.id);
-            };
-            actions.appendChild(revokeBtn);
-        }
-
-        if (status !== 'deleted') {
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'pf-btn pf-btn-danger';
-            deleteBtn.type = 'button';
-            deleteBtn.textContent = 'Delete';
-            deleteBtn.onclick = () => {
-                if (!window.confirm('Delete this connection? Extensions using this secret will no longer be able to send links.')) {
-                    return;
-                }
-                void deleteLinkDumpSecret(connection.id);
-            };
-            actions.appendChild(deleteBtn);
-        }
-
-        item.append(content, actions);
-        fragment.appendChild(item);
-    });
-    els.linkDumpSecretList.replaceChildren(fragment);
-};
-
-const renderLinkDumpOverview = overview => {
-    state.linkDump = overview;
-    const settings = overview?.settings || {};
-    const serverStatus = overview?.server_status || {};
-    if (els.linkDumpServerUrl) {
-        els.linkDumpServerUrl.value =
-            serverStatus.url || `http://${settings.host || '127.0.0.1'}:${settings.port || 2255}`;
-    }
-    if (els.linkDumpPort) {
-        els.linkDumpPort.value = settings.port || 2255;
-    }
-    if (els.linkDumpServerEnabled) {
-        els.linkDumpServerEnabled.checked = settings.server_enabled !== false;
-    }
-    applyLinkDumpServerStatus(serverStatus);
-    renderLinkDumpSecrets(overview?.secrets || []);
-};
-
-const syncLinkDumpOverview = () => {
-    if (!invoke) return Promise.resolve();
-    if (linkDumpSyncPromise) return linkDumpSyncPromise;
-
-    linkDumpSyncPromise = (async () => {
-        try {
-            renderLinkDumpOverview(await invoke('get_link_dump_overview'));
-        } catch (err) {
-            setLinkDumpStatusText(`Link Dump settings unavailable: ${err}`, true);
-            appendLog(`[link-dump] ${err}`, true);
-        }
-    })().finally(() => {
-        linkDumpSyncPromise = null;
-    });
-    return linkDumpSyncPromise;
-};
-
-const openLinkDumpExtensionRepo = async event => {
-    event.preventDefault();
-    const url = els.linkDumpExtensionRepoLink?.href || linkDumpExtensionRepoUrl;
-    if (shellOpen) {
-        try {
-            await shellOpen(url);
-            return;
-        } catch (err) {
-            appendLog(`[link-dump] Could not open extension repository: ${err}`, true);
-        }
-    }
-    window.open(url, '_blank', 'noopener,noreferrer');
-};
-
-const saveLinkDumpServer = async () => {
-    if (!invoke) return;
-    const port = Number(els.linkDumpPort.value);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        setLinkDumpStatusText('Port must be between 1 and 65535.', true);
-        return;
-    }
-
-    try {
-        const overview = await invoke('update_link_dump_settings', {
-            patch: {
-                server_enabled: Boolean(els.linkDumpServerEnabled.checked),
-                port,
-            },
-        });
-        renderLinkDumpOverview(overview);
-        appendLog('[link-dump] server settings saved', false);
-    } catch (err) {
-        setLinkDumpStatusText(`${err}`, true);
-        appendLog(`[link-dump] ${err}`, true);
-    }
-};
-
-const restartLinkDumpServer = async () => {
-    if (!invoke) return;
-    try {
-        applyLinkDumpServerStatus(await invoke('restart_link_dump_server'));
-        appendLog('[link-dump] server restarted', false);
-    } catch (err) {
-        setLinkDumpStatusText(`${err}`, true);
-        appendLog(`[link-dump] ${err}`, true);
-    }
-};
-
-const generateLinkDumpSecret = async () => {
-    if (!invoke) return;
-    try {
-        const generated = await invoke('create_link_dump_secret', {
-            name: els.linkDumpSecretName.value.trim() || null,
-        });
-        state.generatedLinkDumpSecret = generated.secret;
-        els.generatedLinkDumpSecret.value = generated.secret;
-        els.generatedLinkDumpSecretPanel.hidden = false;
-        els.linkDumpSecretName.value = '';
-        setLinkDumpSecretStatus('Secret generated.');
-        renderLinkDumpOverview(await invoke('get_link_dump_overview'));
-    } catch (err) {
-        setLinkDumpSecretStatus(`${err}`, true);
-        appendLog(`[link-dump] ${err}`, true);
-    }
-};
-
-const copyGeneratedLinkDumpSecret = async () => {
-    if (!state.generatedLinkDumpSecret) return;
-    try {
-        await navigator.clipboard.writeText(state.generatedLinkDumpSecret);
-        state.generatedLinkDumpSecret = null;
-        els.generatedLinkDumpSecret.value = '';
-        els.generatedLinkDumpSecretPanel.hidden = true;
-        setLinkDumpSecretStatus('Secret copied.');
-    } catch (err) {
-        setLinkDumpSecretStatus(`Copy failed: ${err}`, true);
-        appendLog(`[copy] ${err}`, true);
-    }
-};
-
-const revokeLinkDumpSecret = async id => {
-    if (!invoke) return;
-    try {
-        const secrets = await invoke('revoke_link_dump_secret', { id });
-        renderLinkDumpSecrets(secrets);
-        setLinkDumpSecretStatus('Connection revoked.');
-    } catch (err) {
-        setLinkDumpSecretStatus(`${err}`, true);
-        appendLog(`[link-dump] ${err}`, true);
-    }
-};
-
-const deleteLinkDumpSecret = async id => {
-    if (!invoke) return;
-    try {
-        const secrets = await invoke('delete_link_dump_secret', { id });
-        renderLinkDumpSecrets(secrets);
-        setLinkDumpSecretStatus('Connection deleted.');
-    } catch (err) {
-        setLinkDumpSecretStatus(`${err}`, true);
-        appendLog(`[link-dump] ${err}`, true);
-    }
-};
+const browserImport = createBrowserImportView({ els, invoke, shellOpen, appendLog, appendTextSpans });
+const {
+    applyLinkDumpServerStatus,
+    syncLinkDumpOverview,
+} = browserImport;
 
 let loadInfoInFlight = false;
 let loadInfoPending = false;
@@ -1928,6 +1059,10 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     }
 
     const preset = presets[presetKey] || presets.best;
+    if (!preset) {
+        setInfoBadge('Formats unavailable');
+        return null;
+    }
     const output_dir = els.outputDir.value.trim() || null;
     const cutAtTimestampEnabled = Boolean(els.cutAtTimestampEnabled.checked);
     const cutStartTime = cutAtTimestampEnabled ? extractUrlStartTimestamp(url) : null;
@@ -1954,7 +1089,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     const durationSecondsForRequest = hasLoadedInfo ? state.info?.duration ?? null : null;
 
     try {
-        await configSaveQueue;
+        await settings.waitForPendingSave();
         const id = await invoke('enqueue_download', {
             request: {
                 url,
@@ -1991,7 +1126,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
             formatLabel: preset.queueLabel,
             cutStartTime,
         });
-        void cacheLastDownloadedUrl(url);
+        void settings.cacheLastDownloadedUrl(url);
         maybeHydrateQueueThumbnail(id);
 
         if (!options.preserveComposerState) {
@@ -2084,66 +1219,6 @@ const toggleQueuePause = async () => {
         renderQueueControls();
     } catch (err) {
         appendLog(`[queue] ${err}`, true);
-    }
-};
-
-const saveSettings = async changes => {
-    if (!invoke) return false;
-    if (!state.config) {
-        try {
-            state.config = await invoke('get_config');
-        } catch (err) {
-            els.settingsSaveStatus.textContent = `Could not load settings: ${err}`;
-            els.settingsSaveStatus.classList.add('pf-status-error');
-            appendLog(`[config] ${err}`, true);
-            return false;
-        }
-    }
-    state.config = { ...state.config, ...changes };
-    const revision = ++configSaveRevision;
-    els.settingsSaveStatus.textContent = 'Saving changes…';
-    els.settingsSaveStatus.classList.remove('pf-status-error');
-
-    const queuedSave = configSaveQueue.then(() => invoke('set_config', { config: { ...state.config } }));
-    configSaveQueue = queuedSave.catch(() => {});
-
-    try {
-        await queuedSave;
-        if (revision === configSaveRevision) {
-            els.settingsSaveStatus.textContent = 'Changes saved. They apply to new downloads.';
-        }
-        syncMagicImportTriggerState();
-        return true;
-    } catch (err) {
-        appendLog(`[config] ${err}`, true);
-        if (revision === configSaveRevision) {
-            await syncConfig();
-            els.settingsSaveStatus.textContent = `Could not save changes: ${err}`;
-            els.settingsSaveStatus.classList.add('pf-status-error');
-        }
-        return false;
-    }
-};
-
-const pickDir = async () => {
-    try {
-        const result = await invoke('pick_output_dir');
-        if (result) {
-            els.outputDir.value = result;
-            await saveSettings({ default_output_dir: result });
-        }
-    } catch (err) {
-        appendLog(`[dir] ${err}`, true);
-    }
-};
-
-const openFolder = async () => {
-    const path = els.outputDir.value.trim();
-    if (!path) return;
-    try {
-        await invoke('open_folder', { path });
-    } catch (err) {
-        appendLog(`[open] ${err}`, true);
     }
 };
 
@@ -2246,6 +1321,9 @@ const importTxtLinks = async () => {
 };
 
 const clearQueue = async () => {
+    if (clearQueueInFlight) return;
+    clearQueueInFlight = true;
+    renderQueueControls();
     const idsToCancel = new Set(state.queueIds);
     state.jobs.forEach(job => {
         if (
@@ -2258,67 +1336,91 @@ const clearQueue = async () => {
         }
     });
 
-    idsToCancel.forEach(id => state.suppressedJobIds.add(id));
-
-    if (invoke && idsToCancel.size > 0) {
-        const results = await Promise.allSettled(Array.from(idsToCancel).map(id => invoke('cancel_download', { id })));
-        results.forEach(result => {
-            if (result.status === 'rejected') {
-                const message = `${result.reason || ''}`.toLowerCase();
-                if (!message.includes('job not found')) {
-                    appendLog(`[clear] ${result.reason}`, true);
-                }
+    try {
+        const ids = Array.from(idsToCancel);
+        const results = invoke
+            ? await Promise.allSettled(ids.map(id => invoke('cancel_download', { id })))
+            : ids.map(() => ({ status: 'rejected', reason: 'Backend unavailable' }));
+        const confirmed = new Set();
+        let cancelFailed = false;
+        results.forEach((result, index) => {
+            const id = ids[index];
+            if (result.status === 'fulfilled') {
+                confirmed.add(id);
+                return;
             }
+            const reason = `${result.reason || 'Unknown error'}`;
+            if (reason.toLowerCase().includes('job not found')) {
+                const job = state.jobs.get(id);
+                if (job && ['success', 'error', 'cancelled'].includes(job.state)) {
+                    confirmed.add(id);
+                } else {
+                    state.pendingClearAfterTerminal.add(id);
+                    cancelFailed = true;
+                }
+                return;
+            }
+            cancelFailed = true;
+            appendLog(`[clear] ${id}: ${reason}`, true);
+            if (state.jobs.has(id)) updateJob(id, { clearError: `Could not cancel: ${reason}` });
         });
-    }
 
-    state.jobs.clear();
-    state.queueIds = [];
-    state.selectedId = null;
-    scheduleQueueRender();
+        for (const id of state.jobs.keys()) {
+            if (idsToCancel.has(id) && !confirmed.has(id)) continue;
+            state.suppressedJobIds.add(id);
+            state.pendingClearAfterTerminal.delete(id);
+            state.jobs.delete(id);
+        }
+        state.queueIds = state.queueIds.filter(id => !confirmed.has(id));
+        if (state.selectedId && !state.jobs.has(state.selectedId)) state.selectedId = null;
+
+        if (cancelFailed && invoke) {
+            try {
+                const queue = await invoke('get_queue');
+                applyQueueSnapshot(queue);
+                const status = await syncQueueStatus();
+                if (status && !status.worker_running) {
+                    for (const id of state.pendingClearAfterTerminal) {
+                        if (state.queueIds.includes(id)) continue;
+                        state.pendingClearAfterTerminal.delete(id);
+                        state.suppressedJobIds.add(id);
+                        state.jobs.delete(id);
+                    }
+                }
+            } catch (err) {
+                appendLog(`[clear] Could not refresh queue: ${err}`, true);
+            }
+        }
+    } finally {
+        clearQueueInFlight = false;
+        scheduleQueueRender();
+    }
 };
 
+const settings = createSettingsView({
+    els, invoke, appendLog, normalizePresetKey, getSelectedPresetKey, updateDownloadOptionHints,
+    isActive: () => state.activeView === 'settings',
+});
+
+const historyView = createHistoryView({
+    els, invoke, appendLog, formatFileSize, formatDuration, detectPlatform, appendTextSpans,
+    isActive: () => state.activeView === 'history',
+});
+
 const bindEvents = () => {
+    historyView.bindEvents();
+    settings.bindEvents();
+    browserImport.bindEvents();
     els.magicImportTrigger.addEventListener('click', () => {
-        void tryMagicImport();
-    });
-    els.magicImportTrigger.addEventListener('keydown', event => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
         void tryMagicImport();
     });
     window.addEventListener('focus', () => {
         void tryMagicImport();
     });
-    els.magicImportEnabled.addEventListener('change', () => {
-        syncMagicImportTriggerState();
-        void saveSettings({ magic_import_enabled: els.magicImportEnabled.checked });
-    });
-    els.saveInstagramCaptions.addEventListener('change', () => {
-        void persistInstagramCaptionSetting();
-    });
-    els.cutAtTimestampEnabled.addEventListener('change', () => {
-        void saveSettings({ cut_at_timestamp_enabled: els.cutAtTimestampEnabled.checked });
-    });
-    els.notificationsEnabled.addEventListener('change', () => {
-        void saveSettings({ notifications_enabled: els.notificationsEnabled.checked });
-    });
-    els.fasterWhisperModel.addEventListener('change', () => {
-        void saveSettings({ faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value) });
-    });
-    els.downloadVideoWithTranscript.addEventListener('change', () => {
-        void saveSettings({ download_video_with_transcript: els.downloadVideoWithTranscript.checked });
-    });
-    els.outputDir.addEventListener('change', () => {
-        void saveSettings({ default_output_dir: els.outputDir.value.trim() || null });
-    });
-    els.ytDlpPath.addEventListener('change', () => {
-        void saveSettings({ yt_dlp_path: els.ytDlpPath.value.trim() || null });
-    });
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
     els.presetSelect.addEventListener('change', () => {
-        void persistSelectedPresetKey();
+        void settings.persistSelectedPresetKey();
         updateDownloadOptionHints();
     });
     els.importTxtBtn.addEventListener('click', () => {
@@ -2337,22 +1439,24 @@ const bindEvents = () => {
 
     let urlInputDebounceTimer = null;
     els.urlInput.addEventListener('input', () => {
+        if (urlInputDebounceTimer !== null) {
+            clearTimeout(urlInputDebounceTimer);
+            urlInputDebounceTimer = null;
+        }
         const url = els.urlInput.value.trim();
         updateDownloadOptionHints();
-        if (!url) {
+        if (!canLoadInfoForUrl(url)) {
             loadInfoRequestId += 1;
             loadInfoPending = false;
             state.info = null;
             state.infoUrl = null;
             renderInfo();
-            setInfoBadge('Idle');
+            setInfoBadge(!url ? 'Idle' : isValidHttpUrl(url) ? 'Unsupported link' : 'Invalid URL');
             return;
         }
-        if (!isValidHttpUrl(url)) return;
-        const platform = detectPlatform(url);
-        if (!platform) return;
-        if (urlInputDebounceTimer) clearTimeout(urlInputDebounceTimer);
         urlInputDebounceTimer = setTimeout(() => {
+            urlInputDebounceTimer = null;
+            if (!canLoadInfoForUrl(els.urlInput.value.trim())) return;
             setInfoBadge('Loading...');
             void loadInfo();
         }, 600);
@@ -2388,20 +1492,6 @@ const bindEvents = () => {
             return;
         }
     });
-    els.pickDirBtn.addEventListener('click', pickDir);
-    els.openFolderBtn.addEventListener('click', openFolder);
-    els.saveLinkDumpServerBtn.addEventListener('click', () => {
-        void saveLinkDumpServer();
-    });
-    els.restartLinkDumpServerBtn.addEventListener('click', () => {
-        void restartLinkDumpServer();
-    });
-    els.generateLinkDumpSecretBtn.addEventListener('click', () => {
-        void generateLinkDumpSecret();
-    });
-    els.copyGeneratedLinkDumpSecretBtn.addEventListener('click', () => {
-        void copyGeneratedLinkDumpSecret();
-    });
     els.clearQueueBtn.addEventListener('click', () => {
         void clearQueue();
     });
@@ -2409,39 +1499,6 @@ const bindEvents = () => {
     els.viewHistoryBtn.addEventListener('click', () => setActiveView('history'));
     els.viewLinkDumpBtn.addEventListener('click', () => setActiveView('linkDump'));
     els.viewSettingsBtn.addEventListener('click', () => setActiveView('settings'));
-    els.linkDumpExtensionRepoLink.addEventListener('click', event => {
-        void openLinkDumpExtensionRepo(event);
-    });
-    els.loadMoreHistoryBtn.addEventListener('click', () => {
-        void renderHistory({ append: true });
-    });
-    els.historySearchInput.addEventListener('input', () => {
-        if (historySearchTimer !== null) clearTimeout(historySearchTimer);
-        historySearchTimer = setTimeout(() => {
-            historySearchTimer = null;
-            const query = els.historySearchInput.value.trim();
-            if (query === state.historyQuery) return;
-            state.historyQuery = query;
-            invalidateHistoryCache();
-            void renderHistory({ force: true });
-        }, historySearchDelayMs);
-    });
-    els.clearHistoryBtn.addEventListener('click', async () => {
-        if (!invoke) return;
-        if (!window.confirm('Clear the entire history? Downloaded files will stay on disk.')) return;
-
-        try {
-            await invoke('clear_history');
-            if (historySearchTimer !== null) clearTimeout(historySearchTimer);
-            historySearchTimer = null;
-            els.historySearchInput.value = '';
-            state.historyQuery = '';
-            invalidateHistoryCache();
-            await renderHistory({ force: true });
-        } catch (err) {
-            appendLog(`[history] ${err}`, true);
-        }
-    });
     els.queueContextMenu.addEventListener('contextmenu', event => {
         event.preventDefault();
     });
@@ -2522,17 +1579,36 @@ const bindEvents = () => {
     els.clearLogsBtn.addEventListener('click', clearLogs);
 };
 
+const applyQueueSnapshot = jobs => {
+    const queue = Array.isArray(jobs) ? jobs : [];
+    state.queueIds = queue.map(job => job.id).filter(id => !state.suppressedJobIds.has(id));
+    queue.forEach(job => {
+        if (state.suppressedJobIds.has(job.id)) return;
+        const existing = state.jobs.get(job.id);
+        const preset = findPresetForDownloadJob(job);
+        const fallbackThumbnail = resolveYouTubeThumbnail(job.url);
+        updateJob(job.id, {
+            url: job.url,
+            label: existing?.label || job.url,
+            thumbnail: existing?.thumbnail || fallbackThumbnail,
+            state: 'queued',
+            outputPath: existing?.outputPath || null,
+            cutStartTime: job.cut_start_time ?? null,
+            previewResolved: existing?.previewResolved || Boolean(fallbackThumbnail),
+            previewLoading: existing?.previewLoading || false,
+            formatLabel: existing?.formatLabel || preset?.queueLabel || job.format,
+        });
+        maybeHydrateQueueThumbnail(job.id);
+    });
+    scheduleQueueRender();
+};
+
 const bindBackendEvents = async () => {
     await listen('link-dump:server-status', event => {
         applyLinkDumpServerStatus(event.payload);
     });
 
-    await listen('history:changed', () => {
-        invalidateHistoryCache();
-        if (state.activeView === 'history') {
-            void renderHistory({ force: true });
-        }
-    });
+    await listen('history:changed', historyView.onChanged);
 
     await listen('queue:status', event => {
         state.queueAutoStartEnabled = event.payload?.auto_start ?? true;
@@ -2542,29 +1618,20 @@ const bindBackendEvents = async () => {
     });
 
     await listen('queue:update', event => {
-        state.queueIds = event.payload.map(job => job.id).filter(id => !state.suppressedJobIds.has(id));
-        event.payload.forEach(job => {
-            if (state.suppressedJobIds.has(job.id)) return;
-            const existing = state.jobs.get(job.id);
-            const preset = findPresetForDownloadJob(job);
-            updateJob(job.id, {
-                url: job.url,
-                label: existing?.label || job.url,
-                thumbnail: existing?.thumbnail || resolveYouTubeThumbnail(job.url),
-                state: 'queued',
-                outputPath: existing?.outputPath || null,
-                cutStartTime: job.cut_start_time ?? null,
-                previewResolved: existing?.previewResolved || Boolean(resolveYouTubeThumbnail(job.url)),
-                previewLoading: existing?.previewLoading || false,
-                formatLabel: existing?.formatLabel || preset?.queueLabel || job.format,
-            });
-            maybeHydrateQueueThumbnail(job.id);
-        });
+        applyQueueSnapshot(event.payload);
     });
 
     await listen('download:state', event => {
         const { id, state: status, output_path, exit_code, error } = event.payload;
         if (state.suppressedJobIds.has(id)) return;
+        if (state.pendingClearAfterTerminal.has(id) && ['success', 'error', 'cancelled'].includes(status)) {
+            state.pendingClearAfterTerminal.delete(id);
+            state.suppressedJobIds.add(id);
+            state.jobs.delete(id);
+            state.queueIds = state.queueIds.filter(queuedId => queuedId !== id);
+            scheduleQueueRender();
+            return;
+        }
         const patch = { state: status };
         if (error) patch.error = error;
         if (output_path) patch.outputPath = output_path;
@@ -2595,9 +1662,13 @@ const bindBackendEvents = async () => {
 };
 
 const init = async () => {
-    renderPresetOptions();
-    renderQueueContextMenu();
-    syncMagicImportTriggerState();
+    els.presetSelect.disabled = true;
+    els.startDownloadBtn.disabled = true;
+    els.importTxtBtn.disabled = true;
+    const loadingFormat = document.createElement('option');
+    loadingFormat.textContent = 'Loading formats...';
+    els.presetSelect.replaceChildren(loadingFormat);
+    settings.syncMagicImportTriggerState();
     renderQueueControls();
     bindEvents();
     setActiveView('download');
@@ -2608,7 +1679,17 @@ const init = async () => {
         appendLog('[tauri] API not available. Start the app with `npm run dev` (Tauri), not in a browser.', true);
         return;
     }
-    await syncConfig();
+    try {
+        await loadDownloadPresets();
+        els.presetSelect.disabled = false;
+        els.startDownloadBtn.disabled = false;
+        els.importTxtBtn.disabled = false;
+    } catch (err) {
+        setInfoBadge('Formats unavailable');
+        setTxtImportStatus(`Could not load download formats: ${err}`, true);
+        appendLog(`[presets] ${err}`, true);
+    }
+    await settings.sync();
     await syncQueueStatus();
     await bindBackendEvents();
     try {

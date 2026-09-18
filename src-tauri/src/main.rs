@@ -3448,6 +3448,78 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_facebook_video_reel_and_short_urls() {
+        let watch =
+            normalize_video_url("https://m.facebook.com/watch/?v=3676516585958356&ref=sharing")
+                .unwrap();
+        let reel = normalize_video_url("https://www.facebook.com/reel/3676516585958356/").unwrap();
+        let video =
+            normalize_video_url("https://facebook.com/creator/videos/3676516585958356/").unwrap();
+        assert_eq!(
+            watch.url,
+            "https://www.facebook.com/watch/?v=3676516585958356"
+        );
+        assert_eq!(watch.key, "facebook:3676516585958356");
+        assert_eq!(watch.key, reel.key);
+        assert_eq!(watch.key, video.key);
+
+        let short = normalize_video_url("https://fb.watch/AbC123xy/?mibextid=abc").unwrap();
+        assert_eq!(short.url, "https://fb.watch/AbC123xy/");
+        assert_eq!(short.key, "facebook-short:AbC123xy");
+
+        let share =
+            normalize_video_url("https://www.facebook.com/share/r/AbC123xy/?mibextid=abc").unwrap();
+        assert_eq!(share.url, "https://www.facebook.com/share/r/AbC123xy/");
+
+        let post = normalize_video_url(
+            "https://www.facebook.com/creator/posts/3676516585958356/?ref=share",
+        )
+        .unwrap();
+        assert_eq!(
+            post.url,
+            "https://www.facebook.com/creator/posts/3676516585958356/"
+        );
+        assert_eq!(post.key, "facebook-post:3676516585958356");
+    }
+
+    #[test]
+    fn normalizes_x_and_twitter_status_urls() {
+        let x =
+            normalize_video_url("https://x.com/creator/status/1821234567890123456/video/1?s=20")
+                .unwrap();
+        let twitter =
+            normalize_video_url("https://mobile.twitter.com/creator/status/1821234567890123456")
+                .unwrap();
+        assert_eq!(x.url, "https://x.com/creator/status/1821234567890123456");
+        assert_eq!(x.key, "x:1821234567890123456");
+        assert_eq!(x.key, twitter.key);
+        assert_eq!(
+            normalize_video_url("https://x.com/i/web/status/1821234567890123456")
+                .unwrap()
+                .key,
+            x.key
+        );
+    }
+
+    #[test]
+    fn normalizes_reddit_post_and_short_urls() {
+        let post = normalize_video_url(
+            "https://www.reddit.com/r/videos/comments/124pp33/example/?utm_source=share",
+        )
+        .unwrap();
+        let short = normalize_video_url("https://redd.it/124pp33").unwrap();
+        assert_eq!(post.url, "https://www.reddit.com/comments/124pp33/");
+        assert_eq!(post.key, "reddit:124pp33");
+        assert_eq!(post.key, short.key);
+        assert_eq!(
+            normalize_video_url("https://old.reddit.com/user/creator/comments/124pp33/example/")
+                .unwrap()
+                .key,
+            post.key
+        );
+    }
+
+    #[test]
     fn video_normalizer_rejects_unsupported_or_spoofed_domains() {
         assert!(normalize_video_url("https://example.com/video/123456").is_none());
         assert!(normalize_video_url(
@@ -3455,6 +3527,21 @@ mod tests {
         )
         .is_none());
         assert!(normalize_video_url("https://instagram.com.example.org/reel/ABC123/").is_none());
+        assert!(
+            normalize_video_url("https://facebook.com.example.org/watch/?v=3676516585958356")
+                .is_none()
+        );
+        assert!(normalize_video_url(
+            "https://x.com.example.org/creator/status/1821234567890123456"
+        )
+        .is_none());
+        assert!(normalize_video_url("https://reddit.com.example.org/comments/124pp33/").is_none());
+        assert!(
+            normalize_video_url("https://www.facebook.com/profile.php?id=3676516585958356")
+                .is_none()
+        );
+        assert!(normalize_video_url("https://x.com/creator").is_none());
+        assert!(normalize_video_url("https://www.reddit.com/r/videos/").is_none());
     }
 
     #[test]

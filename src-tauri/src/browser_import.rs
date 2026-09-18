@@ -952,6 +952,9 @@ pub(super) fn normalize_video_url(input: &str) -> Option<NormalizedVideoUrl> {
     normalize_youtube_url(input)
         .or_else(|| normalize_tiktok_url(input))
         .or_else(|| normalize_instagram_url(input))
+        .or_else(|| normalize_facebook_url(input))
+        .or_else(|| normalize_x_url(input))
+        .or_else(|| normalize_reddit_url(input))
 }
 
 pub(super) fn normalize_youtube_url(input: &str) -> Option<NormalizedVideoUrl> {
@@ -1105,6 +1108,165 @@ pub(super) fn normalize_instagram_url(input: &str) -> Option<NormalizedVideoUrl>
     Some(NormalizedVideoUrl {
         url: format!("https://www.instagram.com/{route}/{content_code}/"),
         key: format!("instagram:{content_code}"),
+        thumbnail: None,
+    })
+}
+
+pub(super) fn normalize_facebook_url(input: &str) -> Option<NormalizedVideoUrl> {
+    let parsed = parse_http_url(input)?;
+    let host = normalized_url_host(&parsed)?;
+    let parts = parsed
+        .path_segments()?
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    if host == "fb.watch" {
+        let code = *parts.first()?;
+        if !is_plausible_content_code(code) {
+            return None;
+        }
+        return Some(NormalizedVideoUrl {
+            url: format!("https://fb.watch/{code}/"),
+            key: format!("facebook-short:{code}"),
+            thumbnail: None,
+        });
+    }
+    if host != "facebook.com" && !host.ends_with(".facebook.com") {
+        return None;
+    }
+
+    let video_id = if parts
+        .first()
+        .is_some_and(|part| matches!(part.to_ascii_lowercase().as_str(), "watch" | "video.php"))
+    {
+        parsed
+            .query_pairs()
+            .find_map(|(name, value)| (name == "v").then(|| value.into_owned()))
+    } else if parts
+        .first()
+        .is_some_and(|part| part.eq_ignore_ascii_case("reel"))
+    {
+        parts.get(1).map(|part| (*part).to_string())
+    } else {
+        parts
+            .windows(2)
+            .find(|pair| pair[0].eq_ignore_ascii_case("videos"))
+            .map(|pair| pair[1].to_string())
+    };
+    if let Some(video_id) = video_id.filter(|id| is_plausible_numeric_id(id)) {
+        return Some(NormalizedVideoUrl {
+            url: format!("https://www.facebook.com/watch/?v={video_id}"),
+            key: format!("facebook:{video_id}"),
+            thumbnail: None,
+        });
+    }
+
+    let post = match parts.as_slice() {
+        [account, "posts", id, ..] if !account.is_empty() => Some(format!("{account}/posts/{id}")),
+        ["groups", group, "posts", id, ..] if !group.is_empty() => {
+            Some(format!("groups/{group}/posts/{id}"))
+        }
+        _ => None,
+    };
+    if let Some(post) = post {
+        let post_id = post.rsplit('/').next()?;
+        if is_plausible_numeric_id(post_id)
+            || (post_id.starts_with("pfbid") && is_plausible_content_code(post_id))
+        {
+            return Some(NormalizedVideoUrl {
+                url: format!("https://www.facebook.com/{post}/"),
+                key: format!("facebook-post:{post_id}"),
+                thumbnail: None,
+            });
+        }
+    }
+
+    let (route, code) = match parts.as_slice() {
+        ["share", route @ ("v" | "r"), code, ..] => (*route, *code),
+        _ => return None,
+    };
+    if !is_plausible_content_code(code) {
+        return None;
+    }
+    Some(NormalizedVideoUrl {
+        url: format!("https://www.facebook.com/share/{route}/{code}/"),
+        key: format!("facebook-share:{route}:{code}"),
+        thumbnail: None,
+    })
+}
+
+pub(super) fn normalize_x_url(input: &str) -> Option<NormalizedVideoUrl> {
+    let parsed = parse_http_url(input)?;
+    let host = normalized_url_host(&parsed)?;
+    if !matches!(
+        host.as_str(),
+        "x.com"
+            | "www.x.com"
+            | "mobile.x.com"
+            | "twitter.com"
+            | "www.twitter.com"
+            | "mobile.twitter.com"
+    ) {
+        return None;
+    }
+    let parts = parsed
+        .path_segments()?
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let (handle, route, status_id) = match parts.as_slice() {
+        ["i", "web", route, status_id, ..] => ("i", *route, *status_id),
+        [handle, route, status_id, ..] => (*handle, *route, *status_id),
+        _ => return None,
+    };
+    if !route.eq_ignore_ascii_case("status")
+        || !is_plausible_numeric_id(status_id)
+        || (handle != "i"
+            && (handle.is_empty()
+                || handle.len() > 15
+                || !handle
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')))
+    {
+        return None;
+    }
+    Some(NormalizedVideoUrl {
+        url: format!("https://x.com/{handle}/status/{status_id}"),
+        key: format!("x:{status_id}"),
+        thumbnail: None,
+    })
+}
+
+pub(super) fn normalize_reddit_url(input: &str) -> Option<NormalizedVideoUrl> {
+    let parsed = parse_http_url(input)?;
+    let host = normalized_url_host(&parsed)?;
+    let parts = parsed
+        .path_segments()?
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let post_id = if host == "redd.it" {
+        *parts.first()?
+    } else if matches!(host.as_str(), "reddit.com" | "redditmedia.com")
+        || host.ends_with(".reddit.com")
+        || host.ends_with(".redditmedia.com")
+    {
+        match parts.as_slice() {
+            ["comments", id, ..]
+            | ["r", _, "comments", id, ..]
+            | ["user", _, "comments", id, ..] => *id,
+            _ => return None,
+        }
+    } else {
+        return None;
+    };
+    if !(5..=16).contains(&post_id.len())
+        || !post_id.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    let post_id = post_id.to_ascii_lowercase();
+    Some(NormalizedVideoUrl {
+        url: format!("https://www.reddit.com/comments/{post_id}/"),
+        key: format!("reddit:{post_id}"),
         thumbnail: None,
     })
 }

@@ -5,6 +5,7 @@
 - added captions for facebook, YouTube, TikTok, x, reddit
 - downloadable thumbnails, via setting, default false,
 - remove old legacy sqlite table
+- allowing reddit, x and facebook for browser import and txt import
 
 # 2.0.0
 

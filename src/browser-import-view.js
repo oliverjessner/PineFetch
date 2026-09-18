@@ -48,7 +48,7 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
         els.linkDumpServerStatusBadge.classList.toggle('pf-badge', true);
 
         if (status === 'running') {
-            setLinkDumpStatusText('Browser extensions can send YouTube, TikTok, and Instagram links to this PineFetch instance.');
+            setLinkDumpStatusText('Browser extensions can send YouTube, TikTok, Instagram, Facebook, X, and Reddit links to this PineFetch instance.');
         } else if (status === 'error') {
             setLinkDumpStatusText(serverStatus.error_message || 'Link Dump Server could not start.', true);
         } else {

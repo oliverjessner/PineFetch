@@ -2,4 +2,4 @@
 - history visual fix for cards
 - better search
 - view captions in history
-- md5 for videos
+- md5 for videos, pinefetch_version

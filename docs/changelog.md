@@ -1,3 +1,7 @@
+# 2.2.0
+
+- storing the pinefetch version in the database
+
 # 2.1.0
 
 - captions are stored in database

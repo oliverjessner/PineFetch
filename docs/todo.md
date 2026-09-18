@@ -2,5 +2,5 @@
 - history visual fix for cards
 - better search
 - view captions in history
-- md5 for videos, pinefetch_version
+- md5 for videos
 - tagging system for projects

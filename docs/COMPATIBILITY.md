@@ -15,10 +15,7 @@ Here are our first class citizen listed:
 | Twitch             | `twitch.tv/...`                 | No         |
 | Snapchat Spotlight | `snapchat.com/spotlight/...`    | No         |
 | Pinterest          | `pinterest.com/pin/...`         | No         |
-| Bluesky            | `bsky.app/profile/.../post/...` | No         |
 | LinkedIn           | `linkedin.com/posts/...`        | No         |
-| VK                 | `vk.com/video...`               | No         |
-| Tumblr             | `tumblr.com/...`                | No         |
 
 - \* Captions are saved when **Save post captions** is enabled and post text is available. Reddit uses the title and optional self-text.
 

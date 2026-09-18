@@ -280,10 +280,10 @@ pub(super) fn insert_history_entry_in_db(
     Ok(())
 }
 
-pub(super) fn insert_instagram_captions_in_db(
+pub(super) fn insert_captions_in_db(
     state: &AppState,
     history_entry_id: &str,
-    captions: &[SavedInstagramCaption],
+    captions: &[SavedCaption],
 ) -> Result<(), String> {
     if captions.is_empty() {
         return Ok(());
@@ -292,7 +292,7 @@ pub(super) fn insert_instagram_captions_in_db(
     let mut conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
     let transaction = conn
         .transaction()
-        .map_err(|e| format!("Instagram caption transaction failed: {e}"))?;
+        .map_err(|e| format!("Caption transaction failed: {e}"))?;
     {
         let mut statement = transaction
             .prepare(
@@ -303,7 +303,7 @@ pub(super) fn insert_instagram_captions_in_db(
                     caption_path = excluded.caption_path,
                     text = excluded.text",
             )
-            .map_err(|e| format!("Instagram caption insert failed: {e}"))?;
+            .map_err(|e| format!("Caption insert failed: {e}"))?;
         for caption in captions {
             statement
                 .execute(params![
@@ -313,12 +313,12 @@ pub(super) fn insert_instagram_captions_in_db(
                     caption.text,
                     millis_to_i64(current_timestamp_millis()),
                 ])
-                .map_err(|e| format!("Instagram caption insert failed: {e}"))?;
+                .map_err(|e| format!("Caption insert failed: {e}"))?;
         }
     }
     transaction
         .commit()
-        .map_err(|e| format!("Instagram caption transaction failed: {e}"))?;
+        .map_err(|e| format!("Caption transaction failed: {e}"))?;
     Ok(())
 }
 

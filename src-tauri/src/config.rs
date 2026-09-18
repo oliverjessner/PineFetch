@@ -33,7 +33,8 @@ pub(super) struct ConfigPatch {
     selected_preset_key: Option<String>,
     faster_whisper_model: Option<String>,
     download_video_with_transcript: Option<bool>,
-    save_instagram_captions: Option<bool>,
+    #[serde(alias = "save_instagram_captions")]
+    save_captions: Option<bool>,
     magic_import_enabled: Option<bool>,
     cut_at_timestamp_enabled: Option<bool>,
     notifications_enabled: Option<bool>,
@@ -62,8 +63,8 @@ fn apply_config_patch(config: &mut AppConfig, changes: ConfigPatch) {
     if let Some(value) = changes.download_video_with_transcript {
         config.download_video_with_transcript = value;
     }
-    if let Some(value) = changes.save_instagram_captions {
-        config.save_instagram_captions = value;
+    if let Some(value) = changes.save_captions {
+        config.save_captions = value;
     }
     if let Some(value) = changes.magic_import_enabled {
         config.magic_import_enabled = value;
@@ -109,11 +110,11 @@ pub(super) fn set_selected_preset_key(
 }
 
 #[tauri::command]
-pub(super) fn set_save_instagram_captions(
+pub(super) fn set_save_captions(
     state: State<AppState>,
     enabled: bool,
 ) -> Result<AppConfig, String> {
-    update_config(state.inner(), |cfg| cfg.save_instagram_captions = enabled)
+    update_config(state.inner(), |cfg| cfg.save_captions = enabled)
 }
 
 #[tauri::command]
@@ -151,7 +152,7 @@ pub(super) fn load_legacy_config_json(app: &AppHandle) -> Option<AppConfig> {
 
 pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
     conn.query_row(
-        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_instagram_captions
+        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions
          FROM app_config
          WHERE id = 1",
         [],
@@ -166,7 +167,7 @@ pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<Ap
                 cut_at_timestamp_enabled: row.get::<_, i64>(6)? != 0,
                 last_download_url: row.get(7)?,
                 notifications_enabled: row.get::<_, i64>(8)? != 0,
-                save_instagram_captions: row.get::<_, i64>(9)? != 0,
+                save_captions: row.get::<_, i64>(9)? != 0,
             }))
         },
     )
@@ -193,7 +194,7 @@ pub(super) fn upsert_app_config_in_conn(
             cut_at_timestamp_enabled,
             last_download_url,
             notifications_enabled,
-            save_instagram_captions,
+            save_captions,
             created_at,
             updated_at
         ) VALUES (
@@ -221,7 +222,7 @@ pub(super) fn upsert_app_config_in_conn(
             cut_at_timestamp_enabled = excluded.cut_at_timestamp_enabled,
             last_download_url = excluded.last_download_url,
             notifications_enabled = excluded.notifications_enabled,
-            save_instagram_captions = excluded.save_instagram_captions,
+            save_captions = excluded.save_captions,
             updated_at = datetime('now')",
         params![
             config.yt_dlp_path,
@@ -241,7 +242,7 @@ pub(super) fn upsert_app_config_in_conn(
             },
             config.last_download_url,
             config.notifications_enabled,
-            config.save_instagram_captions,
+            config.save_captions,
         ],
     )?;
     Ok(())

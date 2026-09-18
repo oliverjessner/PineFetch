@@ -34,7 +34,7 @@ const els = Object.seal({
     pickDirBtn: document.getElementById('pickDirBtn'),
     settingsSaveStatus: document.getElementById('settingsSaveStatus'),
     notificationsEnabled: document.getElementById('notificationsEnabled'),
-    saveInstagramCaptions: document.getElementById('saveInstagramCaptions'),
+    saveCaptions: document.getElementById('saveCaptions'),
     openFolderBtn: document.getElementById('openFolderBtn'),
     outputDir: document.getElementById('outputDir'),
     ytDlpPath: document.getElementById('ytDlpPath'),
@@ -73,7 +73,7 @@ const els = Object.seal({
     queueModeHint: document.getElementById('queueModeHint'),
     queueEmptyHint: document.getElementById('queueEmptyHint'),
     clearQueueBtn: document.getElementById('clearQueueBtn'),
-    instagramCaptionHint: document.getElementById('instagramCaptionHint'),
+    captionHint: document.getElementById('captionHint'),
     infoBadge: document.getElementById('infoBadge'),
     logBody: document.getElementById('logBody'),
     copyLogsBtn: document.getElementById('copyLogsBtn'),
@@ -606,12 +606,19 @@ const updateDownloadOptionHints = () => {
     const transcriptionOptions = document.getElementById('transcriptionOptions');
     if (transcriptionOptions) transcriptionOptions.hidden = !isTranscription;
 
-    const isInstagram = detectPlatform(els.urlInput.value.trim()) === 'instagram';
-    els.instagramCaptionHint.hidden = !isInstagram;
-    if (isInstagram) {
-        els.instagramCaptionHint.textContent = els.saveInstagramCaptions.checked
-            ? 'Instagram caption: if available, saved in the local database and as a .caption.txt file.'
-            : 'Instagram caption: off. Enable it in Settings to save a .caption.txt file and database copy.';
+    const captionPlatform = detectPlatform(els.urlInput.value.trim());
+    const captionPlatformNames = {
+        youtube: 'YouTube',
+        tiktok: 'TikTok',
+        instagram: 'Instagram',
+        facebook: 'Facebook',
+    };
+    const captionPlatformName = captionPlatformNames[captionPlatform];
+    els.captionHint.hidden = !captionPlatformName;
+    if (captionPlatformName) {
+        els.captionHint.textContent = els.saveCaptions.checked
+            ? `${captionPlatformName} caption: saved as .caption.txt when available.`
+            : `${captionPlatformName} caption: enable Save post captions in Settings.`;
     }
 };
 

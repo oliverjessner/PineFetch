@@ -112,7 +112,7 @@ export const createSettingsView = ({ els, invoke, appendLog, normalizePresetKey,
         try {
             config = await invoke('get_config');
             els.notificationsEnabled.checked = config.notifications_enabled ?? false;
-            els.saveInstagramCaptions.checked = config.save_instagram_captions ?? false;
+            els.saveCaptions.checked = config.save_captions ?? false;
             els.outputDir.value = config.default_output_dir || '';
             els.ytDlpPath.value = config.yt_dlp_path || '';
             els.fasterWhisperModel.value = normalizeFasterWhisperModel(config.faster_whisper_model);
@@ -133,13 +133,13 @@ export const createSettingsView = ({ els, invoke, appendLog, normalizePresetKey,
         await saveSettings({ selected_preset_key: selectedPresetKey });
     };
 
-    const persistInstagramCaptionSetting = async () => {
-        const enabled = Boolean(els.saveInstagramCaptions.checked);
-        els.saveInstagramCaptions.disabled = true;
+    const persistCaptionSetting = async () => {
+        const enabled = Boolean(els.saveCaptions.checked);
+        els.saveCaptions.disabled = true;
         try {
-            await saveSettings({ save_instagram_captions: enabled });
+            await saveSettings({ save_captions: enabled });
         } finally {
-            els.saveInstagramCaptions.disabled = false;
+            els.saveCaptions.disabled = false;
             updateDownloadOptionHints();
         }
     };
@@ -214,8 +214,8 @@ export const createSettingsView = ({ els, invoke, appendLog, normalizePresetKey,
             syncMagicImportTriggerState();
             void saveSettings({ magic_import_enabled: els.magicImportEnabled.checked });
         });
-        els.saveInstagramCaptions.addEventListener('change', () => {
-            void persistInstagramCaptionSetting();
+        els.saveCaptions.addEventListener('change', () => {
+            void persistCaptionSetting();
         });
         els.cutAtTimestampEnabled.addEventListener('change', () => {
             void saveSettings({ cut_at_timestamp_enabled: els.cutAtTimestampEnabled.checked });

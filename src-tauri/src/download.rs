@@ -12,8 +12,8 @@ pub(super) fn run_download_job(
     let deno_path = resolve_deno_executable(app);
     let output_template = build_output_template(&job.output_dir, job.filename_suffix.as_deref());
     let output_template_for_fallback = output_template.clone();
-    let save_instagram_captions =
-        job.save_instagram_captions && detect_platform(&job.url).as_deref() == Some("instagram");
+    let caption_platform = caption_platform(&job.url, job.save_captions);
+    let save_captions = caption_platform.is_some();
 
     let mut args = vec![
         "--no-playlist".to_string(),
@@ -32,7 +32,7 @@ pub(super) fn run_download_job(
         output_template,
     ];
 
-    if save_instagram_captions {
+    if save_captions {
         args.push("--print".to_string());
         args.push("after_move:pinefetch_caption:%(.{filepath,description})j".to_string());
     }
@@ -154,7 +154,7 @@ pub(super) fn run_download_job(
                         slot.push(path_line);
                     }
                 }
-                if let Some(caption) = parse_instagram_caption_line(&line) {
+                if let Some(caption) = parse_caption_line(&line) {
                     if let Ok(mut captions) = captions_for_stdout.lock() {
                         captions.push(caption);
                     }
@@ -250,7 +250,7 @@ pub(super) fn run_download_job(
             output_path = Some(trimmed_path);
         }
 
-        if save_instagram_captions {
+        if save_captions {
             let captions = caption_capture
                 .lock()
                 .map_err(|_| "Caption capture lock poisoned")?;
@@ -259,8 +259,10 @@ pub(super) fn run_download_job(
                     app,
                     LogEvent {
                         id: job.id.clone(),
-                        line: "[caption] Instagram did not provide a caption for this download"
-                            .to_string(),
+                        line: format!(
+                            "[caption] {} did not provide a caption for this download",
+                            caption_platform.as_deref().unwrap_or("Site")
+                        ),
                         is_error: false,
                     },
                 );
@@ -271,8 +273,8 @@ pub(super) fn run_download_job(
                 } else {
                     downloaded_path
                 };
-                let caption_path = write_instagram_caption_sidecar(Path::new(final_path), caption)?;
-                saved_captions.push(SavedInstagramCaption {
+                let caption_path = write_caption_sidecar(Path::new(final_path), caption)?;
+                saved_captions.push(SavedCaption {
                     media_path: final_path.to_string(),
                     caption_path: caption_path.to_string_lossy().into_owned(),
                     text: caption.clone(),
@@ -327,7 +329,7 @@ pub(super) fn parse_download_metadata_line(line: &str) -> Option<(String, InfoRe
     ))
 }
 
-pub(super) fn parse_instagram_caption_line(line: &str) -> Option<(String, String)> {
+pub(super) fn parse_caption_line(line: &str) -> Option<(String, String)> {
     let json = line.strip_prefix("pinefetch_caption:")?;
     let value: serde_json::Value = serde_json::from_str(json).ok()?;
     let path = value.get("filepath")?.as_str()?.trim();
@@ -338,10 +340,7 @@ pub(super) fn parse_instagram_caption_line(line: &str) -> Option<(String, String
     Some((path.to_string(), caption.to_string()))
 }
 
-pub(super) fn write_instagram_caption_sidecar(
-    media_path: &Path,
-    caption: &str,
-) -> Result<PathBuf, String> {
+pub(super) fn write_caption_sidecar(media_path: &Path, caption: &str) -> Result<PathBuf, String> {
     if !media_path.is_file() {
         return Err(format!(
             "Caption media file not found: {}",
@@ -349,12 +348,8 @@ pub(super) fn write_instagram_caption_sidecar(
         ));
     }
     let caption_path = media_path.with_extension("caption.txt");
-    fs::write(&caption_path, caption).map_err(|e| {
-        format!(
-            "Failed to save Instagram caption to {}: {e}",
-            caption_path.display()
-        )
-    })?;
+    fs::write(&caption_path, caption)
+        .map_err(|e| format!("Failed to save caption to {}: {e}", caption_path.display()))?;
     Ok(caption_path)
 }
 

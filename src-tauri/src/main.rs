@@ -13,7 +13,7 @@ use download::*;
 use history::*;
 #[cfg(test)]
 use platform::TIKTOK_FORMAT_SORT;
-use platform::{detect_platform, site_format_sort};
+use platform::{caption_platform, detect_platform, site_format_sort};
 use presets::{
     download_preset_for_key, normalize_download_preset_key, DownloadPreset,
     DEFAULT_DOWNLOAD_PRESET_KEY, DOWNLOAD_PRESETS,
@@ -75,8 +75,8 @@ struct AppConfig {
     faster_whisper_model: String,
     #[serde(default)]
     download_video_with_transcript: bool,
-    #[serde(default)]
-    save_instagram_captions: bool,
+    #[serde(default, alias = "save_instagram_captions")]
+    save_captions: bool,
     #[serde(default = "default_magic_import_enabled")]
     magic_import_enabled: bool,
     #[serde(default = "default_cut_at_timestamp_enabled")]
@@ -95,7 +95,7 @@ impl Default for AppConfig {
             selected_preset_key: Some(DEFAULT_DOWNLOAD_PRESET_KEY.to_string()),
             faster_whisper_model: default_faster_whisper_model(),
             download_video_with_transcript: false,
-            save_instagram_captions: false,
+            save_captions: false,
             magic_import_enabled: default_magic_import_enabled(),
             cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
@@ -146,8 +146,8 @@ struct DownloadJob {
     faster_whisper_model: String,
     #[serde(default)]
     download_video_with_transcript: bool,
-    #[serde(default)]
-    save_instagram_captions: bool,
+    #[serde(default, alias = "save_instagram_captions")]
+    save_captions: bool,
     title: Option<String>,
     uploader: Option<String>,
     thumbnail: Option<String>,
@@ -410,11 +410,11 @@ struct DownloadRunResult {
     output_path: Option<String>,
     error: Option<String>,
     info: Option<InfoResponse>,
-    captions: Vec<SavedInstagramCaption>,
+    captions: Vec<SavedCaption>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SavedInstagramCaption {
+pub(crate) struct SavedCaption {
     pub(crate) media_path: String,
     pub(crate) caption_path: String,
     pub(crate) text: String,
@@ -1460,7 +1460,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             selected_preset_key TEXT,
             faster_whisper_model TEXT NOT NULL DEFAULT 'base',
             download_video_with_transcript INTEGER NOT NULL DEFAULT 0,
-            save_instagram_captions INTEGER NOT NULL DEFAULT 0,
+            save_captions INTEGER NOT NULL DEFAULT 0,
             magic_import_enabled INTEGER NOT NULL DEFAULT 1,
             cut_at_timestamp_enabled INTEGER NOT NULL DEFAULT 1,
             last_download_url TEXT,
@@ -1551,7 +1551,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_app_config_notifications_enabled_column(conn)?;
     ensure_app_config_faster_whisper_model_column(conn)?;
     ensure_app_config_download_video_with_transcript_column(conn)?;
-    ensure_app_config_save_instagram_captions_column(conn)?;
+    ensure_app_config_save_captions_column(conn)?;
     ensure_app_config_legacy_migration_column(conn)?;
     ensure_history_entries_timestamp_column(conn)?;
     ensure_history_entries_duration_seconds_column(conn)?;
@@ -1610,17 +1610,29 @@ fn ensure_app_config_download_video_with_transcript_column(
     Ok(())
 }
 
-fn ensure_app_config_save_instagram_captions_column(conn: &Connection) -> rusqlite::Result<()> {
+fn ensure_app_config_save_captions_column(conn: &Connection) -> rusqlite::Result<()> {
     let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'save_instagram_captions')",
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'save_captions')",
         [],
         |row| row.get(0),
     )?;
     if !exists {
-        conn.execute(
-            "ALTER TABLE app_config ADD COLUMN save_instagram_captions INTEGER NOT NULL DEFAULT 0",
+        let has_instagram_column: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'save_instagram_captions')",
             [],
+            |row| row.get(0),
         )?;
+        if has_instagram_column {
+            conn.execute(
+                "ALTER TABLE app_config RENAME COLUMN save_instagram_captions TO save_captions",
+                [],
+            )?;
+        } else {
+            conn.execute(
+                "ALTER TABLE app_config ADD COLUMN save_captions INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
     }
     Ok(())
 }
@@ -1786,7 +1798,7 @@ fn main() {
             get_download_presets,
             patch_config,
             set_selected_preset_key,
-            set_save_instagram_captions,
+            set_save_captions,
             cache_last_download_url,
             pick_output_dir,
             pick_txt_file,
@@ -1953,7 +1965,7 @@ mod tests {
     }
 
     #[test]
-    fn saves_instagram_caption_as_separate_utf8_text_file() {
+    fn saves_caption_as_separate_utf8_text_file() {
         let directory = std::env::temp_dir().join(format!("pinefetch-caption-{}", Uuid::new_v4()));
         fs::create_dir_all(&directory).unwrap();
         let media_path = directory.join("post.mp4");
@@ -1965,8 +1977,8 @@ mod tests {
                 "description": "Grüße aus Wien 👋\n#urlaub"
             })
         );
-        let (path, caption) = parse_instagram_caption_line(&line).unwrap();
-        let caption_path = write_instagram_caption_sidecar(Path::new(&path), &caption).unwrap();
+        let (path, caption) = parse_caption_line(&line).unwrap();
+        let caption_path = write_caption_sidecar(Path::new(&path), &caption).unwrap();
 
         assert_eq!(caption_path, directory.join("post.caption.txt"));
         assert_eq!(
@@ -1974,11 +1986,29 @@ mod tests {
             "Grüße aus Wien 👋\n#urlaub"
         );
         assert!(parse_yt_dlp_filepath(&line).is_none());
-        assert!(parse_instagram_caption_line(
-            "pinefetch_caption:{\"filepath\":\"x\",\"description\":\"\"}"
-        )
-        .is_none());
+        assert!(
+            parse_caption_line("pinefetch_caption:{\"filepath\":\"x\",\"description\":\"\"}")
+                .is_none()
+        );
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn captures_post_descriptions_only_for_enabled_caption_platforms() {
+        for (url, platform) in [
+            ("https://www.youtube.com/watch?v=abc123", "youtube"),
+            ("https://www.tiktok.com/@user/video/123456789", "tiktok"),
+            ("https://www.instagram.com/reel/ABC123/", "instagram"),
+            ("https://www.facebook.com/watch/?v=123456", "facebook"),
+            ("https://fb.watch/ABC123/", "facebook"),
+        ] {
+            assert_eq!(caption_platform(url, true).as_deref(), Some(platform));
+            assert_eq!(caption_platform(url, false), None);
+        }
+        assert_eq!(
+            caption_platform("https://www.twitch.tv/videos/123456", true),
+            None
+        );
     }
 
     #[test]
@@ -2110,7 +2140,7 @@ mod tests {
         );
         assert_eq!(config.faster_whisper_model, DEFAULT_FASTER_WHISPER_MODEL);
         assert!(!config.download_video_with_transcript);
-        assert!(!config.save_instagram_captions);
+        assert!(!config.save_captions);
         assert!(config.magic_import_enabled);
         assert!(config.cut_at_timestamp_enabled);
         assert!(config.yt_dlp_path.is_none());
@@ -2128,7 +2158,7 @@ mod tests {
             selected_preset_key: Some("audio_mp3".to_string()),
             faster_whisper_model: "medium".to_string(),
             download_video_with_transcript: true,
-            save_instagram_captions: true,
+            save_captions: true,
             magic_import_enabled: false,
             cut_at_timestamp_enabled: false,
             last_download_url: Some("https://example.com/watch".to_string()),
@@ -2146,7 +2176,7 @@ mod tests {
         assert_eq!(loaded.selected_preset_key.as_deref(), Some("audio_mp3"));
         assert_eq!(loaded.faster_whisper_model, "medium");
         assert!(loaded.download_video_with_transcript);
-        assert!(loaded.save_instagram_captions);
+        assert!(loaded.save_captions);
         assert!(loaded.notifications_enabled);
         assert!(!loaded.magic_import_enabled);
         assert!(!loaded.cut_at_timestamp_enabled);
@@ -2445,7 +2475,7 @@ mod tests {
             transcribe_timestamps: false,
             faster_whisper_model: DEFAULT_FASTER_WHISPER_MODEL.to_string(),
             download_video_with_transcript: false,
-            save_instagram_captions: false,
+            save_captions: false,
             title: None,
             uploader: None,
             thumbnail: None,
@@ -2665,6 +2695,7 @@ mod tests {
                 yt_dlp_path TEXT,
                 default_output_dir TEXT,
                 selected_preset_key TEXT,
+                save_instagram_captions INTEGER NOT NULL DEFAULT 0,
                 magic_import_enabled INTEGER NOT NULL DEFAULT 1,
                 cut_at_timestamp_enabled INTEGER NOT NULL DEFAULT 1,
                 last_download_url TEXT,
@@ -2673,9 +2704,9 @@ mod tests {
             );
 
             INSERT INTO app_config (
-                id, selected_preset_key, magic_import_enabled,
+                id, selected_preset_key, save_instagram_captions, magic_import_enabled,
                 cut_at_timestamp_enabled, created_at, updated_at
-            ) VALUES (1, 'text', 1, 1, datetime('now'), datetime('now'));
+            ) VALUES (1, 'text', 1, 1, 1, datetime('now'), datetime('now'));
 
             CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             INSERT INTO app_meta (key, value)
@@ -2690,7 +2721,7 @@ mod tests {
         assert_eq!(config.faster_whisper_model, DEFAULT_FASTER_WHISPER_MODEL);
         assert!(!config.download_video_with_transcript);
         assert!(!config.notifications_enabled);
-        assert!(!config.save_instagram_captions);
+        assert!(config.save_captions);
         let migrated: i64 = conn
             .query_row(
                 "SELECT legacy_config_json_migrated FROM app_config WHERE id = 1",
@@ -2702,13 +2733,13 @@ mod tests {
         // Re-running migrations preserves the user's choice.
         let config = AppConfig {
             notifications_enabled: true,
-            save_instagram_captions: true,
+            save_captions: false,
             ..config
         };
         upsert_app_config_in_conn(&conn, &config).unwrap();
         run_link_dump_migrations(&conn).unwrap();
         assert!(load_config_from_db(&conn).unwrap().notifications_enabled);
-        assert!(load_config_from_db(&conn).unwrap().save_instagram_captions);
+        assert!(!load_config_from_db(&conn).unwrap().save_captions);
     }
 
     #[test]
@@ -2787,7 +2818,7 @@ mod tests {
     }
 
     #[test]
-    fn instagram_captions_store_unicode_newlines_and_upsert_without_duplication() {
+    fn captions_store_unicode_newlines_and_upsert_without_duplication() {
         let state = link_dump_test_state();
         {
             let conn = state.db.lock().unwrap();
@@ -2798,27 +2829,27 @@ mod tests {
             .unwrap();
         }
 
-        let original = SavedInstagramCaption {
+        let original = SavedCaption {
             media_path: "/tmp/post.mp4".to_string(),
             caption_path: "/tmp/post.txt".to_string(),
             text: "Grüße 🌲\nZweite Zeile".to_string(),
         };
-        insert_instagram_captions_in_db(&state, "instagram-1", &[original.clone()]).unwrap();
-        insert_instagram_captions_in_db(&state, "instagram-1", &[original]).unwrap();
-        insert_instagram_captions_in_db(
+        insert_captions_in_db(&state, "instagram-1", &[original.clone()]).unwrap();
+        insert_captions_in_db(&state, "instagram-1", &[original]).unwrap();
+        insert_captions_in_db(
             &state,
             "instagram-1",
-            &[SavedInstagramCaption {
+            &[SavedCaption {
                 media_path: "/tmp/post.mp4".to_string(),
                 caption_path: "/tmp/post-updated.txt".to_string(),
                 text: "Aktualisiert ✨\nMehr Text".to_string(),
             }],
         )
         .unwrap();
-        insert_instagram_captions_in_db(
+        insert_captions_in_db(
             &state,
             "instagram-1",
-            &[SavedInstagramCaption {
+            &[SavedCaption {
                 media_path: "/tmp/post-second.jpg".to_string(),
                 caption_path: "/tmp/post-second.txt".to_string(),
                 text: "Zweites Medium 🖼️".to_string(),
@@ -2873,7 +2904,7 @@ mod tests {
     }
 
     #[test]
-    fn instagram_captions_follow_history_delete_and_clear() {
+    fn captions_follow_history_delete_and_clear() {
         let state = link_dump_test_state();
         {
             let conn = state.db.lock().unwrap();
@@ -2885,10 +2916,10 @@ mod tests {
             .unwrap();
         }
         for id in ["instagram-1", "instagram-2"] {
-            insert_instagram_captions_in_db(
+            insert_captions_in_db(
                 &state,
                 id,
-                &[SavedInstagramCaption {
+                &[SavedCaption {
                     media_path: format!("/tmp/{id}.mp4"),
                     caption_path: format!("/tmp/{id}.txt"),
                     text: id.to_string(),
@@ -3160,7 +3191,7 @@ mod tests {
             transcribe_timestamps: false,
             faster_whisper_model: "base".to_string(),
             download_video_with_transcript: false,
-            save_instagram_captions: false,
+            save_captions: false,
             title: None,
             uploader: None,
             thumbnail: None,

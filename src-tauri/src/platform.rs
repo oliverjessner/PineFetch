@@ -33,6 +33,18 @@ pub(super) fn detect_platform(url: &str) -> Option<String> {
     None
 }
 
+pub(super) fn caption_platform(url: &str, enabled: bool) -> Option<String> {
+    if !enabled {
+        return None;
+    }
+    detect_platform(url).filter(|platform| {
+        matches!(
+            platform.as_str(),
+            "instagram" | "tiktok" | "youtube" | "facebook"
+        )
+    })
+}
+
 fn domain_matches(host: &str, domain: &str) -> bool {
     host == domain
         || host

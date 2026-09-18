@@ -13,7 +13,7 @@ No account. No cloud. Your files stay on your machine.
 ## What it does
 
 - Download videos from YouTube, TikTok, Instagram, Facebook, Twitch, X and other sites supported by yt-dlp
-- Save Instagram captions alongside your downloads and in the local SQLite database
+- Save YouTube, TikTok, Instagram and Facebook post descriptions beside downloads and in the local SQLite database
 - Extract MP3 or Opus audio
 - Create local transcripts with Whisper
 - Generate transcripts with timestamps

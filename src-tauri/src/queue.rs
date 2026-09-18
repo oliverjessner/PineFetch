@@ -99,12 +99,12 @@ pub(super) fn build_download_job(
         request.cut_start_time,
         &request.url,
     );
-    let (faster_whisper_model, download_video_with_transcript, save_instagram_captions) = {
+    let (faster_whisper_model, download_video_with_transcript, save_captions) = {
         let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
         (
             normalize_faster_whisper_model(&cfg.faster_whisper_model),
             cfg.download_video_with_transcript,
-            cfg.save_instagram_captions,
+            cfg.save_captions,
         )
     };
     let id = Uuid::new_v4().to_string();
@@ -119,7 +119,7 @@ pub(super) fn build_download_job(
         transcribe_timestamps: request.transcribe_timestamps,
         faster_whisper_model,
         download_video_with_transcript,
-        save_instagram_captions,
+        save_captions,
         title: request.title,
         uploader: request.uploader,
         thumbnail: request.thumbnail,
@@ -421,17 +421,17 @@ pub(super) fn emit_history_warning(app: &AppHandle, job_id: &str, warning: &str)
     );
 }
 
-fn store_instagram_captions_with_warning(
+fn store_captions_with_warning(
     app: &AppHandle,
     state: &AppState,
     job_id: &str,
     history_entry_id: &str,
-    captions: &[SavedInstagramCaption],
+    captions: &[SavedCaption],
 ) -> Option<String> {
-    insert_instagram_captions_in_db(state, history_entry_id, captions)
+    insert_captions_in_db(state, history_entry_id, captions)
         .err()
         .map(|err| {
-            let warning = format!("Instagram caption save failed: {err}");
+            let warning = format!("Caption save failed: {err}");
             emit_history_warning(app, job_id, &warning);
             warning
         })
@@ -652,15 +652,13 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                                 );
                                                 warnings.push(warning);
                                             }
-                                            if let Some(warning) =
-                                                store_instagram_captions_with_warning(
-                                                    &app_handle,
-                                                    &state_handle,
-                                                    &job.id,
-                                                    &history_entry_id,
-                                                    &run_result.captions,
-                                                )
-                                            {
+                                            if let Some(warning) = store_captions_with_warning(
+                                                &app_handle,
+                                                &state_handle,
+                                                &job.id,
+                                                &history_entry_id,
+                                                &run_result.captions,
+                                            ) {
                                                 warnings.push(warning);
                                             }
                                             (!warnings.is_empty()).then(|| warnings.join("; "))
@@ -707,7 +705,7 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                 run_result.output_path.as_deref(),
                                 run_result.info.as_ref(),
                             ) {
-                                Ok(history_entry_id) => store_instagram_captions_with_warning(
+                                Ok(history_entry_id) => store_captions_with_warning(
                                     &app_handle,
                                     &state_handle,
                                     &job.id,

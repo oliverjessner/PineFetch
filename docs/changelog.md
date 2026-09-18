@@ -1,3 +1,12 @@
+# 2.0.0
+
+- history search
+- ux overhaul
+- code improvement
+- project clean up
+- updated deps
+- improved readme
+
 # 1.9.1
 
 - captions

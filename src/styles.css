@@ -87,6 +87,30 @@ body {
     padding: var(--pf-space-0) var(--pf-space-8xl) var(--pf-space-4xl);
 }
 
+.pf-pinefetch-split.pf-queue-collapsed {
+    grid-template-columns: minmax(0, 1fr) minmax(210px, 260px);
+}
+
+.pf-pinefetch-split.pf-queue-collapsed .pf-pinefetch-panel-right > .pf-panel-header,
+.pf-pinefetch-split.pf-queue-collapsed .pf-pinefetch-panel-right > .pf-panel-header .pf-row {
+    align-items: flex-start;
+    flex-direction: column;
+}
+
+.pf-pinefetch-split.pf-settings-active {
+    grid-template-columns: minmax(var(--pf-size-0), 1fr);
+}
+
+.pf-pinefetch-split.pf-settings-active .pf-pinefetch-panel-right {
+    display: none;
+}
+
+.pf-pinefetch-split.pf-settings-active .pf-pinefetch-panel-left > .pf-panel-header {
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+}
+
 .pf-pinefetch-panel {
     min-height: var(--pf-size-0);
     display: flex;
@@ -119,17 +143,65 @@ body {
     gap: var(--pf-space-3xl);
 }
 
+#historySummaryView {
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.pf-history-sources-list {
+    display: grid;
+    gap: var(--pf-space-xl);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.pf-history-sources-list li {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--pf-space-2xl);
+    padding: var(--pf-space-xl) 0;
+    border-bottom: var(--pf-border-width) solid var(--pf-border);
+    color: var(--pf-text);
+    font-size: var(--pf-font-size-body);
+}
+
+.pf-history-sources-list li:last-child {
+    border-bottom: 0;
+}
+
+.pf-history-sources-list strong {
+    color: var(--pf-accent);
+}
+
 #settingsView,
 #linkDumpView {
     overflow-y: auto;
     padding-right: 2px;
 }
 
+#downloadView {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+#settingsView {
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+}
+
+.pf-settings-group {
+    padding-bottom: var(--pf-space-4xl);
+    border-bottom: var(--pf-border-width) solid var(--pf-border);
+}
+
 #queueProgressView .pf-pinefetch-queue-list {
     flex: 1;
 }
 
-.pf-pinefetch-settings-side-view,
 .pf-pinefetch-link-dump-side-view {
     justify-content: flex-start;
     overflow-y: auto;
@@ -174,6 +246,10 @@ body {
 
 .pf-pinefetch-info-card {
     gap: var(--pf-space-2xl);
+}
+
+.pf-pinefetch-info-thumb {
+    max-height: 240px;
 }
 
 .pf-pinefetch-info-meta {
@@ -279,12 +355,31 @@ body {
     margin-right: auto;
 }
 
+.pf-history-open-btn {
+    width: 100%;
+    padding: 0;
+    padding-right: 32px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.pf-history-open-btn:focus-visible {
+    outline: 2px solid var(--pf-accent);
+    outline-offset: 3px;
+    border-radius: var(--pf-radius-md);
+}
+
 .pf-pinefetch-queue-actions {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: var(--pf-space-xl);
     flex-wrap: wrap;
+    margin-top: auto;
 }
 
 .pf-history-content,
@@ -295,7 +390,7 @@ body {
 }
 
 .pf-history-content {
-    padding-right: 32px;
+    padding-right: 0;
 }
 
 .pf-history-title,
@@ -332,9 +427,26 @@ body {
 
 .pf-queue-header {
     display: grid;
-    grid-template-columns: minmax(var(--pf-size-0), 1fr) auto;
+    grid-template-columns: minmax(var(--pf-size-0), 1fr) auto auto;
     align-items: center;
     gap: var(--pf-space-2xl);
+}
+
+.pf-queue-more-btn {
+    font-size: 1.2rem;
+}
+
+.pf-queue-error {
+    white-space: normal;
+}
+
+.pf-progress-indeterminate .pf-progress-bar {
+    animation: pf-pinefetch-processing 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes pf-pinefetch-processing {
+    from { left: 0; }
+    to { left: 65%; }
 }
 
 .pf-queue-title {
@@ -342,8 +454,20 @@ body {
     display: flex;
     align-items: center;
     gap: var(--pf-space-xl);
+    padding: 0;
+    border: 0;
+    background: transparent;
     color: var(--pf-text);
+    font: inherit;
     font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.pf-queue-title:focus-visible {
+    outline: 2px solid var(--pf-accent);
+    outline-offset: 3px;
+    border-radius: var(--pf-radius-md);
 }
 
 .pf-queue-platform-icon {
@@ -433,6 +557,10 @@ body {
         overflow: visible;
     }
 
+    .pf-pinefetch-split.pf-queue-collapsed {
+        grid-template-columns: minmax(var(--pf-size-0), 1fr);
+    }
+
     .pf-pinefetch-panel {
         min-height: auto;
     }
@@ -461,9 +589,10 @@ body {
         max-height: 320px;
     }
 
+    #downloadView,
+    #historySummaryView,
     #settingsView,
     #linkDumpView,
-    #settingsSideView,
     #linkDumpSideView {
         overflow-y: visible;
     }

@@ -787,7 +787,8 @@ mod tests {
             format_stats(&HistoryStats {
                 video_count: 2,
                 total_duration_seconds: 3661,
-                total_file_size_bytes: 1_048_576
+                total_file_size_bytes: 1_048_576,
+                source_counts: Vec::new(),
             }),
             "Downloaded videos: 2\nTotal data: 1.00 MB\nTotal runtime: 1h 01m"
         );

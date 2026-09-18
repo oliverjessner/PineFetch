@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     fs,
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -224,6 +224,13 @@ struct HistoryStats {
     video_count: u64,
     total_duration_seconds: u64,
     total_file_size_bytes: u64,
+    source_counts: Vec<HistorySourceCount>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct HistorySourceCount {
+    source: String,
+    count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +243,7 @@ struct InstalledYtDlpVersion {
 struct QueueStatus {
     auto_start: bool,
     worker_running: bool,
+    paused: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -366,6 +374,7 @@ struct HttpRequest {
 struct DownloadRunResult {
     exit_code: i32,
     output_path: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -501,6 +510,7 @@ struct AppState {
     link_dump_server: Mutex<LinkDumpServerRuntime>,
     queue: Mutex<VecDeque<DownloadJob>>,
     queue_auto_start: Mutex<bool>,
+    queue_paused: Mutex<bool>,
     worker_running: Mutex<bool>,
     current_job_id: Mutex<Option<String>>,
     current_child: Mutex<Option<Arc<Mutex<Child>>>>,
@@ -515,6 +525,7 @@ impl AppState {
             link_dump_server: Mutex::new(LinkDumpServerRuntime::default()),
             queue: Mutex::new(VecDeque::new()),
             queue_auto_start: Mutex::new(true),
+            queue_paused: Mutex::new(false),
             worker_running: Mutex::new(false),
             current_job_id: Mutex::new(None),
             current_child: Mutex::new(None),
@@ -875,17 +886,42 @@ fn set_queue_auto_start(
 
     if enabled {
         ensure_worker(&app, state.inner())?;
-    } else {
-        emit_queue_status(&app, state.inner());
     }
+    emit_queue_status(&app, state.inner());
 
     snapshot_queue_status(state.inner())
 }
 
 #[tauri::command]
 fn start_queue(app: AppHandle, state: State<AppState>) -> Result<QueueStatus, String> {
+    set_queue_paused(state.inner(), false)?;
     ensure_worker(&app, state.inner())?;
+    emit_queue_status(&app, state.inner());
     snapshot_queue_status(state.inner())
+}
+
+#[tauri::command]
+fn pause_queue(app: AppHandle, state: State<AppState>) -> Result<QueueStatus, String> {
+    set_queue_paused(state.inner(), true)?;
+    emit_queue_status(&app, state.inner());
+    snapshot_queue_status(state.inner())
+}
+
+#[tauri::command]
+fn resume_queue(app: AppHandle, state: State<AppState>) -> Result<QueueStatus, String> {
+    set_queue_paused(state.inner(), false)?;
+    ensure_worker(&app, state.inner())?;
+    emit_queue_status(&app, state.inner());
+    snapshot_queue_status(state.inner())
+}
+
+fn set_queue_paused(state: &AppState, paused: bool) -> Result<(), String> {
+    let mut value = state
+        .queue_paused
+        .lock()
+        .map_err(|_| "Queue pause lock poisoned")?;
+    *value = paused;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1050,10 +1086,11 @@ fn get_history(
     state: State<AppState>,
     limit: Option<u32>,
     offset: Option<u32>,
+    query: Option<String>,
 ) -> Result<HistoryPage, String> {
     let limit = limit.unwrap_or(20).clamp(1, 100);
     let offset = offset.unwrap_or(0);
-    list_history_page_from_db(state.inner(), limit, offset)
+    search_history_page_from_db(state.inner(), limit, offset, query.as_deref())
 }
 
 #[tauri::command]
@@ -1321,10 +1358,15 @@ fn snapshot_queue_status(state: &AppState) -> Result<QueueStatus, String> {
         .worker_running
         .lock()
         .map_err(|_| "Worker lock poisoned")?;
+    let paused = *state
+        .queue_paused
+        .lock()
+        .map_err(|_| "Queue pause lock poisoned")?;
 
     Ok(QueueStatus {
         auto_start,
         worker_running,
+        paused,
     })
 }
 
@@ -1422,6 +1464,13 @@ fn show_queue_notification(app: &AppHandle, body: &str) -> Result<(), String> {
 }
 
 fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let paused = state
+        .queue_paused
+        .lock()
+        .map_err(|_| "Queue pause lock poisoned")?;
+    if *paused {
+        return Ok(());
+    }
     let mut running = state
         .worker_running
         .lock()
@@ -1431,6 +1480,7 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
     }
     *running = true;
     drop(running);
+    drop(paused);
     emit_queue_status(app, state);
 
     let app_handle = app.clone();
@@ -1439,31 +1489,26 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
         let mut summary = QueueRunSummary::default();
         loop {
             let state_handle = app_handle.state::<AppState>();
-            let job_opt = {
-                let mut queue = match state_handle.queue.lock() {
-                    Ok(queue) => queue,
-                    Err(_) => break,
-                };
-                let job = queue.pop_front();
-                // Keep the queue locked until idle is published so an enqueue cannot
-                // miss starting a worker between the empty check and shutdown.
-                if job.is_none() {
-                    if let Ok(mut running) = state_handle.worker_running.lock() {
-                        *running = false;
-                    }
-                }
-                job
+            let (job_opt, paused) = match next_worker_job(&state_handle) {
+                Ok(next) => next,
+                Err(_) => break,
             };
 
             let job = match job_opt {
                 Some(job) => job,
                 None => {
-                    notify_queue_completed(&app_handle, &state_handle, &summary);
+                    if !paused {
+                        notify_queue_completed(&app_handle, &state_handle, &summary);
+                    }
                     let _ = emit_queue(&app_handle, &state_handle);
                     emit_queue_status(&app_handle, &state_handle);
                     break;
                 }
             };
+
+            // The waiting queue no longer includes this active job. Publish the
+            // new snapshot before its state changes so counts stay accurate.
+            let _ = emit_queue(&app_handle, &state_handle);
 
             summary.started += 1;
 
@@ -1519,7 +1564,9 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
                                 id: job.id.clone(),
                                 state: "error".to_string(),
                                 exit_code: Some(run_result.exit_code),
-                                error: Some("yt-dlp exited with error".to_string()),
+                                error: Some(run_result.error.unwrap_or_else(|| {
+                                    format!("yt-dlp failed (exit code {})", run_result.exit_code)
+                                })),
                                 output_path: None,
                             },
                         );
@@ -1667,6 +1714,26 @@ fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+fn next_worker_job(state: &AppState) -> Result<(Option<DownloadJob>, bool), String> {
+    let pause_guard = state
+        .queue_paused
+        .lock()
+        .map_err(|_| "Queue pause lock poisoned")?;
+    let paused = *pause_guard;
+    let mut queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
+    let job = if paused { None } else { queue.pop_front() };
+    // Keep the queue locked until idle is published so an enqueue or resume
+    // cannot miss starting a worker between the empty check and shutdown.
+    if job.is_none() {
+        let mut running = state
+            .worker_running
+            .lock()
+            .map_err(|_| "Worker lock poisoned")?;
+        *running = false;
+    }
+    Ok((job, paused))
+}
+
 fn run_download_job(
     app: &AppHandle,
     state: &AppState,
@@ -1772,6 +1839,7 @@ fn run_download_job(
         .map_err(|e| format!("Regex error: {e}"))?;
     let output_path_capture: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let caption_capture: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let error_capture: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let app_stdout = app.clone();
     let id_stdout = job.id.clone();
@@ -1823,10 +1891,19 @@ fn run_download_job(
 
     let app_stderr = app.clone();
     let id_stderr = job.id.clone();
+    let error_for_stderr = error_capture.clone();
     let handle_err = thread::spawn(move || {
         if let Some(err) = stderr {
             let reader = BufReader::new(err);
             for line in reader.lines().flatten() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    if let Ok(mut reason) = error_for_stderr.lock() {
+                        if trimmed.starts_with("ERROR:") || reason.is_none() {
+                            *reason = Some(trimmed.to_string());
+                        }
+                    }
+                }
                 emit_log(
                     &app_stderr,
                     LogEvent {
@@ -1925,6 +2002,7 @@ fn run_download_job(
     Ok(DownloadRunResult {
         exit_code: status.code().unwrap_or(-1),
         output_path,
+        error: error_capture.lock().ok().and_then(|reason| reason.clone()),
     })
 }
 
@@ -3103,42 +3181,63 @@ fn list_history_page_from_db(
     limit: u32,
     offset: u32,
 ) -> Result<HistoryPage, String> {
+    search_history_page_from_db(state, limit, offset, None)
+}
+
+fn search_history_page_from_db(
+    state: &AppState,
+    limit: u32,
+    offset: u32,
+    query: Option<&str>,
+) -> Result<HistoryPage, String> {
+    let pattern = history_search_pattern(query);
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
     let total: i64 = conn
-        .query_row("SELECT COUNT(*) FROM history_entries", [], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM history_entries
+             WHERE (?1 IS NULL OR title LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                OR source LIKE ?1 ESCAPE '\\' COLLATE NOCASE)",
+            params![pattern],
+            |row| row.get(0),
+        )
         .map_err(|e| format!("History read failed: {e}"))?;
     let mut stmt = conn
         .prepare(
             "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, medium, source, platform, output_path, created_at, completed_at
              FROM history_entries
+             WHERE (?1 IS NULL OR title LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                OR source LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
              ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC, id DESC
-             LIMIT ?1 OFFSET ?2",
+             LIMIT ?2 OFFSET ?3",
         )
         .map_err(|e| format!("History read failed: {e}"))?;
 
     let rows = stmt
-        .query_map(params![i64::from(limit), i64::from(offset)], |row| {
-            let created_at: i64 = row.get(14)?;
-            let completed_at: Option<i64> = row.get(15)?;
-            Ok(HistoryEntry {
-                id: row.get(0)?,
-                url: row.get(1)?,
-                title: row.get(2)?,
-                uploader: row.get(3)?,
-                filename: row.get(4)?,
-                thumbnail: row.get(5)?,
-                upload_date: row.get(6)?,
-                timestamp: row.get(7)?,
-                duration_seconds: row.get(8)?,
-                file_size_bytes: row.get(9)?,
-                medium: row.get(10)?,
-                source: row.get(11)?,
-                platform: row.get(12)?,
-                output_path: row.get(13)?,
-                created_at: i64_to_millis(created_at),
-                completed_at: optional_i64_to_millis(completed_at),
-            })
-        })
+        .query_map(
+            params![pattern, i64::from(limit), i64::from(offset)],
+            |row| {
+                let created_at: i64 = row.get(14)?;
+                let completed_at: Option<i64> = row.get(15)?;
+                Ok(HistoryEntry {
+                    id: row.get(0)?,
+                    url: row.get(1)?,
+                    title: row.get(2)?,
+                    uploader: row.get(3)?,
+                    filename: row.get(4)?,
+                    thumbnail: row.get(5)?,
+                    upload_date: row.get(6)?,
+                    timestamp: row.get(7)?,
+                    duration_seconds: row.get(8)?,
+                    file_size_bytes: row.get(9)?,
+                    medium: row.get(10)?,
+                    source: row.get(11)?,
+                    platform: row.get(12)?,
+                    output_path: row.get(13)?,
+                    created_at: i64_to_millis(created_at),
+                    completed_at: optional_i64_to_millis(completed_at),
+                })
+            },
+        )
         .map_err(|e| format!("History read failed: {e}"))?;
 
     let mut entries = Vec::new();
@@ -3155,31 +3254,73 @@ fn list_history_page_from_db(
     })
 }
 
+fn history_search_pattern(query: Option<&str>) -> Option<String> {
+    let query = query.map(str::trim).filter(|query| !query.is_empty())?;
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    Some(format!("%{escaped}%"))
+}
+
 fn list_history_entries_from_db(state: &AppState) -> Result<Vec<HistoryEntry>, String> {
     Ok(list_history_page_from_db(state, u32::MAX, 0)?.entries)
 }
 
 fn get_history_stats_from_db(state: &AppState) -> Result<HistoryStats, String> {
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.query_row(
-        "SELECT
+    let mut stats = conn
+        .query_row(
+            "SELECT
             COUNT(*),
             COALESCE(SUM(duration_seconds), 0),
             COALESCE(SUM(file_size_bytes), 0)
          FROM history_entries",
-        [],
-        |row| {
-            let video_count: i64 = row.get(0)?;
-            let total_duration_seconds: i64 = row.get(1)?;
-            let total_file_size_bytes: i64 = row.get(2)?;
-            Ok(HistoryStats {
-                video_count: video_count.max(0) as u64,
-                total_duration_seconds: total_duration_seconds.max(0) as u64,
-                total_file_size_bytes: total_file_size_bytes.max(0) as u64,
-            })
-        },
-    )
-    .map_err(|e| format!("History stats read failed: {e}"))
+            [],
+            |row| {
+                let video_count: i64 = row.get(0)?;
+                let total_duration_seconds: i64 = row.get(1)?;
+                let total_file_size_bytes: i64 = row.get(2)?;
+                Ok(HistoryStats {
+                    video_count: video_count.max(0) as u64,
+                    total_duration_seconds: total_duration_seconds.max(0) as u64,
+                    total_file_size_bytes: total_file_size_bytes.max(0) as u64,
+                    source_counts: Vec::new(),
+                })
+            },
+        )
+        .map_err(|e| format!("History stats read failed: {e}"))?;
+
+    let mut stmt = conn
+        .prepare("SELECT source, url, platform FROM history_entries")
+        .map_err(|e| format!("History stats read failed: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(|e| format!("History stats read failed: {e}"))?;
+    let mut counts = BTreeMap::<String, u64>::new();
+    for row in rows {
+        let (source, url, platform) = row.map_err(|e| format!("History stats read failed: {e}"))?;
+        let source = trim_optional_string(source)
+            .map(|value| value.to_ascii_lowercase())
+            .or_else(|| source_from_url(&url))
+            .or_else(|| trim_optional_string(platform).map(|value| value.to_ascii_lowercase()))
+            .unwrap_or_else(|| "unknown".to_string());
+        *counts.entry(source).or_default() += 1;
+    }
+    stats.source_counts = counts
+        .into_iter()
+        .map(|(source, count)| HistorySourceCount { source, count })
+        .collect();
+    stats
+        .source_counts
+        .sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.source.cmp(&b.source)));
+    Ok(stats)
 }
 
 fn insert_history_entry_in_db(state: &AppState, entry: &HistoryEntry) -> Result<(), String> {
@@ -4878,6 +5019,8 @@ fn main() {
             get_queue_status,
             set_queue_auto_start,
             start_queue,
+            pause_queue,
+            resume_queue,
             enqueue_download,
             cancel_download,
             get_history,
@@ -5586,6 +5729,70 @@ mod tests {
         assert_eq!(stats.video_count, 1);
         assert_eq!(stats.total_duration_seconds, 754);
         assert_eq!(stats.total_file_size_bytes, 42_000_000);
+        assert_eq!(
+            stats.source_counts,
+            vec![HistorySourceCount {
+                source: "youtube".to_string(),
+                count: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn history_stats_count_sources_across_all_entries_with_fallbacks() {
+        let state = link_dump_test_state();
+        {
+            let conn = state.db.lock().unwrap();
+            for index in 0..22 {
+                conn.execute(
+                    "INSERT INTO history_entries (id, url, created_at) VALUES (?1, ?2, ?3)",
+                    params![
+                        format!("youtube-{index}"),
+                        format!("https://youtu.be/video-{index}"),
+                        index
+                    ],
+                )
+                .unwrap();
+            }
+            conn.execute_batch(
+                "INSERT INTO history_entries (id, url, source, created_at) VALUES
+                    ('instagram-1', 'https://instagram.com/p/1', 'Instagram', 23),
+                    ('instagram-2', 'https://instagram.com/p/2', 'instagram', 24),
+                    ('instagram-3', 'https://instagram.com/p/3', '  INSTAGRAM  ', 25);
+                 INSERT INTO history_entries (id, url, platform, created_at) VALUES
+                    ('tiktok-1', 'invalid-url', 'TikTok', 26),
+                    ('unknown-1', 'invalid-url', NULL, 27);",
+            )
+            .unwrap();
+        }
+
+        let stats = get_history_stats_from_db(&state).unwrap();
+        assert_eq!(stats.video_count, 27);
+        assert_eq!(
+            stats.source_counts,
+            vec![
+                HistorySourceCount {
+                    source: "youtube".to_string(),
+                    count: 22,
+                },
+                HistorySourceCount {
+                    source: "instagram".to_string(),
+                    count: 3,
+                },
+                HistorySourceCount {
+                    source: "tiktok".to_string(),
+                    count: 1,
+                },
+                HistorySourceCount {
+                    source: "unknown".to_string(),
+                    count: 1,
+                },
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(&stats).unwrap()["source_counts"][0],
+            json!({"source": "youtube", "count": 22})
+        );
     }
 
     #[test]
@@ -5678,6 +5885,132 @@ mod tests {
         assert!(second_page.has_more);
         assert_eq!(second_page.entries[0].id, "history-34");
         assert_eq!(second_page.entries[19].id, "history-15");
+    }
+
+    #[test]
+    fn history_search_filters_all_entries_before_pagination() {
+        let state = link_dump_test_state();
+        for index in 0..35 {
+            let is_match = index % 3 == 0;
+            insert_history_entry_in_db(
+                &state,
+                &HistoryEntry {
+                    id: format!("history-{index:02}"),
+                    url: format!("https://example.com/{index}"),
+                    title: Some(if is_match && index % 2 == 0 {
+                        format!("Pine needle {index}")
+                    } else {
+                        format!("Other {index}")
+                    }),
+                    uploader: None,
+                    filename: None,
+                    thumbnail: None,
+                    upload_date: None,
+                    timestamp: None,
+                    duration_seconds: None,
+                    file_size_bytes: None,
+                    medium: None,
+                    source: Some(if is_match && index % 2 != 0 {
+                        "PINE source".to_string()
+                    } else {
+                        "other source".to_string()
+                    }),
+                    platform: None,
+                    output_path: None,
+                    created_at: index,
+                    completed_at: None,
+                },
+            )
+            .unwrap();
+        }
+
+        let first = search_history_page_from_db(&state, 5, 0, Some(" pine ")).unwrap();
+        let second = search_history_page_from_db(&state, 5, 5, Some("pine")).unwrap();
+        assert_eq!(first.entries.len(), 5);
+        assert!(first.has_more);
+        assert_eq!(first.entries[0].id, "history-33");
+        assert_eq!(second.entries[0].id, "history-18");
+        assert!(second.has_more);
+        let final_page = search_history_page_from_db(&state, 5, 10, Some("pine")).unwrap();
+        assert_eq!(final_page.entries.len(), 2);
+        assert!(!final_page.has_more);
+
+        let empty_query = search_history_page_from_db(&state, 5, 0, Some("  ")).unwrap();
+        assert_eq!(empty_query.entries[0].id, "history-34");
+    }
+
+    #[test]
+    fn history_search_treats_sql_wildcards_as_plain_text() {
+        let state = link_dump_test_state();
+        for (id, title) in [("literal", "100%_done"), ("other", "100ABdone")] {
+            insert_history_entry_in_db(
+                &state,
+                &HistoryEntry {
+                    id: id.to_string(),
+                    url: format!("https://example.com/{id}"),
+                    title: Some(title.to_string()),
+                    uploader: None,
+                    filename: None,
+                    thumbnail: None,
+                    upload_date: None,
+                    timestamp: None,
+                    duration_seconds: None,
+                    file_size_bytes: None,
+                    medium: None,
+                    source: None,
+                    platform: None,
+                    output_path: None,
+                    created_at: 1,
+                    completed_at: None,
+                },
+            )
+            .unwrap();
+        }
+        let result = search_history_page_from_db(&state, 20, 0, Some("%_done")).unwrap();
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].id, "literal");
+    }
+
+    #[test]
+    fn paused_queue_keeps_pending_jobs_until_resumed() {
+        let state = link_dump_test_state();
+        let job = DownloadJob {
+            id: "pending".to_string(),
+            url: "https://example.com/video".to_string(),
+            format: "best".to_string(),
+            output_dir: "/tmp".to_string(),
+            extract_audio: false,
+            audio_format: None,
+            transcribe_text: false,
+            transcribe_timestamps: false,
+            faster_whisper_model: "base".to_string(),
+            download_video_with_transcript: false,
+            save_instagram_captions: false,
+            title: None,
+            uploader: None,
+            thumbnail: None,
+            upload_date: None,
+            timestamp: None,
+            duration_seconds: None,
+            cut_start_time: None,
+            filename_suffix: None,
+        };
+        state.queue.lock().unwrap().push_back(job);
+        *state.worker_running.lock().unwrap() = true;
+
+        set_queue_paused(&state, true).unwrap();
+        let (next, paused) = next_worker_job(&state).unwrap();
+        assert!(next.is_none());
+        assert!(paused);
+        assert_eq!(state.queue.lock().unwrap().len(), 1);
+        assert!(!snapshot_queue_status(&state).unwrap().worker_running);
+        assert!(snapshot_queue_status(&state).unwrap().paused);
+
+        set_queue_paused(&state, false).unwrap();
+        let (next, paused) = next_worker_job(&state).unwrap();
+        assert_eq!(next.unwrap().id, "pending");
+        assert!(!paused);
+        assert!(state.queue.lock().unwrap().is_empty());
     }
 
     #[test]

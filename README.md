@@ -42,7 +42,7 @@ npm run build:windows
 
 ## Version synchronization
 
-`package.json` is the source of truth for the PineFetch version. Before each macOS or Windows build, `npm run sync:version` copies it to `src-tauri/tauri.conf.json` under `package.version`. The publish script performs the same sync before creating its release commit and Git tag.
+`package.json` is the source of truth for the PineFetch version. Before each macOS or Windows build, `npm run sync:version` copies it to `src-tauri/tauri.conf.json` under `package.version`. The [publish script](scripts/publish.sh) performs the same sync before creating its release commit and Git tag. Release notes are in the [changelog](docs/changelog.md).
 
 ## Publishing
 
@@ -235,9 +235,10 @@ History keeps successful downloads in the local SQLite database. Each entry incl
 
 The History view also provides an overview of:
 
-- **Downloaded videos** — the number of entries currently stored in History
+- **Completed downloads** — the number of entries currently stored in History
 - **Total data** — the combined size of downloaded files
 - **Total runtime** — the combined duration of downloaded media
+- **Sources** — the number of downloads from each source, such as YouTube or Instagram
 
 Removing an entry or clearing History immediately updates these totals. Existing entries created before duration and file-size tracking was introduced remain available, but missing metadata is not included in the totals.
 

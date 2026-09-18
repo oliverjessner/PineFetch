@@ -22,7 +22,7 @@
                     <h1 class="pf-title">PineFetch</h1>
                 </div>
                 <div class="pf-pinefetch-top-actions">
-                    <div class="pf-segmented" role="tablist" aria-label="Main view">
+                    <nav class="pf-segmented" aria-label="Main view">
                         <button
                             id="viewDownloadBtn"
                             class="pf-segmented-btn pf-is-active"
@@ -35,12 +35,12 @@
                             History
                         </button>
                         <button id="viewLinkDumpBtn" class="pf-segmented-btn" type="button" aria-pressed="false">
-                            Link Dump
+                            Browser Import
                         </button>
                         <button id="viewSettingsBtn" class="pf-segmented-btn" type="button" aria-pressed="false">
                             Settings
                         </button>
-                    </div>
+                    </nav>
                 </div>
             </header>
 
@@ -64,6 +64,19 @@
                             <select id="presetSelect" class="pf-select"></select>
                         </label>
 
+                        <div id="transcriptionOptions" class="pf-stack" hidden>
+                            <label class="pf-toggle" for="downloadVideoWithTranscript">
+                                <span class="pf-toggle-copy">
+                                    <span class="pf-toggle-title">Keep video with transcript</span>
+                                    <span class="pf-toggle-hint">Save the video file alongside the generated transcript.</span>
+                                </span>
+                                <input id="downloadVideoWithTranscript" class="pf-toggle-input" type="checkbox" />
+                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                            </label>
+                        </div>
+
+                        <p id="instagramCaptionHint" class="pf-hint" hidden></p>
+
                         <div class="pf-field-row pf-pinefetch-download-actions">
                             <button id="startDownloadBtn" class="pf-btn pf-btn-primary">Queue</button>
                             <button id="loadInfoBtn" class="pf-btn">
@@ -73,7 +86,7 @@
                         </div>
                         <p id="txtImportStatus" class="pf-status" role="status" aria-live="polite" hidden></p>
 
-                        <div class="pf-panel-soft pf-pinefetch-info-card" id="infoCard">
+                        <div class="pf-panel-soft pf-pinefetch-info-card" id="infoCard" hidden>
                             <div class="pf-pinefetch-info-meta">
                                 <div>
                                     <p class="pf-label">Title</p>
@@ -91,12 +104,13 @@
                             <div class="pf-media-thumbnail pf-pinefetch-info-thumb" id="infoThumb"></div>
                         </div>
 
-                        <div class="pf-divider"></div>
-
-                        <p class="pf-hint">Please only download content you have the rights or permission to access.</p>
                     </div>
 
                     <div id="historyView" class="pf-panel-view pf-stack" hidden>
+                        <label class="pf-field" for="historySearchInput">
+                            <span class="pf-label">Search history</span>
+                            <input id="historySearchInput" class="pf-input" type="search" placeholder="Title or source" autocomplete="off" />
+                        </label>
                         <div id="historyList" class="pf-scroll-area pf-pinefetch-history-list"></div>
                         <div class="pf-pinefetch-history-actions">
                             <button id="loadMoreHistoryBtn" class="pf-btn pf-pinefetch-history-load-more" type="button" hidden>
@@ -108,65 +122,104 @@
                     </div>
 
                     <div id="settingsView" class="pf-panel-view pf-stack" hidden>
-                        <div class="pf-field">
-                            <label class="pf-label" for="outputDir">Output folder</label>
-                            <div class="pf-field-row pf-pinefetch-output-row">
-                                <input id="outputDir" class="pf-input" type="text" placeholder="/Users/..." />
-                                <button id="pickDirBtn" class="pf-btn pf-btn-ghost">Choose</button>
-                                <button id="openFolderBtn" class="pf-btn pf-btn-ghost">Open folder</button>
-                            </div>
-                        </div>
+                        <p id="settingsSaveStatus" class="pf-status" role="status" aria-live="polite">
+                            Changes save automatically and apply to new downloads.
+                        </p>
 
-                        <label class="pf-field" for="ytDlpPath">
-                            <span class="pf-label">yt-dlp path</span>
-                            <input
-                                id="ytDlpPath"
-                                class="pf-input"
-                                type="text"
-                                placeholder="/opt/homebrew/bin/yt-dlp"
-                            />
-                        </label>
-
-                        <label class="pf-toggle" for="notificationsEnabled">
-                            <span class="pf-toggle-copy">
-                                <span class="pf-toggle-title">Download notifications</span>
-                                <span class="pf-toggle-hint">Notify when a queue of more than one video finishes successfully.</span>
-                            </span>
-                            <input id="notificationsEnabled" class="pf-toggle-input" type="checkbox" />
-                            <span class="pf-toggle-track" aria-hidden="true"></span>
-                        </label>
-
-                        <div class="pf-row">
-                            <button id="saveSettingsBtn" class="pf-btn">Save settings</button>
-                        </div>
-
-                        <div class="pf-field">
-                            <span class="pf-label">yt-dlp versions</span>
-                            <div class="pf-panel-soft pf-pinefetch-version-info">
-                                <p id="ytDlpInstalledVersion">Installed: -</p>
-                                <p id="ytDlpLatestVersion">Latest: -</p>
-                            </div>
-                        </div>
-
-                        <section class="pf-panel-soft pf-terminal pf-pinefetch-log-panel" id="logPanel">
-                            <div class="pf-panel-header pf-terminal-header pf-pinefetch-log-header">
-                                <div class="pf-panel-heading">
-                                    <h3 class="pf-section-title">Terminal Log</h3>
-                                    <p class="pf-subtitle" id="logHint">stdout / stderr</p>
-                                </div>
-                                <div class="pf-row">
-                                    <button id="copyLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>
-                                        Copy
-                                    </button>
-                                    <button id="clearLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>
-                                        Clear
-                                    </button>
+                        <section class="pf-stack pf-settings-group" aria-labelledby="settingsDownloadTitle">
+                            <h3 id="settingsDownloadTitle" class="pf-section-title">Download</h3>
+                            <div class="pf-field">
+                                <label class="pf-label" for="outputDir">Output folder</label>
+                                <div class="pf-field-row pf-pinefetch-output-row">
+                                    <input id="outputDir" class="pf-input" type="text" placeholder="/Users/..." />
+                                    <button id="pickDirBtn" class="pf-btn pf-btn-ghost" type="button">Choose</button>
+                                    <button id="openFolderBtn" class="pf-btn pf-btn-ghost" type="button">Open folder</button>
                                 </div>
                             </div>
-                            <div id="logBody" class="pf-terminal-body pf-pinefetch-log-body"></div>
+
+                            <label class="pf-toggle" for="cutAtTimestampEnabled">
+                                <span class="pf-toggle-copy">
+                                    <span class="pf-toggle-title">Cut at timestamp</span>
+                                    <span class="pf-toggle-hint">Links with a timestamp such as t=61 start the download at that second.</span>
+                                </span>
+                                <input id="cutAtTimestampEnabled" class="pf-toggle-input" type="checkbox" checked />
+                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                            </label>
+
+                            <label class="pf-toggle" for="saveInstagramCaptions">
+                                <span class="pf-toggle-copy">
+                                    <span class="pf-toggle-title">Save Instagram captions</span>
+                                    <span class="pf-toggle-hint">Save each available caption as a .caption.txt file beside its download.</span>
+                                </span>
+                                <input id="saveInstagramCaptions" class="pf-toggle-input" type="checkbox" />
+                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                            </label>
                         </section>
 
-                        <p class="pf-hint">These settings are used for all new downloads.</p>
+                        <section class="pf-stack pf-settings-group" aria-labelledby="settingsTranscriptionTitle">
+                            <h3 id="settingsTranscriptionTitle" class="pf-section-title">Transcription</h3>
+                            <label class="pf-field" for="fasterWhisperModel">
+                                <span class="pf-label">Transcription quality</span>
+                                <select id="fasterWhisperModel" class="pf-select">
+                                    <option value="base">Fast (base)</option>
+                                    <option value="small">Balanced (small)</option>
+                                    <option value="medium">High (medium)</option>
+                                    <option value="large-v3">Best (large-v3)</option>
+                                </select>
+                                <span class="pf-hint">Larger models improve accuracy but need more download time, memory, and processing time.</span>
+                            </label>
+                        </section>
+
+                        <section class="pf-stack pf-settings-group" aria-labelledby="settingsApplicationTitle">
+                            <h3 id="settingsApplicationTitle" class="pf-section-title">Application</h3>
+                            <label class="pf-toggle" for="magicImportEnabled">
+                                <span class="pf-toggle-copy">
+                                    <span class="pf-toggle-title">Magic import</span>
+                                    <span class="pf-toggle-hint">Click PineFetch with an empty URL field to import a URL from the clipboard.</span>
+                                </span>
+                                <input id="magicImportEnabled" class="pf-toggle-input" type="checkbox" checked />
+                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                            </label>
+
+                            <label class="pf-toggle" for="notificationsEnabled">
+                                <span class="pf-toggle-copy">
+                                    <span class="pf-toggle-title">Download notifications</span>
+                                    <span class="pf-toggle-hint">Notify when a queue of more than one video finishes successfully.</span>
+                                </span>
+                                <input id="notificationsEnabled" class="pf-toggle-input" type="checkbox" />
+                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                            </label>
+                        </section>
+
+                        <section class="pf-stack pf-settings-group" aria-labelledby="settingsDiagnosticsTitle">
+                            <h3 id="settingsDiagnosticsTitle" class="pf-section-title">Diagnostics</h3>
+                            <label class="pf-field" for="ytDlpPath">
+                                <span class="pf-label">yt-dlp path</span>
+                                <input id="ytDlpPath" class="pf-input" type="text" placeholder="/opt/homebrew/bin/yt-dlp" />
+                            </label>
+
+                            <div class="pf-field">
+                                <span class="pf-label">yt-dlp versions</span>
+                                <div class="pf-panel-soft pf-pinefetch-version-info">
+                                    <p id="ytDlpInstalledVersion">Installed: -</p>
+                                    <p id="ytDlpLatestVersion">Latest: -</p>
+                                </div>
+                            </div>
+
+                            <section class="pf-panel-soft pf-terminal pf-pinefetch-log-panel" id="logPanel">
+                                <div class="pf-panel-header pf-terminal-header pf-pinefetch-log-header">
+                                    <div class="pf-panel-heading">
+                                        <h3 class="pf-section-title">Terminal Log</h3>
+                                        <p class="pf-subtitle" id="logHint">stdout / stderr</p>
+                                    </div>
+                                    <div class="pf-row">
+                                        <button id="copyLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>Copy</button>
+                                        <button id="clearLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>Clear</button>
+                                    </div>
+                                </div>
+                                <div id="logBody" class="pf-terminal-body pf-pinefetch-log-body"></div>
+                            </section>
+                        </section>
                     </div>
 
                     <div id="linkDumpView" class="pf-panel-view pf-stack" hidden>
@@ -238,11 +291,16 @@
                         <div class="pf-panel-heading">
                             <h2 class="pf-section-title" id="rightPanelTitle">Queue / Progress</h2>
                         </div>
-                        <div class="pf-badge" id="queueBadge">0 queued</div>
+                        <div class="pf-row">
+                            <div class="pf-badge" id="queueBadge">0 waiting · 0 active</div>
+                            <button id="queueCollapseBtn" class="pf-btn pf-btn-ghost" type="button" aria-expanded="true" aria-controls="queueProgressView">Hide queue</button>
+                        </div>
                     </div>
 
                     <div id="queueProgressView" class="pf-pinefetch-right-panel-view">
-                        <div id="queueList" class="pf-scroll-area pf-pinefetch-queue-list"></div>
+                        <p id="queueEmptyHint" class="pf-hint">The queue is empty. Paste a link, choose a format, then click Queue.</p>
+                        <div id="queueList" class="pf-scroll-area pf-pinefetch-queue-list" hidden></div>
+                        <p id="queueModeHint" class="pf-hint" hidden></p>
                         <div class="pf-pinefetch-queue-actions">
                             <div class="pf-row">
                                 <button
@@ -253,16 +311,17 @@
                                 >
                                     Auto-start: on
                                 </button>
-                                <button id="startQueueBtn" class="pf-btn" type="button">Start queue</button>
+                                <button id="startQueueBtn" class="pf-btn" type="button">Download</button>
+                                <button id="pauseQueueBtn" class="pf-btn pf-btn-ghost" type="button">Pause after current</button>
                             </div>
-                            <button id="clearQueueBtn" class="pf-btn pf-btn-ghost" type="button">Clear</button>
+                            <button id="clearQueueBtn" class="pf-btn pf-btn-ghost" type="button">Cancel and clear</button>
                         </div>
                     </div>
 
                     <div id="historySummaryView" class="pf-pinefetch-right-panel-view" hidden>
                         <div class="pf-history-summary-grid">
                             <section class="pf-panel-soft pf-stat">
-                                <p class="pf-label">Downloaded videos</p>
+                                <p class="pf-label">Completed downloads</p>
                                 <p class="pf-stat-value" id="historyVideoCount">0</p>
                             </section>
                             <section class="pf-panel-soft pf-stat">
@@ -274,75 +333,11 @@
                                 <p class="pf-stat-value" id="historyTotalDuration">0m 00s</p>
                             </section>
                         </div>
-                    </div>
-
-                    <div id="settingsSideView" class="pf-pinefetch-right-panel-view pf-pinefetch-settings-side-view" hidden>
-                        <div class="pf-stack">
-                            <label class="pf-toggle" for="magicImportEnabled">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Magic import</span>
-                                    <span class="pf-toggle-hint"
-                                        >Click PineFetch with an empty URL field to import a URL from the
-                                        clipboard.</span
-                                    >
-                                </span>
-                                <input id="magicImportEnabled" class="pf-toggle-input" type="checkbox" checked />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
-                            </label>
-
-                            <label class="pf-toggle" for="cutAtTimestampEnabled">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Cut at timestamp</span>
-                                    <span class="pf-toggle-hint"
-                                        >Links with a timestamp such as t=61 start the download at that second.</span
-                                    >
-                                </span>
-                                <input id="cutAtTimestampEnabled" class="pf-toggle-input" type="checkbox" checked />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
-                            </label>
-
-                            <label class="pf-toggle" for="saveInstagramCaptions">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Save Instagram captions</span>
-                                    <span class="pf-toggle-hint">Save each available caption as a .caption.txt file beside its download. Saves immediately.</span>
-                                </span>
-                                <input id="saveInstagramCaptions" class="pf-toggle-input" type="checkbox" />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
-                            </label>
-
-                            <section class="pf-stack" aria-labelledby="transcriptionOptionsTitle">
-                                <h3 id="transcriptionOptionsTitle" class="pf-section-title">Transcription</h3>
-
-                                <label class="pf-field" for="fasterWhisperModel">
-                                    <span class="pf-label">Transcription quality</span>
-                                    <select id="fasterWhisperModel" class="pf-select">
-                                        <option value="base">Fast (base)</option>
-                                        <option value="small">Balanced (small)</option>
-                                        <option value="medium">High (medium)</option>
-                                        <option value="large-v3">Best (large-v3)</option>
-                                    </select>
-                                    <span class="pf-hint">
-                                        Larger models improve accuracy but need more download time, memory, and
-                                        processing time.
-                                    </span>
-                                </label>
-
-                                <label class="pf-toggle" for="downloadVideoWithTranscript">
-                                    <span class="pf-toggle-copy">
-                                        <span class="pf-toggle-title">Download video with transcript</span>
-                                        <span class="pf-toggle-hint"
-                                            >Keep the video file alongside the generated transcript.</span
-                                        >
-                                    </span>
-                                    <input
-                                        id="downloadVideoWithTranscript"
-                                        class="pf-toggle-input"
-                                        type="checkbox"
-                                    />
-                                    <span class="pf-toggle-track" aria-hidden="true"></span>
-                                </label>
-                            </section>
-                        </div>
+                        <section class="pf-panel-soft pf-history-sources" aria-labelledby="historySourcesTitle">
+                            <h3 class="pf-section-title" id="historySourcesTitle">Sources</h3>
+                            <ul id="historySourcesList" class="pf-history-sources-list"></ul>
+                            <p id="historySourcesEmpty" class="pf-hint">Sources appear after the first download.</p>
+                        </section>
                     </div>
 
                     <div

@@ -7,6 +7,8 @@ const state = Object.seal({
     queueIds: [],
     queueAutoStartEnabled: true,
     queueWorkerRunning: false,
+    queuePaused: false,
+    queueCollapsed: false,
     suppressedJobIds: new Set(),
     selectedId: null,
     contextMenuJobId: null,
@@ -23,6 +25,7 @@ const state = Object.seal({
     historyLoaded: false,
     historyDirty: true,
     historyRevision: 0,
+    historyQuery: '',
 });
 const els = Object.seal({
     magicImportTrigger: document.getElementById('magicImportTrigger'),
@@ -34,7 +37,7 @@ const els = Object.seal({
     importTxtBtn: document.getElementById('importTxtBtn'),
     txtImportStatus: document.getElementById('txtImportStatus'),
     pickDirBtn: document.getElementById('pickDirBtn'),
-    saveSettingsBtn: document.getElementById('saveSettingsBtn'),
+    settingsSaveStatus: document.getElementById('settingsSaveStatus'),
     notificationsEnabled: document.getElementById('notificationsEnabled'),
     saveInstagramCaptions: document.getElementById('saveInstagramCaptions'),
     openFolderBtn: document.getElementById('openFolderBtn'),
@@ -61,16 +64,21 @@ const els = Object.seal({
     linkDumpSecretHint: document.getElementById('linkDumpSecretHint'),
     linkDumpSecretStatus: document.getElementById('linkDumpSecretStatus'),
     presetSelect: document.getElementById('presetSelect'),
+    infoCard: document.getElementById('infoCard'),
     infoTitle: document.getElementById('infoTitle'),
     infoUploader: document.getElementById('infoUploader'),
     infoDuration: document.getElementById('infoDuration'),
     infoThumb: document.getElementById('infoThumb'),
     queueList: document.getElementById('queueList'),
     queueBadge: document.getElementById('queueBadge'),
+    queueCollapseBtn: document.getElementById('queueCollapseBtn'),
     queueAutoStartBtn: document.getElementById('queueAutoStartBtn'),
     startQueueBtn: document.getElementById('startQueueBtn'),
+    pauseQueueBtn: document.getElementById('pauseQueueBtn'),
     queueModeHint: document.getElementById('queueModeHint'),
+    queueEmptyHint: document.getElementById('queueEmptyHint'),
     clearQueueBtn: document.getElementById('clearQueueBtn'),
+    instagramCaptionHint: document.getElementById('instagramCaptionHint'),
     infoBadge: document.getElementById('infoBadge'),
     logBody: document.getElementById('logBody'),
     copyLogsBtn: document.getElementById('copyLogsBtn'),
@@ -80,6 +88,7 @@ const els = Object.seal({
     downloadView: document.getElementById('downloadView'),
     historyView: document.getElementById('historyView'),
     historyList: document.getElementById('historyList'),
+    historySearchInput: document.getElementById('historySearchInput'),
     historyHint: document.getElementById('historyHint'),
     settingsView: document.getElementById('settingsView'),
     linkDumpView: document.getElementById('linkDumpView'),
@@ -88,7 +97,8 @@ const els = Object.seal({
     historyVideoCount: document.getElementById('historyVideoCount'),
     historyTotalSize: document.getElementById('historyTotalSize'),
     historyTotalDuration: document.getElementById('historyTotalDuration'),
-    settingsSideView: document.getElementById('settingsSideView'),
+    historySourcesList: document.getElementById('historySourcesList'),
+    historySourcesEmpty: document.getElementById('historySourcesEmpty'),
     linkDumpSideView: document.getElementById('linkDumpSideView'),
     viewDownloadBtn: document.getElementById('viewDownloadBtn'),
     viewHistoryBtn: document.getElementById('viewHistoryBtn'),
@@ -155,9 +165,9 @@ const presetOptions = Object.freeze([
     },
     {
         key: 'text',
-        selectLabel: 'Text',
-        queueLabel: 'Text',
-        menuLabel: 'Download Text',
+        selectLabel: 'Transcribe to text',
+        queueLabel: 'Transcription',
+        menuLabel: 'Transcribe to text',
         format: 'ba/b',
         extractAudio: true,
         audioFormat: 'mp3',
@@ -167,9 +177,9 @@ const presetOptions = Object.freeze([
     },
     {
         key: 'text_timestamps',
-        selectLabel: 'Text with timestamps',
-        queueLabel: 'Text with timestamps',
-        menuLabel: 'Download Text with timestamps',
+        selectLabel: 'Transcribe with timestamps',
+        queueLabel: 'Transcription with timestamps',
+        menuLabel: 'Transcribe with timestamps',
         format: 'ba/b',
         extractAudio: true,
         audioFormat: 'mp3',
@@ -197,11 +207,13 @@ const fasterWhisperModels = new Set(['base', 'small', 'medium', 'large-v3']);
 const normalizeFasterWhisperModel = model =>
     fasterWhisperModels.has(model) ? model : defaultFasterWhisperModel;
 const historyPageSize = 20;
+const historySearchDelayMs = 250;
 const maxLogLines = 500;
 const cancellableJobStates = new Set(['downloading', 'transcribing']);
 const queueBusyJobStates = new Set(['downloading', 'transcribing', 'cancelling']);
 const removableJobStates = new Set(['queued', 'success', 'error', 'cancelled']);
 let urlShakeTimer = null;
+let historySearchTimer = null;
 let magicImportInFlight = false;
 let queueRenderFrame = null;
 let queueRenderDirty = true;
@@ -211,6 +223,8 @@ let viewActivationId = 0;
 let ytDlpVersionsChecked = false;
 let ytDlpVersionsPromise = null;
 let linkDumpSyncPromise = null;
+let configSaveQueue = Promise.resolve();
+let configSaveRevision = 0;
 
 const formatDuration = seconds => {
     if (!seconds && seconds !== 0) return '-';
@@ -494,6 +508,7 @@ const tryMagicImport = async () => {
         if (lastDownloadedUrl && clipboardText === lastDownloadedUrl) return;
 
         els.urlInput.value = clipboardText;
+        updateDownloadOptionHints();
         state.info = null;
         state.infoUrl = null;
         renderInfo();
@@ -517,8 +532,10 @@ const cacheLastDownloadedUrl = async url => {
     };
 
     if (!invoke) return;
+    const queuedCache = configSaveQueue.then(() => invoke('cache_last_download_url', { url: nextUrl }));
+    configSaveQueue = queuedCache.catch(() => {});
     try {
-        await invoke('cache_last_download_url', { url: nextUrl });
+        await queuedCache;
     } catch (err) {
         appendLog(`[config] ${err}`, true);
     }
@@ -785,6 +802,7 @@ const setActiveView = view => {
     const isLinkDump = view === 'linkDump';
     const isSettings = view === 'settings';
     state.activeView = view;
+    els.settingsView.closest('.pf-pinefetch-split').classList.toggle('pf-settings-active', isSettings);
     settingsLogRenderReady = false;
     const activationId = ++viewActivationId;
     const runAfterViewPaint = callback => {
@@ -799,9 +817,10 @@ const setActiveView = view => {
     els.historyView.hidden = !isHistory;
     els.settingsView.hidden = !isSettings;
     els.linkDumpView.hidden = !isLinkDump;
-    els.queueProgressView.hidden = !isDownload;
+    els.queueProgressView.hidden = !isDownload || state.queueCollapsed;
+    els.queueCollapseBtn.hidden = !isDownload;
+    document.querySelector('.pf-pinefetch-split')?.classList.toggle('pf-queue-collapsed', isDownload && state.queueCollapsed);
     els.historySummaryView.hidden = !isHistory;
-    els.settingsSideView.hidden = !isSettings;
     els.linkDumpSideView.hidden = !isLinkDump;
     els.downloadView.classList.toggle('pf-is-active', isDownload);
     els.historyView.classList.toggle('pf-is-active', isHistory);
@@ -809,7 +828,6 @@ const setActiveView = view => {
     els.linkDumpView.classList.toggle('pf-is-active', isLinkDump);
     els.queueProgressView.classList.toggle('pf-is-active', isDownload);
     els.historySummaryView.classList.toggle('pf-is-active', isHistory);
-    els.settingsSideView.classList.toggle('pf-is-active', isSettings);
     els.linkDumpSideView.classList.toggle('pf-is-active', isLinkDump);
 
     els.viewDownloadBtn.classList.toggle('pf-is-active', isDownload);
@@ -836,7 +854,7 @@ const setActiveView = view => {
             void renderHistory();
         });
     } else if (isLinkDump) {
-        els.leftPanelTitle.textContent = 'Link Dump';
+        els.leftPanelTitle.textContent = 'Browser Import';
         els.rightPanelTitle.textContent = 'Connections';
         els.queueBadge.style.display = 'none';
         els.infoBadge.style.display = 'none';
@@ -925,10 +943,12 @@ const openQueueContextMenu = (job, x, y) => {
 
         els.queueContextMenu.style.left = `${left}px`;
         els.queueContextMenu.style.top = `${top}px`;
+        els.queueContextMenu.querySelector('button:not([hidden])')?.focus();
     });
 };
 
 const renderInfo = () => {
+    els.infoCard.hidden = !state.info;
     if (!state.info) {
         els.infoTitle.textContent = '-';
         els.infoUploader.textContent = '-';
@@ -960,6 +980,21 @@ const renderInfo = () => {
     }
 };
 
+const updateDownloadOptionHints = () => {
+    const preset = presets[getSelectedPresetKey()];
+    const isTranscription = Boolean(preset?.transcribeText);
+    const transcriptionOptions = document.getElementById('transcriptionOptions');
+    if (transcriptionOptions) transcriptionOptions.hidden = !isTranscription;
+
+    const isInstagram = detectPlatform(els.urlInput.value.trim()) === 'instagram';
+    els.instagramCaptionHint.hidden = !isInstagram;
+    if (isInstagram) {
+        els.instagramCaptionHint.textContent = els.saveInstagramCaptions.checked
+            ? 'Instagram caption: if available, a separate .caption.txt file will be saved.'
+            : 'Instagram caption: off. Enable it in Settings to save a separate .caption.txt file.';
+    }
+};
+
 const renderQueueControls = () => {
     const queuedCount = state.queueIds.length;
     const isBusy =
@@ -967,16 +1002,25 @@ const renderQueueControls = () => {
     const setQueueModeHint = text => {
         if (els.queueModeHint) {
             els.queueModeHint.textContent = text;
+            els.queueModeHint.hidden = !text;
         }
     };
 
     els.queueAutoStartBtn.textContent = `Auto-start: ${state.queueAutoStartEnabled ? 'on' : 'off'}`;
     els.queueAutoStartBtn.setAttribute('aria-pressed', String(state.queueAutoStartEnabled));
 
-    els.startQueueBtn.disabled = state.queueAutoStartEnabled || queuedCount === 0 || isBusy;
+    els.startQueueBtn.disabled = (state.queueAutoStartEnabled && !state.queuePaused) || queuedCount === 0 || isBusy;
+    els.clearQueueBtn.disabled = state.jobs.size === 0;
+    els.pauseQueueBtn.disabled = !state.queuePaused && queuedCount === 0 && !isBusy;
+    els.pauseQueueBtn.textContent = state.queuePaused ? 'Resume queue' : 'Pause after current';
+
+    if (state.queuePaused) {
+        setQueueModeHint('Paused. The current item can finish; waiting items start when you resume.');
+        return;
+    }
 
     if (state.queueAutoStartEnabled) {
-        setQueueModeHint('New items start downloading as soon as they are queued.');
+        setQueueModeHint('');
         return;
     }
 
@@ -986,19 +1030,32 @@ const renderQueueControls = () => {
     }
 
     if (queuedCount > 0) {
-        setQueueModeHint('Manual mode is active. Build the queue first, then click Start queue.');
+        setQueueModeHint('Manual mode is active. Build the queue first, then click Download.');
         return;
     }
 
-    setQueueModeHint('Manual mode is active. New items stay queued until you click Start queue.');
+    setQueueModeHint('Manual mode is active. New items stay queued until you click Download.');
+};
+
+const toggleQueueCollapsed = () => {
+    state.queueCollapsed = !state.queueCollapsed;
+    els.queueCollapseBtn.textContent = state.queueCollapsed ? 'Show queue' : 'Hide queue';
+    els.queueCollapseBtn.setAttribute('aria-expanded', String(!state.queueCollapsed));
+    els.queueProgressView.hidden = state.queueCollapsed;
+    document.querySelector('.pf-pinefetch-split')?.classList.toggle('pf-queue-collapsed', state.queueCollapsed);
+    if (!state.queueCollapsed) scheduleQueueRender();
 };
 
 const renderQueue = () => {
     const items = Array.from(state.jobs.values()).sort((a, b) => a.createdAt - b.createdAt);
+    const focusedItem = document.activeElement?.closest?.('.pf-queue-item');
+    const focusedJobId = focusedItem?.dataset.jobId;
+    const focusedMoreButton = document.activeElement?.classList?.contains('pf-queue-more-btn');
     els.queueList.replaceChildren();
     items.forEach(job => {
         const item = document.createElement('div');
         item.className = `pf-list-card pf-queue-item ${job.id === state.selectedId ? 'pf-is-active' : ''}`;
+        item.dataset.jobId = job.id;
         item.oncontextmenu = event => {
             event.preventDefault();
             state.selectedId = job.id;
@@ -1021,8 +1078,13 @@ const renderQueue = () => {
         const header = document.createElement('div');
         header.className = 'pf-queue-header';
 
-        const title = document.createElement('div');
+        const title = document.createElement('button');
         title.className = 'pf-queue-title';
+        title.type = 'button';
+        title.setAttribute(
+            'aria-label',
+            `${(job.state === 'success' || job.state === 'transcribing') && job.outputPath ? 'Open folder for' : 'Select'} ${job.label || job.url}`
+        );
         const platform = detectPlatform(job.url || '');
         if (platform) {
             const platformIcon = document.createElement('span');
@@ -1040,20 +1102,48 @@ const renderQueue = () => {
 
         const badge = document.createElement('div');
         badge.className = 'pf-badge pf-badge-muted pf-queue-badge';
-        badge.textContent = job.state || 'queued';
+        badge.textContent = ({ success: 'Completed', error: 'Failed', transcribing: 'Transcribing' })[job.state] || job.state || 'queued';
 
-        header.append(title, badge);
+        const moreBtn = document.createElement('button');
+        moreBtn.className = 'pf-icon-btn pf-queue-more-btn';
+        moreBtn.type = 'button';
+        moreBtn.textContent = '⋯';
+        moreBtn.setAttribute('aria-label', `More actions for ${job.label || job.url}`);
+        moreBtn.onclick = event => {
+            event.stopPropagation();
+            const rect = moreBtn.getBoundingClientRect();
+            state.selectedId = job.id;
+            scheduleQueueRender();
+            openQueueContextMenu(job, rect.right, rect.bottom);
+        };
+
+        header.append(title, badge, moreBtn);
 
         const progress = document.createElement('div');
         progress.className = 'pf-progress';
+        const isDownloading = job.state === 'downloading';
+        const isProcessing = job.state === 'transcribing' || job.state === 'cancelling';
+        progress.hidden = !isDownloading && !isProcessing && job.state !== 'success';
+        progress.classList.toggle('pf-progress-indeterminate', isProcessing);
+        progress.setAttribute('role', 'progressbar');
+        progress.setAttribute('aria-label', isProcessing ? (job.state === 'transcribing' ? 'Transcribing' : 'Cancelling') : 'Download progress');
+        if (!isProcessing) progress.setAttribute('aria-valuenow', String(Math.round(job.state === 'success' ? 100 : job.percent || 0)));
+        progress.setAttribute('aria-valuemin', '0');
+        progress.setAttribute('aria-valuemax', '100');
         const bar = document.createElement('span');
         bar.className = 'pf-progress-bar';
-        bar.style.width = `${job.percent || 0}%`;
+        bar.style.width = `${isProcessing ? 35 : job.state === 'success' ? 100 : job.percent || 0}%`;
         progress.appendChild(bar);
 
         const meta = document.createElement('div');
         meta.className = 'pf-queue-meta';
-        const metaItems = [job.speed || '-', job.eta || '-', job.formatLabel || ''];
+        const metaItems = [job.formatLabel || ''];
+        if (isDownloading) {
+            if (Number.isFinite(job.percent)) metaItems.push(`Progress: ${Math.round(job.percent)}%`);
+            if (job.speed && job.speed !== '-') metaItems.push(`Speed: ${job.speed}`);
+            if (job.eta && job.eta !== '-') metaItems.push(`ETA: ${job.eta}`);
+        }
+        if (isProcessing) metaItems.push(job.state === 'transcribing' ? 'Creating transcript' : 'Stopping download');
         const cutStartLabel = formatCutStartLabel(job.cutStartTime);
         if (cutStartLabel) metaItems.push(cutStartLabel);
         appendTextSpans(meta, metaItems);
@@ -1063,6 +1153,12 @@ const renderQueue = () => {
         const content = document.createElement('div');
         content.className = 'pf-queue-content';
         content.append(header, progress, meta);
+        if (job.state === 'error' && job.error) {
+            const errorText = document.createElement('p');
+            errorText.className = 'pf-status pf-status-error pf-queue-error';
+            errorText.textContent = job.error;
+            content.appendChild(errorText);
+        }
         main.appendChild(content);
 
         const thumbUrl = job.thumbnail || resolveYouTubeThumbnail(job.url);
@@ -1078,12 +1174,19 @@ const renderQueue = () => {
         item.append(main);
         els.queueList.appendChild(item);
     });
+    if (focusedJobId) {
+        const restoredItem = Array.from(els.queueList.children).find(item => item.dataset.jobId === focusedJobId);
+        restoredItem?.querySelector(focusedMoreButton ? '.pf-queue-more-btn' : '.pf-queue-title')?.focus({ preventScroll: true });
+    }
 
     if (state.contextMenuJobId && !state.jobs.has(state.contextMenuJobId)) {
         hideQueueContextMenu();
     }
     syncQueueContextMenuState();
-    els.queueBadge.textContent = `${state.queueIds.length} queued`;
+    const activeCount = items.filter(job => queueBusyJobStates.has(job.state)).length;
+    els.queueBadge.textContent = `${state.queueIds.length} waiting · ${activeCount} active`;
+    els.queueEmptyHint.hidden = items.length > 0;
+    els.queueList.hidden = items.length === 0;
     renderQueueControls();
 };
 
@@ -1162,6 +1265,29 @@ const updateHistoryActions = () => {
     els.loadMoreHistoryBtn.hidden = !state.historyHasMore;
 };
 
+const formatHistorySource = source => {
+    const name = `${source || 'unknown'}`.trim().toLowerCase();
+    const known = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', twitch: 'Twitch', linkedin: 'LinkedIn', x: 'X' };
+    return known[name] || (name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Unknown');
+};
+
+const renderHistorySources = sourceCounts => {
+    const fragment = document.createDocumentFragment();
+    for (const entry of Array.isArray(sourceCounts) ? sourceCounts : []) {
+        const count = Number(entry?.count);
+        if (!Number.isFinite(count) || count <= 0) continue;
+        const row = document.createElement('li');
+        const name = document.createElement('span');
+        name.textContent = formatHistorySource(entry?.source);
+        const value = document.createElement('strong');
+        value.textContent = count.toLocaleString();
+        row.append(name, value);
+        fragment.appendChild(row);
+    }
+    els.historySourcesList.replaceChildren(fragment);
+    els.historySourcesEmpty.hidden = els.historySourcesList.childElementCount > 0;
+};
+
 const renderHistoryStats = async () => {
     if (!invoke) return;
 
@@ -1170,6 +1296,7 @@ const renderHistoryStats = async () => {
         els.historyVideoCount.textContent = Number(stats?.video_count || 0).toLocaleString();
         els.historyTotalSize.textContent = formatFileSize(stats?.total_file_size_bytes);
         els.historyTotalDuration.textContent = formatDuration(Number(stats?.total_duration_seconds || 0));
+        renderHistorySources(stats?.source_counts);
     } catch (err) {
         appendLog(`[history] ${err}`, true);
     }
@@ -1182,9 +1309,14 @@ const invalidateHistoryCache = () => {
 
 const createHistoryItem = entry => {
     const item = document.createElement('div');
-    item.className = `pf-list-card pf-list-card-layout pf-history-item ${entry.thumbnail ? '' : 'pf-no-media'}`;
+    item.className = 'pf-list-card pf-history-item';
+    const entryLabel = entry.title || entry.filename || entry.url || 'download';
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = `pf-history-open-btn pf-list-card-layout ${entry.thumbnail ? '' : 'pf-no-media'}`;
+    openBtn.setAttribute('aria-label', `Open downloaded file: ${entryLabel}`);
 
-    item.onclick = async () => {
+    openBtn.onclick = async () => {
         // Rust uses snake_case: output_path, not outputPath
         const outputPath = entry.output_path || entry.outputPath;
         if (outputPath && invoke) {
@@ -1204,7 +1336,7 @@ const createHistoryItem = entry => {
 
     const title = document.createElement('div');
     title.className = 'pf-history-title';
-    title.textContent = entry.title || entry.filename || entry.url;
+    title.textContent = entryLabel;
     content.appendChild(title);
 
     const meta = document.createElement('div');
@@ -1222,19 +1354,21 @@ const createHistoryItem = entry => {
     ]);
     content.appendChild(meta);
 
-    item.appendChild(content);
+    openBtn.appendChild(content);
 
     if (entry.thumbnail) {
         const thumb = document.createElement('div');
         thumb.className = 'pf-media-thumbnail pf-history-thumb';
         thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
-        item.appendChild(thumb);
+        openBtn.appendChild(thumb);
     }
+    item.appendChild(openBtn);
 
     const removeBtn = document.createElement('button');
     removeBtn.className = 'pf-icon-btn pf-icon-btn-danger pf-history-item-remove-btn';
     removeBtn.textContent = '×';
     removeBtn.title = 'Remove from history';
+    removeBtn.setAttribute('aria-label', `Remove from history: ${entryLabel}`);
     removeBtn.onclick = async event => {
         event.stopPropagation();
         try {
@@ -1267,12 +1401,21 @@ const renderHistory = async ({ append = false, force = false } = {}) => {
 
     if (!append) void renderHistoryStats();
     const requestedRevision = state.historyRevision;
+    const requestedQuery = state.historyQuery;
     let needsFollowUpRefresh = false;
     const offset = append ? state.historyOffset : 0;
     setHistoryLoading(true);
 
     try {
-        const page = await invoke('get_history', { limit: historyPageSize, offset });
+        const page = await invoke('get_history', {
+            limit: historyPageSize,
+            offset,
+            ...(requestedQuery ? { query: requestedQuery } : {}),
+        });
+        if (state.historyRevision !== requestedRevision) {
+            needsFollowUpRefresh = true;
+            return;
+        }
         const entries = Array.isArray(page) ? page : page?.entries || [];
         const hasMore = Array.isArray(page)
             ? entries.length === historyPageSize
@@ -1286,6 +1429,9 @@ const renderHistory = async ({ append = false, force = false } = {}) => {
             els.historyList.replaceChildren(fragment);
         }
 
+        els.historyHint.textContent = requestedQuery
+            ? `No history results for “${requestedQuery}”.`
+            : 'No history yet. Downloaded items will appear here.';
         els.historyHint.hidden = entries.length > 0 || append;
         state.historyOffset = offset + entries.length;
         state.historyHasMore = hasMore;
@@ -1294,6 +1440,7 @@ const renderHistory = async ({ append = false, force = false } = {}) => {
         state.historyDirty = needsFollowUpRefresh;
     } catch (err) {
         appendLog(`[history] ${err}`, true);
+        state.historyDirty = true;
     } finally {
         setHistoryLoading(false);
         updateHistoryActions();
@@ -1402,6 +1549,7 @@ const syncConfig = async () => {
         els.magicImportEnabled.checked = state.config.magic_import_enabled ?? true;
         els.cutAtTimestampEnabled.checked = state.config.cut_at_timestamp_enabled ?? true;
         syncMagicImportTriggerState();
+        updateDownloadOptionHints();
     } catch (err) {
         appendLog(`[config] ${err}`, true);
     }
@@ -1409,31 +1557,17 @@ const syncConfig = async () => {
 
 const persistSelectedPresetKey = async () => {
     const selectedPresetKey = getSelectedPresetKey();
-    state.config = {
-        ...(state.config || {}),
-        selected_preset_key: selectedPresetKey,
-    };
-
-    if (!invoke) return;
-
-    try {
-        state.config = await invoke('set_selected_preset_key', { presetKey: selectedPresetKey });
-    } catch (err) {
-        appendLog(`[config] ${err}`, true);
-    }
+    await saveSettings({ selected_preset_key: selectedPresetKey });
 };
 
 const persistInstagramCaptionSetting = async () => {
     const enabled = Boolean(els.saveInstagramCaptions.checked);
     els.saveInstagramCaptions.disabled = true;
     try {
-        state.config = await invoke('set_save_instagram_captions', { enabled });
-        appendLog(`[config] Instagram captions ${enabled ? 'enabled' : 'disabled'}`, false);
-    } catch (err) {
-        els.saveInstagramCaptions.checked = state.config?.save_instagram_captions ?? false;
-        appendLog(`[config] Instagram caption setting could not be saved: ${err}`, true);
+        await saveSettings({ save_instagram_captions: enabled });
     } finally {
         els.saveInstagramCaptions.disabled = false;
+        updateDownloadOptionHints();
     }
 };
 
@@ -1443,6 +1577,7 @@ const syncQueueStatus = async () => {
         const status = await invoke('get_queue_status');
         state.queueAutoStartEnabled = status?.auto_start ?? true;
         state.queueWorkerRunning = Boolean(status?.worker_running);
+        state.queuePaused = Boolean(status?.paused);
         renderQueueControls();
     } catch (err) {
         appendLog(`[queue] ${err}`, true);
@@ -1819,6 +1954,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     const durationSecondsForRequest = hasLoadedInfo ? state.info?.duration ?? null : null;
 
     try {
+        await configSaveQueue;
         const id = await invoke('enqueue_download', {
             request: {
                 url,
@@ -1860,6 +1996,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
 
         if (!options.preserveComposerState) {
             els.urlInput.value = '';
+            updateDownloadOptionHints();
             state.info = null;
             state.infoUrl = null;
             renderInfo();
@@ -1917,6 +2054,7 @@ const toggleQueueAutoStart = async () => {
         });
         state.queueAutoStartEnabled = status?.auto_start ?? !state.queueAutoStartEnabled;
         state.queueWorkerRunning = Boolean(status?.worker_running);
+        state.queuePaused = Boolean(status?.paused);
         renderQueueControls();
     } catch (err) {
         appendLog(`[queue] ${err}`, true);
@@ -1929,53 +2067,71 @@ const startQueueProcessing = async () => {
         const status = await invoke('start_queue');
         state.queueAutoStartEnabled = status?.auto_start ?? state.queueAutoStartEnabled;
         state.queueWorkerRunning = Boolean(status?.worker_running);
+        state.queuePaused = Boolean(status?.paused);
         renderQueueControls();
     } catch (err) {
         appendLog(`[queue] ${err}`, true);
     }
 };
 
-const saveSettings = async () => {
-    const selectedPresetKey = getSelectedPresetKey();
+const toggleQueuePause = async () => {
+    if (!invoke) return;
     try {
-        await invoke('set_config', {
-            config: {
-                yt_dlp_path: els.ytDlpPath.value.trim() || null,
-                default_output_dir: els.outputDir.value.trim() || null,
-                selected_preset_key: selectedPresetKey,
-                faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value),
-                download_video_with_transcript: Boolean(els.downloadVideoWithTranscript.checked),
-                notifications_enabled: Boolean(els.notificationsEnabled.checked),
-                save_instagram_captions: Boolean(els.saveInstagramCaptions.checked),
-                magic_import_enabled: Boolean(els.magicImportEnabled.checked),
-                cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
-                last_download_url: state.config?.last_download_url || null,
-            },
-        });
-        state.config = {
-            ...(state.config || {}),
-            yt_dlp_path: els.ytDlpPath.value.trim() || null,
-            default_output_dir: els.outputDir.value.trim() || null,
-            selected_preset_key: selectedPresetKey,
-            faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value),
-            download_video_with_transcript: Boolean(els.downloadVideoWithTranscript.checked),
-            notifications_enabled: Boolean(els.notificationsEnabled.checked),
-            save_instagram_captions: Boolean(els.saveInstagramCaptions.checked),
-            magic_import_enabled: Boolean(els.magicImportEnabled.checked),
-            cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
-            last_download_url: state.config?.last_download_url || null,
-        };
+        const status = await invoke(state.queuePaused ? 'resume_queue' : 'pause_queue');
+        state.queueAutoStartEnabled = status?.auto_start ?? state.queueAutoStartEnabled;
+        state.queueWorkerRunning = Boolean(status?.worker_running);
+        state.queuePaused = Boolean(status?.paused);
+        renderQueueControls();
+    } catch (err) {
+        appendLog(`[queue] ${err}`, true);
+    }
+};
+
+const saveSettings = async changes => {
+    if (!invoke) return false;
+    if (!state.config) {
+        try {
+            state.config = await invoke('get_config');
+        } catch (err) {
+            els.settingsSaveStatus.textContent = `Could not load settings: ${err}`;
+            els.settingsSaveStatus.classList.add('pf-status-error');
+            appendLog(`[config] ${err}`, true);
+            return false;
+        }
+    }
+    state.config = { ...state.config, ...changes };
+    const revision = ++configSaveRevision;
+    els.settingsSaveStatus.textContent = 'Saving changes…';
+    els.settingsSaveStatus.classList.remove('pf-status-error');
+
+    const queuedSave = configSaveQueue.then(() => invoke('set_config', { config: { ...state.config } }));
+    configSaveQueue = queuedSave.catch(() => {});
+
+    try {
+        await queuedSave;
+        if (revision === configSaveRevision) {
+            els.settingsSaveStatus.textContent = 'Changes saved. They apply to new downloads.';
+        }
         syncMagicImportTriggerState();
-        appendLog('[config] saved', false);
+        return true;
     } catch (err) {
         appendLog(`[config] ${err}`, true);
+        if (revision === configSaveRevision) {
+            await syncConfig();
+            els.settingsSaveStatus.textContent = `Could not save changes: ${err}`;
+            els.settingsSaveStatus.classList.add('pf-status-error');
+        }
+        return false;
     }
 };
 
 const pickDir = async () => {
     try {
         const result = await invoke('pick_output_dir');
-        if (result) els.outputDir.value = result;
+        if (result) {
+            els.outputDir.value = result;
+            await saveSettings({ default_output_dir: result });
+        }
     } catch (err) {
         appendLog(`[dir] ${err}`, true);
     }
@@ -2134,14 +2290,36 @@ const bindEvents = () => {
     window.addEventListener('focus', () => {
         void tryMagicImport();
     });
-    els.magicImportEnabled.addEventListener('change', syncMagicImportTriggerState);
+    els.magicImportEnabled.addEventListener('change', () => {
+        syncMagicImportTriggerState();
+        void saveSettings({ magic_import_enabled: els.magicImportEnabled.checked });
+    });
     els.saveInstagramCaptions.addEventListener('change', () => {
         void persistInstagramCaptionSetting();
+    });
+    els.cutAtTimestampEnabled.addEventListener('change', () => {
+        void saveSettings({ cut_at_timestamp_enabled: els.cutAtTimestampEnabled.checked });
+    });
+    els.notificationsEnabled.addEventListener('change', () => {
+        void saveSettings({ notifications_enabled: els.notificationsEnabled.checked });
+    });
+    els.fasterWhisperModel.addEventListener('change', () => {
+        void saveSettings({ faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value) });
+    });
+    els.downloadVideoWithTranscript.addEventListener('change', () => {
+        void saveSettings({ download_video_with_transcript: els.downloadVideoWithTranscript.checked });
+    });
+    els.outputDir.addEventListener('change', () => {
+        void saveSettings({ default_output_dir: els.outputDir.value.trim() || null });
+    });
+    els.ytDlpPath.addEventListener('change', () => {
+        void saveSettings({ yt_dlp_path: els.ytDlpPath.value.trim() || null });
     });
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
     els.presetSelect.addEventListener('change', () => {
         void persistSelectedPresetKey();
+        updateDownloadOptionHints();
     });
     els.importTxtBtn.addEventListener('click', () => {
         void importTxtLinks();
@@ -2149,13 +2327,18 @@ const bindEvents = () => {
     els.queueAutoStartBtn.addEventListener('click', () => {
         void toggleQueueAutoStart();
     });
+    els.queueCollapseBtn.addEventListener('click', toggleQueueCollapsed);
     els.startQueueBtn.addEventListener('click', () => {
         void startQueueProcessing();
+    });
+    els.pauseQueueBtn.addEventListener('click', () => {
+        void toggleQueuePause();
     });
 
     let urlInputDebounceTimer = null;
     els.urlInput.addEventListener('input', () => {
         const url = els.urlInput.value.trim();
+        updateDownloadOptionHints();
         if (!url) {
             loadInfoRequestId += 1;
             loadInfoPending = false;
@@ -2194,6 +2377,7 @@ const bindEvents = () => {
             loadInfoRequestId += 1;
             loadInfoPending = false;
             els.urlInput.value = '';
+            updateDownloadOptionHints();
             state.info = null;
             state.infoUrl = null;
             renderInfo();
@@ -2204,7 +2388,6 @@ const bindEvents = () => {
             return;
         }
     });
-    els.saveSettingsBtn.addEventListener('click', saveSettings);
     els.pickDirBtn.addEventListener('click', pickDir);
     els.openFolderBtn.addEventListener('click', openFolder);
     els.saveLinkDumpServerBtn.addEventListener('click', () => {
@@ -2232,11 +2415,27 @@ const bindEvents = () => {
     els.loadMoreHistoryBtn.addEventListener('click', () => {
         void renderHistory({ append: true });
     });
+    els.historySearchInput.addEventListener('input', () => {
+        if (historySearchTimer !== null) clearTimeout(historySearchTimer);
+        historySearchTimer = setTimeout(() => {
+            historySearchTimer = null;
+            const query = els.historySearchInput.value.trim();
+            if (query === state.historyQuery) return;
+            state.historyQuery = query;
+            invalidateHistoryCache();
+            void renderHistory({ force: true });
+        }, historySearchDelayMs);
+    });
     els.clearHistoryBtn.addEventListener('click', async () => {
         if (!invoke) return;
+        if (!window.confirm('Clear the entire history? Downloaded files will stay on disk.')) return;
 
         try {
             await invoke('clear_history');
+            if (historySearchTimer !== null) clearTimeout(historySearchTimer);
+            historySearchTimer = null;
+            els.historySearchInput.value = '';
+            state.historyQuery = '';
             invalidateHistoryCache();
             await renderHistory({ force: true });
         } catch (err) {
@@ -2301,7 +2500,13 @@ const bindEvents = () => {
         if (!target?.closest('.pf-queue-item')) hideQueueContextMenu();
     });
     document.addEventListener('keydown', event => {
-        if (event.key === 'Escape') hideQueueContextMenu();
+        if (event.key !== 'Escape' || els.queueContextMenu.hidden) return;
+        const jobId = state.contextMenuJobId;
+        hideQueueContextMenu();
+        Array.from(els.queueList.children)
+            .find(item => item.dataset.jobId === jobId)
+            ?.querySelector('.pf-queue-more-btn')
+            ?.focus({ preventScroll: true });
     });
     window.addEventListener('resize', hideQueueContextMenu);
     window.addEventListener('blur', hideQueueContextMenu);
@@ -2332,6 +2537,7 @@ const bindBackendEvents = async () => {
     await listen('queue:status', event => {
         state.queueAutoStartEnabled = event.payload?.auto_start ?? true;
         state.queueWorkerRunning = Boolean(event.payload?.worker_running);
+        state.queuePaused = Boolean(event.payload?.paused);
         renderQueueControls();
     });
 
@@ -2360,6 +2566,7 @@ const bindBackendEvents = async () => {
         const { id, state: status, output_path, exit_code, error } = event.payload;
         if (state.suppressedJobIds.has(id)) return;
         const patch = { state: status };
+        if (error) patch.error = error;
         if (output_path) patch.outputPath = output_path;
         if (status === 'success') {
             patch.percent = 100;

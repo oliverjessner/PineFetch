@@ -3,14 +3,15 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
-cd "$SCRIPT_DIR"
+REPO_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_DIR"
 
 RELEASE_REPO="oliverjessner/PineFetch"
 BUNDLE_DIR="src-tauri/target/release/bundle"
 APP="$BUNDLE_DIR/macos/PineFetch.app"
 DMG_DIR="$BUNDLE_DIR/dmg"
-LOCAL_CHANGELOG="changelog.md"
-HOMEBREW_TAP_DIR=${HOMEBREW_TAP_DIR:-"$SCRIPT_DIR/../homebrew-tap"}
+LOCAL_CHANGELOG="docs/changelog.md"
+HOMEBREW_TAP_DIR=${HOMEBREW_TAP_DIR:-"$REPO_DIR/../homebrew-tap"}
 TMP_CHANGELOG=$(mktemp)
 TMP_RELEASE_NOTES=$(mktemp)
 

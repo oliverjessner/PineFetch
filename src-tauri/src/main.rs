@@ -49,6 +49,8 @@ struct AppConfig {
     faster_whisper_model: String,
     #[serde(default)]
     download_video_with_transcript: bool,
+    #[serde(default)]
+    save_instagram_captions: bool,
     #[serde(default = "default_magic_import_enabled")]
     magic_import_enabled: bool,
     #[serde(default = "default_cut_at_timestamp_enabled")]
@@ -67,6 +69,7 @@ impl Default for AppConfig {
             selected_preset_key: Some(DEFAULT_DOWNLOAD_PRESET_KEY.to_string()),
             faster_whisper_model: default_faster_whisper_model(),
             download_video_with_transcript: false,
+            save_instagram_captions: false,
             magic_import_enabled: default_magic_import_enabled(),
             cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
@@ -117,6 +120,8 @@ struct DownloadJob {
     faster_whisper_model: String,
     #[serde(default)]
     download_video_with_transcript: bool,
+    #[serde(default)]
+    save_instagram_captions: bool,
     title: Option<String>,
     uploader: Option<String>,
     thumbnail: Option<String>,
@@ -591,6 +596,23 @@ fn set_selected_preset_key(
 }
 
 #[tauri::command]
+fn set_save_instagram_captions(state: State<AppState>, enabled: bool) -> Result<AppConfig, String> {
+    let next_config = {
+        let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        let mut cfg = cfg.clone();
+        cfg.save_instagram_captions = enabled;
+        cfg
+    };
+
+    save_config_to_db(state.inner(), &next_config)?;
+    {
+        let mut cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
+        *cfg = next_config.clone();
+    }
+    Ok(next_config)
+}
+
+#[tauri::command]
 fn cache_last_download_url(state: State<AppState>, url: String) -> Result<(), String> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
@@ -897,11 +919,12 @@ fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<Down
         request.cut_start_time,
         &request.url,
     );
-    let (faster_whisper_model, download_video_with_transcript) = {
+    let (faster_whisper_model, download_video_with_transcript, save_instagram_captions) = {
         let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
         (
             normalize_faster_whisper_model(&cfg.faster_whisper_model),
             cfg.download_video_with_transcript,
+            cfg.save_instagram_captions,
         )
     };
     let id = Uuid::new_v4().to_string();
@@ -916,6 +939,7 @@ fn build_download_job(state: &AppState, request: DownloadRequest) -> Result<Down
         transcribe_timestamps: request.transcribe_timestamps,
         faster_whisper_model,
         download_video_with_transcript,
+        save_instagram_captions,
         title: request.title,
         uploader: request.uploader,
         thumbnail: request.thumbnail,
@@ -1655,6 +1679,8 @@ fn run_download_job(
     let deno_path = resolve_deno_executable(app);
     let output_template = build_output_template(&job.output_dir, job.filename_suffix.as_deref());
     let output_template_for_fallback = output_template.clone();
+    let save_instagram_captions =
+        job.save_instagram_captions && detect_platform(&job.url).as_deref() == Some("instagram");
 
     let mut args = vec![
         "--no-playlist".to_string(),
@@ -1670,6 +1696,11 @@ fn run_download_job(
         "-o".to_string(),
         output_template,
     ];
+
+    if save_instagram_captions {
+        args.push("--print".to_string());
+        args.push("after_move:pinefetch_caption:%(.{filepath,description})j".to_string());
+    }
 
     let needs_ffmpeg = job.extract_audio
         || job.transcribe_text
@@ -1740,22 +1771,26 @@ fn run_download_job(
     let progress_re = Regex::new(r"\[download\]\s+([\d\.]+)%.*?at\s+([^\s]+).*?ETA\s+([^\s]+)")
         .map_err(|e| format!("Regex error: {e}"))?;
     let output_path_capture: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let caption_capture: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
 
     let app_stdout = app.clone();
     let id_stdout = job.id.clone();
     let output_path_for_stdout = output_path_capture.clone();
+    let captions_for_stdout = caption_capture.clone();
     let handle_out = thread::spawn(move || {
         if let Some(out) = stdout {
             let reader = BufReader::new(out);
             for line in reader.lines().flatten() {
-                emit_log(
-                    &app_stdout,
-                    LogEvent {
-                        id: id_stdout.clone(),
-                        line: line.clone(),
-                        is_error: false,
-                    },
-                );
+                if !line.starts_with("pinefetch_caption:") {
+                    emit_log(
+                        &app_stdout,
+                        LogEvent {
+                            id: id_stdout.clone(),
+                            line: line.clone(),
+                            is_error: false,
+                        },
+                    );
+                }
 
                 if let Some(caps) = progress_re.captures(&line) {
                     let percent = caps.get(1).and_then(|m| m.as_str().parse::<f32>().ok());
@@ -1775,6 +1810,11 @@ fn run_download_job(
                 if let Some(path_line) = parse_yt_dlp_filepath(&line) {
                     if let Ok(mut slot) = output_path_for_stdout.lock() {
                         slot.push(path_line);
+                    }
+                }
+                if let Some(caption) = parse_instagram_caption_line(&line) {
+                    if let Ok(mut captions) = captions_for_stdout.lock() {
+                        captions.push(caption);
                     }
                 }
             }
@@ -1836,6 +1876,7 @@ fn run_download_job(
             );
         }
 
+        let original_output_path = output_path.clone();
         if let Some(cut_start_time) = job.cut_start_time {
             let trimmed_path = trim_downloaded_file(
                 app,
@@ -1846,12 +1887,73 @@ fn run_download_job(
             )?;
             output_path = Some(trimmed_path);
         }
+
+        if save_instagram_captions {
+            let captions = caption_capture
+                .lock()
+                .map_err(|_| "Caption capture lock poisoned")?;
+            if captions.is_empty() {
+                emit_log(
+                    app,
+                    LogEvent {
+                        id: job.id.clone(),
+                        line: "[caption] Instagram did not provide a caption for this download"
+                            .to_string(),
+                        is_error: false,
+                    },
+                );
+            }
+            for (downloaded_path, caption) in captions.iter() {
+                let final_path = if original_output_path.as_deref() == Some(downloaded_path) {
+                    output_path.as_deref().unwrap_or(downloaded_path)
+                } else {
+                    downloaded_path
+                };
+                let caption_path = write_instagram_caption_sidecar(Path::new(final_path), caption)?;
+                emit_log(
+                    app,
+                    LogEvent {
+                        id: job.id.clone(),
+                        line: format!("[caption] saved: {}", caption_path.display()),
+                        is_error: false,
+                    },
+                );
+            }
+        }
     }
 
     Ok(DownloadRunResult {
         exit_code: status.code().unwrap_or(-1),
         output_path,
     })
+}
+
+fn parse_instagram_caption_line(line: &str) -> Option<(String, String)> {
+    let json = line.strip_prefix("pinefetch_caption:")?;
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let path = value.get("filepath")?.as_str()?.trim();
+    let caption = value.get("description")?.as_str()?;
+    if path.is_empty() || caption.trim().is_empty() {
+        return None;
+    }
+    Some((path.to_string(), caption.to_string()))
+}
+
+fn write_instagram_caption_sidecar(media_path: &Path, caption: &str) -> Result<PathBuf, String> {
+    if !media_path.is_file() {
+        return Err(format!(
+            "Caption media file not found: {}",
+            media_path.display()
+        ));
+    }
+    let caption_path = media_path.with_extension("caption.txt");
+    fs::write(&caption_path, caption).map_err(|e| {
+        format!(
+            "Failed to save Instagram caption to {}: {e}",
+            caption_path.display()
+        )
+    })?;
+    Ok(caption_path)
 }
 
 fn effective_download_job(job: &DownloadJob) -> DownloadJob {
@@ -2081,7 +2183,7 @@ fn is_format_part_path(path: &Path) -> bool {
 
 fn parse_yt_dlp_filepath(line: &str) -> Option<String> {
     let trimmed = line.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || trimmed.starts_with("pinefetch_caption:") {
         return None;
     }
 
@@ -3200,7 +3302,7 @@ fn load_legacy_config_json(app: &AppHandle) -> Option<AppConfig> {
 
 fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
     conn.query_row(
-        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled
+        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_instagram_captions
          FROM app_config
          WHERE id = 1",
         [],
@@ -3215,6 +3317,7 @@ fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
                 cut_at_timestamp_enabled: row.get::<_, i64>(6)? != 0,
                 last_download_url: row.get(7)?,
                 notifications_enabled: row.get::<_, i64>(8)? != 0,
+                save_instagram_captions: row.get::<_, i64>(9)? != 0,
             }))
         },
     )
@@ -3238,6 +3341,7 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             cut_at_timestamp_enabled,
             last_download_url,
             notifications_enabled,
+            save_instagram_captions,
             created_at,
             updated_at
         ) VALUES (
@@ -3251,6 +3355,7 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             ?7,
             ?8,
             ?9,
+            ?10,
             datetime('now'),
             datetime('now')
         )
@@ -3264,6 +3369,7 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             cut_at_timestamp_enabled = excluded.cut_at_timestamp_enabled,
             last_download_url = excluded.last_download_url,
             notifications_enabled = excluded.notifications_enabled,
+            save_instagram_captions = excluded.save_instagram_captions,
             updated_at = datetime('now')",
         params![
             config.yt_dlp_path,
@@ -3283,6 +3389,7 @@ fn upsert_app_config_in_conn(conn: &Connection, config: &AppConfig) -> rusqlite:
             },
             config.last_download_url,
             config.notifications_enabled,
+            config.save_instagram_captions,
         ],
     )?;
     Ok(())
@@ -3383,6 +3490,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             selected_preset_key TEXT,
             faster_whisper_model TEXT NOT NULL DEFAULT 'base',
             download_video_with_transcript INTEGER NOT NULL DEFAULT 0,
+            save_instagram_captions INTEGER NOT NULL DEFAULT 0,
             magic_import_enabled INTEGER NOT NULL DEFAULT 1,
             cut_at_timestamp_enabled INTEGER NOT NULL DEFAULT 1,
             last_download_url TEXT,
@@ -3467,6 +3575,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_app_config_notifications_enabled_column(conn)?;
     ensure_app_config_faster_whisper_model_column(conn)?;
     ensure_app_config_download_video_with_transcript_column(conn)?;
+    ensure_app_config_save_instagram_captions_column(conn)?;
     ensure_history_entries_timestamp_column(conn)?;
     ensure_history_entries_duration_seconds_column(conn)?;
     ensure_history_entries_file_size_bytes_column(conn)?;
@@ -3518,6 +3627,21 @@ fn ensure_app_config_download_video_with_transcript_column(
     if !exists {
         conn.execute(
             "ALTER TABLE app_config ADD COLUMN download_video_with_transcript INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_app_config_save_instagram_captions_column(conn: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'save_instagram_captions')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute(
+            "ALTER TABLE app_config ADD COLUMN save_instagram_captions INTEGER NOT NULL DEFAULT 0",
             [],
         )?;
     }
@@ -4742,6 +4866,7 @@ fn main() {
             get_config,
             set_config,
             set_selected_preset_key,
+            set_save_instagram_captions,
             cache_last_download_url,
             pick_output_dir,
             pick_txt_file,
@@ -4903,6 +5028,35 @@ mod tests {
     }
 
     #[test]
+    fn saves_instagram_caption_as_separate_utf8_text_file() {
+        let directory = std::env::temp_dir().join(format!("pinefetch-caption-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let media_path = directory.join("post.mp4");
+        fs::write(&media_path, b"video").unwrap();
+        let line = format!(
+            "pinefetch_caption:{}",
+            serde_json::json!({
+                "filepath": media_path,
+                "description": "Grüße aus Wien 👋\n#urlaub"
+            })
+        );
+        let (path, caption) = parse_instagram_caption_line(&line).unwrap();
+        let caption_path = write_instagram_caption_sidecar(Path::new(&path), &caption).unwrap();
+
+        assert_eq!(caption_path, directory.join("post.caption.txt"));
+        assert_eq!(
+            fs::read_to_string(&caption_path).unwrap(),
+            "Grüße aus Wien 👋\n#urlaub"
+        );
+        assert!(parse_yt_dlp_filepath(&line).is_none());
+        assert!(parse_instagram_caption_line(
+            "pinefetch_caption:{\"filepath\":\"x\",\"description\":\"\"}"
+        )
+        .is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn parses_yt_dlp_filepath_output() {
         assert_eq!(
             parse_yt_dlp_filepath("/tmp/pinefetch/video.mp4").as_deref(),
@@ -5031,6 +5185,7 @@ mod tests {
         );
         assert_eq!(config.faster_whisper_model, DEFAULT_FASTER_WHISPER_MODEL);
         assert!(!config.download_video_with_transcript);
+        assert!(!config.save_instagram_captions);
         assert!(config.magic_import_enabled);
         assert!(config.cut_at_timestamp_enabled);
         assert!(config.yt_dlp_path.is_none());
@@ -5048,6 +5203,7 @@ mod tests {
             selected_preset_key: Some("audio_mp3".to_string()),
             faster_whisper_model: "medium".to_string(),
             download_video_with_transcript: true,
+            save_instagram_captions: true,
             magic_import_enabled: false,
             cut_at_timestamp_enabled: false,
             last_download_url: Some("https://example.com/watch".to_string()),
@@ -5065,6 +5221,7 @@ mod tests {
         assert_eq!(loaded.selected_preset_key.as_deref(), Some("audio_mp3"));
         assert_eq!(loaded.faster_whisper_model, "medium");
         assert!(loaded.download_video_with_transcript);
+        assert!(loaded.save_instagram_captions);
         assert!(loaded.notifications_enabled);
         assert!(!loaded.magic_import_enabled);
         assert!(!loaded.cut_at_timestamp_enabled);
@@ -5175,6 +5332,7 @@ mod tests {
             transcribe_timestamps: false,
             faster_whisper_model: DEFAULT_FASTER_WHISPER_MODEL.to_string(),
             download_video_with_transcript: false,
+            save_instagram_captions: false,
             title: None,
             uploader: None,
             thumbnail: None,
@@ -5349,14 +5507,17 @@ mod tests {
         assert_eq!(config.faster_whisper_model, DEFAULT_FASTER_WHISPER_MODEL);
         assert!(!config.download_video_with_transcript);
         assert!(!config.notifications_enabled);
+        assert!(!config.save_instagram_captions);
         // Re-running migrations preserves the user's choice.
         let config = AppConfig {
             notifications_enabled: true,
+            save_instagram_captions: true,
             ..config
         };
         upsert_app_config_in_conn(&conn, &config).unwrap();
         run_link_dump_migrations(&conn).unwrap();
         assert!(load_config_from_db(&conn).unwrap().notifications_enabled);
+        assert!(load_config_from_db(&conn).unwrap().save_instagram_captions);
     }
 
     #[test]

@@ -1,3 +1,8 @@
+# 1.9.1
+
+- captions
+- import instagram urls
+
 # 1.9.0
 
 - notifications

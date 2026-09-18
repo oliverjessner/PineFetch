@@ -36,6 +36,7 @@ const els = Object.seal({
     pickDirBtn: document.getElementById('pickDirBtn'),
     saveSettingsBtn: document.getElementById('saveSettingsBtn'),
     notificationsEnabled: document.getElementById('notificationsEnabled'),
+    saveInstagramCaptions: document.getElementById('saveInstagramCaptions'),
     openFolderBtn: document.getElementById('openFolderBtn'),
     outputDir: document.getElementById('outputDir'),
     ytDlpPath: document.getElementById('ytDlpPath'),
@@ -535,6 +536,11 @@ const isTikTokHostname = hostname => {
     return host === 'tiktok.com' || host.endsWith('.tiktok.com');
 };
 
+const isInstagramHostname = hostname => {
+    const host = normalizeHostname(hostname);
+    return host === 'instagram.com' || host.endsWith('.instagram.com') || host === 'instagr.am' || host.endsWith('.instagr.am');
+};
+
 const getYouTubeVideoIdFromParsedUrl = parsed => {
     const host = normalizeHostname(parsed.hostname).replace(/^www\./, '');
     const pathParts = parsed.pathname.split('/').filter(Boolean);
@@ -632,7 +638,33 @@ const normalizeTikTokUrl = value => {
     }
 };
 
-const normalizeTxtImportUrl = value => normalizeYouTubeUrl(value) || normalizeTikTokUrl(value);
+const normalizeInstagramUrl = value => {
+    const trimmed = `${value || ''}`.trim();
+    if (!trimmed) return null;
+
+    try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        if (!isInstagramHostname(parsed.hostname)) return null;
+
+        const pathParts = parsed.pathname.split('/').filter(Boolean);
+        const routeIndex = ['p', 'reel', 'tv'].includes(pathParts[0]?.toLowerCase()) ? 0 : 1;
+        const route = pathParts[routeIndex]?.toLowerCase();
+        const contentCode = pathParts[routeIndex + 1];
+        if (!['p', 'reel', 'tv'].includes(route) || !/^[a-zA-Z0-9_-]{3,128}$/.test(contentCode || '')) {
+            return null;
+        }
+
+        return {
+            url: `https://www.instagram.com/${route}/${contentCode}/`,
+            key: `instagram:${contentCode}`,
+        };
+    } catch {
+        return null;
+    }
+};
+
+const normalizeTxtImportUrl = value => normalizeYouTubeUrl(value) || normalizeTikTokUrl(value) || normalizeInstagramUrl(value);
 
 const parseTxtImportLinks = content => {
     const rawContent = `${content || ''}`;
@@ -1361,6 +1393,7 @@ const syncConfig = async () => {
     try {
         state.config = await invoke('get_config');
         els.notificationsEnabled.checked = state.config.notifications_enabled ?? false;
+        els.saveInstagramCaptions.checked = state.config.save_instagram_captions ?? false;
         els.outputDir.value = state.config.default_output_dir || '';
         els.ytDlpPath.value = state.config.yt_dlp_path || defaultYtDlpPath;
         els.fasterWhisperModel.value = normalizeFasterWhisperModel(state.config.faster_whisper_model);
@@ -1387,6 +1420,20 @@ const persistSelectedPresetKey = async () => {
         state.config = await invoke('set_selected_preset_key', { presetKey: selectedPresetKey });
     } catch (err) {
         appendLog(`[config] ${err}`, true);
+    }
+};
+
+const persistInstagramCaptionSetting = async () => {
+    const enabled = Boolean(els.saveInstagramCaptions.checked);
+    els.saveInstagramCaptions.disabled = true;
+    try {
+        state.config = await invoke('set_save_instagram_captions', { enabled });
+        appendLog(`[config] Instagram captions ${enabled ? 'enabled' : 'disabled'}`, false);
+    } catch (err) {
+        els.saveInstagramCaptions.checked = state.config?.save_instagram_captions ?? false;
+        appendLog(`[config] Instagram caption setting could not be saved: ${err}`, true);
+    } finally {
+        els.saveInstagramCaptions.disabled = false;
     }
 };
 
@@ -1899,6 +1946,7 @@ const saveSettings = async () => {
                 faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value),
                 download_video_with_transcript: Boolean(els.downloadVideoWithTranscript.checked),
                 notifications_enabled: Boolean(els.notificationsEnabled.checked),
+                save_instagram_captions: Boolean(els.saveInstagramCaptions.checked),
                 magic_import_enabled: Boolean(els.magicImportEnabled.checked),
                 cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
                 last_download_url: state.config?.last_download_url || null,
@@ -1912,6 +1960,7 @@ const saveSettings = async () => {
             faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value),
             download_video_with_transcript: Boolean(els.downloadVideoWithTranscript.checked),
             notifications_enabled: Boolean(els.notificationsEnabled.checked),
+            save_instagram_captions: Boolean(els.saveInstagramCaptions.checked),
             magic_import_enabled: Boolean(els.magicImportEnabled.checked),
             cut_at_timestamp_enabled: Boolean(els.cutAtTimestampEnabled.checked),
             last_download_url: state.config?.last_download_url || null,
@@ -1988,7 +2037,7 @@ const importTxtLinks = async () => {
         }
 
         if (parsed.items.length === 0) {
-            const message = `No valid YouTube or TikTok links found. Skipped ${pluralize(
+            const message = `No valid YouTube, TikTok, or Instagram links found. Skipped ${pluralize(
                 parsed.invalidCount,
                 'invalid line'
             )} and ${pluralize(parsed.duplicateCount, 'duplicate')}.`;
@@ -2086,6 +2135,9 @@ const bindEvents = () => {
         void tryMagicImport();
     });
     els.magicImportEnabled.addEventListener('change', syncMagicImportTriggerState);
+    els.saveInstagramCaptions.addEventListener('change', () => {
+        void persistInstagramCaptionSetting();
+    });
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
     els.presetSelect.addEventListener('change', () => {

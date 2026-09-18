@@ -132,15 +132,15 @@ Successful transcripts are also stored in SQLite table `transcriptions`. Each ro
 
 The timestamped preset uses segment-level timestamps and keeps the regular text preset unchanged.
 
-## Import YouTube and TikTok links from TXT
+## Import YouTube, TikTok, and Instagram links from TXT
 
-Use **Import TXT** on the Download screen to add multiple YouTube and TikTok videos to the queue at once:
+Use **Import TXT** on the Download screen to add multiple YouTube, TikTok, and Instagram videos to the queue at once:
 
 1. Select the preset you want to use.
 2. Click **Import TXT** and choose a `.txt` file.
 3. PineFetch validates the file and queues every new supported link using the selected preset and output folder.
 
-The file expects one YouTube or TikTok URL per line. Empty lines and lines beginning with `#` are ignored, so comments and groups can be added freely:
+The file expects one YouTube, TikTok, or Instagram URL per line. Empty lines and lines beginning with `#` are ignored, so comments and groups can be added freely:
 
 ```text
 # Tutorials
@@ -153,9 +153,13 @@ https://www.youtube.com/watch?v=ghi789&t=1m30s
 # TikTok
 https://www.tiktok.com/@creator/video/7412345678901234567
 https://vm.tiktok.com/ZMexample/
+
+# Instagram
+https://www.instagram.com/reel/ABC_def-123/?igsh=example
+https://www.instagram.com/p/PostCode9/
 ```
 
-Supported URLs include regular YouTube links as well as `youtu.be`, Shorts, Live, and Embed variants. TikTok video, photo, and short share links from `vm.tiktok.com`, `vt.tiktok.com`, or `/t/...` are also supported. Invalid lines are skipped. Duplicate URLs in the same file or already present in the current queue are not added again. The same YouTube video with a different start timestamp is treated as a separate queue item. When **Cut at timestamp** is enabled, timestamps in imported YouTube URLs are handled like manually queued links.
+Supported URLs include regular YouTube links as well as `youtu.be`, Shorts, Live, and Embed variants. TikTok video, photo, and short share links from `vm.tiktok.com`, `vt.tiktok.com`, or `/t/...` are also supported. Instagram post (`/p/`), Reel (`/reel/`), and TV (`/tv/`) links are supported. Invalid lines are skipped. Duplicate URLs in the same file or already present in the current queue are not added again. The same YouTube video with a different start timestamp is treated as a separate queue item. When **Cut at timestamp** is enabled, timestamps in imported YouTube URLs are handled like manually queued links.
 
 After the import, PineFetch reports how many links were added, invalid, duplicated, or failed to queue. Imported items follow the current queue auto-start setting.
 

@@ -3,3 +3,4 @@
 - better search
 - view captions in history
 - md5 for videos, pinefetch_version
+- tagging system for projects

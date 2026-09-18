@@ -2023,6 +2023,8 @@ mod tests {
             ("https://www.instagram.com/reel/ABC123/", "instagram"),
             ("https://www.facebook.com/watch/?v=123456", "facebook"),
             ("https://fb.watch/ABC123/", "facebook"),
+            ("https://x.com/creator/status/123456789", "x"),
+            ("https://twitter.com/creator/status/123456789", "x"),
         ] {
             assert_eq!(caption_platform(url, true).as_deref(), Some(platform));
             assert_eq!(caption_platform(url, false), None);

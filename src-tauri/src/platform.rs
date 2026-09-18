@@ -40,7 +40,7 @@ pub(super) fn caption_platform(url: &str, enabled: bool) -> Option<String> {
     detect_platform(url).filter(|platform| {
         matches!(
             platform.as_str(),
-            "instagram" | "tiktok" | "youtube" | "facebook"
+            "instagram" | "tiktok" | "youtube" | "facebook" | "x"
         )
     })
 }

@@ -613,6 +613,7 @@ const updateDownloadOptionHints = () => {
         tiktok: 'TikTok',
         instagram: 'Instagram',
         facebook: 'Facebook',
+        x: 'X',
     };
     const captionPlatformName = captionPlatformNames[captionPlatform];
     els.captionHint.hidden = !captionPlatformName;

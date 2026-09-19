@@ -3,5 +3,5 @@
 - better search
 - view captions in history
 - md5 for videos
-- tagging system for projects
+- collection system for projects
 - cli --version and, PineFetch --help showing the version

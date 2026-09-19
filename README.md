@@ -21,6 +21,7 @@ No account. No cloud. Your files stay on your machine.
 - Queue multiple downloads
 - Import lists of links from TXT files
 - Keep a local download history
+- Inspect stored metadata, transcripts and captions from History
 - Control PineFetch from the command line
 - Send links to PineFetch through its local Link Dump API
 
@@ -58,6 +59,10 @@ PineFetch can import YouTube, TikTok and Instagram URLs from a simple TXT file a
 Your completed downloads are stored in a local history with useful stats like total downloads, storage used and runtime.
 
 ![PineFetch history screen](src/images/mockups/history.webp)
+
+Right-click a History entry and choose **Show More Data** to inspect its metadata, transcript and saved caption tracks. Transcript and caption content is loaded only when you open the corresponding tab.
+
+![PineFetch History Details screen](src/images/mockups/more_data.webp)
 
 ## CLI
 

@@ -1,3 +1,5 @@
+import { createHistoryDetailsView } from './history-details-view.js';
+
 export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, formatDuration, detectPlatform, appendTextSpans, isActive }) => {
     const state = Object.seal({
         historyOffset: 0,
@@ -14,6 +16,14 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
     const historyPageSize = 20;
     const historySearchDelayMs = 250;
     let historySearchTimer = null;
+    const historyDetailsView = createHistoryDetailsView({
+        els,
+        invoke,
+        appendLog,
+        formatFileSize,
+        formatDuration,
+        detectPlatform,
+    });
 
     const formatHistoryDate = timestamp => {
         if (!timestamp) return '-';
@@ -163,6 +173,7 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
     const createHistoryItem = entry => {
         const item = document.createElement('div');
         item.className = 'pf-list-card pf-history-item';
+        item.dataset.historyId = entry.id;
         const entryLabel = entry.title || entry.filename || entry.url || 'download';
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
@@ -314,6 +325,7 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
     };
 
     const bindEvents = () => {
+        historyDetailsView.bindEvents();
         const searchPlaceholders = {
             title: 'Search titles',
             description: 'Search descriptions',
@@ -385,6 +397,7 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
     };
 
     const onChanged = () => {
+        historyDetailsView.hideContextMenu();
         invalidateHistoryCache();
         if (isActive()) void renderHistory({ force: true });
     };

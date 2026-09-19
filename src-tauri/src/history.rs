@@ -196,6 +196,168 @@ pub(super) fn history_search_pattern(query: Option<&str>) -> Option<String> {
     Some(format!("%{escaped}%"))
 }
 
+fn path_extension(path: &str) -> Option<String> {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::trim)
+        .filter(|extension| !extension.is_empty())
+        .map(str::to_ascii_lowercase)
+}
+
+pub(super) fn get_history_details_from_db(
+    state: &AppState,
+    id: &str,
+) -> Result<Option<HistoryDetails>, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let entry = conn
+        .query_row(
+            "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, sha256, medium, source, platform, output_path, pinefetch_version, created_at, completed_at
+             FROM history_entries WHERE id = ?1",
+            params![id],
+            |row| {
+                let created_at: i64 = row.get(16)?;
+                let completed_at: Option<i64> = row.get(17)?;
+                Ok(HistoryEntry {
+                    id: row.get(0)?,
+                    url: row.get(1)?,
+                    title: row.get(2)?,
+                    uploader: row.get(3)?,
+                    filename: row.get(4)?,
+                    thumbnail: row.get(5)?,
+                    upload_date: row.get(6)?,
+                    timestamp: row.get(7)?,
+                    duration_seconds: row.get(8)?,
+                    file_size_bytes: row.get(9)?,
+                    sha256: row.get(10)?,
+                    medium: row.get(11)?,
+                    source: row.get(12)?,
+                    platform: row.get(13)?,
+                    output_path: row.get(14)?,
+                    pinefetch_version: row.get(15)?,
+                    created_at: i64_to_millis(created_at),
+                    completed_at: optional_i64_to_millis(completed_at),
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| format!("History details read failed: {e}"))?;
+    let Some(entry) = entry.map(normalize_history_entry) else {
+        return Ok(None);
+    };
+
+    let output_file_available = entry
+        .output_path
+        .as_deref()
+        .is_some_and(|path| Path::new(path).is_file());
+    let file_extension = entry
+        .output_path
+        .as_deref()
+        .or(entry.filename.as_deref())
+        .and_then(path_extension);
+    let transcript = conn
+        .query_row(
+            "SELECT \"type\", language FROM transcriptions WHERE history_entry_id = ?1",
+            params![id],
+            |row| {
+                Ok(HistoryTranscriptSummary {
+                    transcription_type: row.get(0)?,
+                    language: trim_optional_string(row.get(1)?),
+                    file_available: output_file_available,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| format!("History details read failed: {e}"))?;
+
+    let mut statement = conn
+        .prepare(
+            "SELECT media_path, caption_path, sha256, created_at
+             FROM captions WHERE history_entry_id = ?1 ORDER BY created_at, media_path",
+        )
+        .map_err(|e| format!("History details read failed: {e}"))?;
+    let rows = statement
+        .query_map(params![id], |row| {
+            let caption_path: String = row.get(1)?;
+            let created_at: i64 = row.get(3)?;
+            Ok(HistoryCaptionSummary {
+                media_path: row.get(0)?,
+                format: path_extension(&caption_path),
+                file_available: Path::new(&caption_path).is_file(),
+                caption_path,
+                sha256: row.get(2)?,
+                created_at: i64_to_millis(created_at),
+            })
+        })
+        .map_err(|e| format!("History details read failed: {e}"))?;
+    let captions = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| format!("History details read failed: {e}"))?;
+
+    Ok(Some(HistoryDetails {
+        entry,
+        output_file_available,
+        file_extension,
+        transcript,
+        captions,
+    }))
+}
+
+pub(super) fn get_history_transcript_from_db(
+    state: &AppState,
+    id: &str,
+) -> Result<Option<HistoryTranscriptContent>, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.query_row(
+        "SELECT transcription.text, transcription.\"type\", transcription.language, history.output_path
+         FROM transcriptions AS transcription
+         JOIN history_entries AS history ON history.id = transcription.history_entry_id
+         WHERE transcription.history_entry_id = ?1",
+        params![id],
+        |row| {
+            let output_path: Option<String> = row.get(3)?;
+            Ok(HistoryTranscriptContent {
+                text: row.get(0)?,
+                transcription_type: row.get(1)?,
+                language: trim_optional_string(row.get(2)?),
+                file_available: output_path
+                    .as_deref()
+                    .is_some_and(|path| Path::new(path).is_file()),
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| format!("Transcript read failed: {e}"))
+}
+
+pub(super) fn get_history_caption_from_db(
+    state: &AppState,
+    id: &str,
+    media_path: &str,
+) -> Result<Option<HistoryCaptionContent>, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.query_row(
+        "SELECT media_path, caption_path, text, sha256, created_at
+         FROM captions WHERE history_entry_id = ?1 AND media_path = ?2",
+        params![id, media_path],
+        |row| {
+            let caption_path: String = row.get(1)?;
+            let created_at: i64 = row.get(4)?;
+            Ok(HistoryCaptionContent {
+                media_path: row.get(0)?,
+                format: path_extension(&caption_path),
+                file_available: Path::new(&caption_path).is_file(),
+                caption_path,
+                text: row.get(2)?,
+                sha256: row.get(3)?,
+                created_at: i64_to_millis(created_at),
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| format!("Caption read failed: {e}"))
+}
+
 #[cfg(test)]
 pub(super) fn list_history_entries_from_db(state: &AppState) -> Result<Vec<HistoryEntry>, String> {
     Ok(list_history_page_from_db(state, u32::MAX, 0)?.entries)

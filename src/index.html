@@ -451,6 +451,62 @@
                     Remove from queue
                 </button>
             </div>
+
+            <div id="historyContextMenu" class="pf-menu pf-menu-popover pf-history-context-menu" role="menu" aria-label="History actions" hidden>
+                <button id="historyShowMoreDataBtn" class="pf-menu-item" type="button" role="menuitem">
+                    Show More Data
+                </button>
+            </div>
+
+            <dialog id="historyDetailsDialog" class="pf-history-details-dialog" aria-labelledby="historyDetailsTitle">
+                <div class="pf-history-details-modal">
+                    <header class="pf-history-details-header">
+                        <div class="pf-panel-heading">
+                            <h2 id="historyDetailsTitle" class="pf-section-title">History Details</h2>
+                            <p id="historyDetailsSubtitle" class="pf-subtitle"></p>
+                        </div>
+                        <button id="historyDetailsCloseBtn" class="pf-icon-btn" type="button" aria-label="Close history details">×</button>
+                    </header>
+
+                    <p id="historyDetailsStatus" class="pf-status" role="status" aria-live="polite"></p>
+
+                    <div id="historyDetailsContent" class="pf-history-details-content" hidden>
+                        <div id="historyDetailsTabs" class="pf-segmented pf-history-details-tabs" role="tablist" aria-label="History details">
+                            <button id="historyOverviewTab" class="pf-segmented-btn" type="button" role="tab" aria-selected="true" aria-controls="historyOverviewPanel" data-history-tab="overview">Overview</button>
+                            <button id="historyTranscriptTab" class="pf-segmented-btn" type="button" role="tab" aria-selected="false" aria-controls="historyTranscriptPanel" data-history-tab="transcript" hidden>Transcript</button>
+                            <button id="historyCaptionsTab" class="pf-segmented-btn" type="button" role="tab" aria-selected="false" aria-controls="historyCaptionsPanel" data-history-tab="captions" hidden>Captions</button>
+                        </div>
+
+                        <section id="historyOverviewPanel" class="pf-history-details-panel" role="tabpanel" aria-labelledby="historyOverviewTab">
+                            <dl id="historyOverviewList" class="pf-history-overview-list"></dl>
+                        </section>
+
+                        <section id="historyTranscriptPanel" class="pf-history-details-panel" role="tabpanel" aria-labelledby="historyTranscriptTab" hidden>
+                            <div class="pf-history-content-toolbar">
+                                <p id="historyTranscriptMeta" class="pf-muted"></p>
+                                <button id="historyTranscriptCopyBtn" class="pf-btn pf-btn-ghost" type="button" disabled>Copy</button>
+                            </div>
+                            <p id="historyTranscriptNotice" class="pf-hint" hidden></p>
+                            <p id="historyTranscriptStatus" class="pf-status" role="status" aria-live="polite"></p>
+                            <pre id="historyTranscriptText" class="pf-history-text-viewer" tabindex="0" hidden></pre>
+                        </section>
+
+                        <section id="historyCaptionsPanel" class="pf-history-details-panel" role="tabpanel" aria-labelledby="historyCaptionsTab" hidden>
+                            <div class="pf-history-content-toolbar">
+                                <label id="historyCaptionTrackField" class="pf-field pf-history-caption-track" for="historyCaptionTrackSelect" hidden>
+                                    <span class="pf-label">Caption track</span>
+                                    <select id="historyCaptionTrackSelect" class="pf-select"></select>
+                                </label>
+                                <button id="historyCaptionCopyBtn" class="pf-btn pf-btn-ghost" type="button" disabled>Copy</button>
+                            </div>
+                            <p id="historyCaptionMeta" class="pf-muted"></p>
+                            <p id="historyCaptionNotice" class="pf-hint" hidden></p>
+                            <p id="historyCaptionStatus" class="pf-status" role="status" aria-live="polite"></p>
+                            <pre id="historyCaptionText" class="pf-history-text-viewer" tabindex="0" hidden></pre>
+                        </section>
+                    </div>
+                </div>
+            </dialog>
         </div>
 
         <script type="module" src="main.js"></script>

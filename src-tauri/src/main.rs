@@ -255,6 +255,51 @@ struct HistoryPage {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct HistoryDetails {
+    entry: HistoryEntry,
+    output_file_available: bool,
+    file_extension: Option<String>,
+    transcript: Option<HistoryTranscriptSummary>,
+    captions: Vec<HistoryCaptionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct HistoryTranscriptSummary {
+    transcription_type: String,
+    language: Option<String>,
+    file_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct HistoryCaptionSummary {
+    media_path: String,
+    caption_path: String,
+    format: Option<String>,
+    sha256: Option<String>,
+    created_at: u64,
+    file_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct HistoryTranscriptContent {
+    text: String,
+    transcription_type: String,
+    language: Option<String>,
+    file_available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct HistoryCaptionContent {
+    media_path: String,
+    caption_path: String,
+    format: Option<String>,
+    sha256: Option<String>,
+    created_at: u64,
+    file_available: bool,
+    text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct HistoryStats {
     video_count: u64,
     total_duration_seconds: u64,
@@ -1005,6 +1050,31 @@ fn get_history(
 #[tauri::command]
 fn get_history_stats(state: State<AppState>) -> Result<HistoryStats, String> {
     get_history_stats_from_db(state.inner())
+}
+
+#[tauri::command]
+fn get_history_details(
+    state: State<AppState>,
+    id: String,
+) -> Result<Option<HistoryDetails>, String> {
+    get_history_details_from_db(state.inner(), &id)
+}
+
+#[tauri::command]
+fn get_history_transcript(
+    state: State<AppState>,
+    id: String,
+) -> Result<Option<HistoryTranscriptContent>, String> {
+    get_history_transcript_from_db(state.inner(), &id)
+}
+
+#[tauri::command]
+fn get_history_caption(
+    state: State<AppState>,
+    id: String,
+    media_path: String,
+) -> Result<Option<HistoryCaptionContent>, String> {
+    get_history_caption_from_db(state.inner(), &id, &media_path)
 }
 
 fn source_from_url(url: &str) -> Option<String> {
@@ -1936,6 +2006,9 @@ fn main() {
             cancel_download,
             get_history,
             get_history_stats,
+            get_history_details,
+            get_history_transcript,
+            get_history_caption,
             remove_history_entry,
             clear_history,
             get_link_dump_overview,
@@ -3311,6 +3384,158 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM transcriptions", [], |row| row.get(0))
             .unwrap();
         assert_eq!(remaining, 1);
+    }
+
+    #[test]
+    fn history_details_load_metadata_and_text_content_separately() {
+        let state = link_dump_test_state();
+        let directory =
+            std::env::temp_dir().join(format!("pinefetch-history-details-{}", Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let transcript_path = directory.join("example.txt");
+        let existing_caption_path = directory.join("example.caption.txt");
+        let missing_caption_path = directory.join("missing.caption.txt");
+        fs::write(&transcript_path, "Transcript text").unwrap();
+        fs::write(&existing_caption_path, "First caption").unwrap();
+
+        insert_history_entry_in_db(
+            &state,
+            &HistoryEntry {
+                id: "history-details".to_string(),
+                url: "https://www.youtube.com/watch?v=details".to_string(),
+                title: Some("Detailed video".to_string()),
+                uploader: Some("Creator".to_string()),
+                filename: Some("example.txt".to_string()),
+                thumbnail: None,
+                upload_date: Some("20260919".to_string()),
+                timestamp: Some(1_789_761_600),
+                duration_seconds: Some(90),
+                file_size_bytes: Some(15),
+                sha256: Some("a".repeat(64)),
+                medium: Some("transcript".to_string()),
+                source: Some("youtube".to_string()),
+                platform: Some("YouTube".to_string()),
+                output_path: Some(transcript_path.to_string_lossy().into_owned()),
+                pinefetch_version: Some("2.1.1".to_string()),
+                created_at: 10,
+                completed_at: Some(20),
+            },
+        )
+        .unwrap();
+        insert_transcription_in_db(&state, "history-details", "Transcript text", "text", "EN")
+            .unwrap();
+        insert_captions_in_db(
+            &state,
+            "history-details",
+            &[
+                SavedCaption {
+                    media_path: directory.join("example.mp4").to_string_lossy().into_owned(),
+                    caption_path: existing_caption_path.to_string_lossy().into_owned(),
+                    text: "First caption".to_string(),
+                },
+                SavedCaption {
+                    media_path: directory.join("missing.mp4").to_string_lossy().into_owned(),
+                    caption_path: missing_caption_path.to_string_lossy().into_owned(),
+                    text: "Stored caption".to_string(),
+                },
+            ],
+        )
+        .unwrap();
+
+        let details = get_history_details_from_db(&state, "history-details")
+            .unwrap()
+            .unwrap();
+        assert_eq!(details.entry.title.as_deref(), Some("Detailed video"));
+        assert!(details.output_file_available);
+        assert_eq!(details.file_extension.as_deref(), Some("txt"));
+        assert_eq!(
+            details.transcript,
+            Some(HistoryTranscriptSummary {
+                transcription_type: "text".to_string(),
+                language: Some("en".to_string()),
+                file_available: true,
+            })
+        );
+        assert_eq!(details.captions.len(), 2);
+        assert!(details.captions[0].file_available);
+        assert!(!details.captions[1].file_available);
+
+        let transcript = get_history_transcript_from_db(&state, "history-details")
+            .unwrap()
+            .unwrap();
+        assert_eq!(transcript.text, "Transcript text");
+        assert_eq!(transcript.language.as_deref(), Some("en"));
+
+        let caption =
+            get_history_caption_from_db(&state, "history-details", &details.captions[1].media_path)
+                .unwrap()
+                .unwrap();
+        assert_eq!(caption.text, "Stored caption");
+        assert!(!caption.file_available);
+        assert_eq!(caption.format.as_deref(), Some("txt"));
+        assert!(get_history_details_from_db(&state, "missing")
+            .unwrap()
+            .is_none());
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn history_details_report_only_available_content_sections() {
+        let state = link_dump_test_state();
+        let entry = |id: &str| HistoryEntry {
+            id: id.to_string(),
+            url: format!("https://example.com/{id}"),
+            title: Some(id.to_string()),
+            uploader: None,
+            filename: None,
+            thumbnail: None,
+            upload_date: None,
+            timestamp: None,
+            duration_seconds: None,
+            file_size_bytes: None,
+            sha256: None,
+            medium: None,
+            source: Some("example".to_string()),
+            platform: None,
+            output_path: None,
+            pinefetch_version: None,
+            created_at: 1,
+            completed_at: Some(2),
+        };
+
+        for id in ["transcript-only", "captions-only", "overview-only"] {
+            insert_history_entry_in_db(&state, &entry(id)).unwrap();
+        }
+        insert_transcription_in_db(&state, "transcript-only", "Transcript", "text", "en").unwrap();
+        insert_captions_in_db(
+            &state,
+            "captions-only",
+            &[SavedCaption {
+                media_path: "/tmp/captions-only.mp4".to_string(),
+                caption_path: "/tmp/captions-only.caption.txt".to_string(),
+                text: "Caption".to_string(),
+            }],
+        )
+        .unwrap();
+
+        let transcript_only = get_history_details_from_db(&state, "transcript-only")
+            .unwrap()
+            .unwrap();
+        assert!(transcript_only.transcript.is_some());
+        assert!(transcript_only.captions.is_empty());
+
+        let captions_only = get_history_details_from_db(&state, "captions-only")
+            .unwrap()
+            .unwrap();
+        assert!(captions_only.transcript.is_none());
+        assert_eq!(captions_only.captions.len(), 1);
+
+        let overview_only = get_history_details_from_db(&state, "overview-only")
+            .unwrap()
+            .unwrap();
+        assert!(overview_only.transcript.is_none());
+        assert!(overview_only.captions.is_empty());
     }
 
     #[test]

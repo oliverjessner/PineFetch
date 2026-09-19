@@ -85,6 +85,8 @@ const els = Object.seal({
     historyView: document.getElementById('historyView'),
     historyList: document.getElementById('historyList'),
     historySearchInput: document.getElementById('historySearchInput'),
+    historySearchFieldSelect: document.getElementById('historySearchFieldSelect'),
+    historySourceSelect: document.getElementById('historySourceSelect'),
     historyHint: document.getElementById('historyHint'),
     settingsView: document.getElementById('settingsView'),
     linkDumpView: document.getElementById('linkDumpView'),

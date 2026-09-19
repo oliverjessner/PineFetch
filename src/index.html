@@ -108,10 +108,26 @@
                     </div>
 
                     <div id="historyView" class="pf-panel-view pf-stack" hidden>
-                        <label class="pf-field" for="historySearchInput">
-                            <span class="pf-label">Search history</span>
-                            <input id="historySearchInput" class="pf-input" type="search" placeholder="Title or source" autocomplete="off" />
-                        </label>
+                        <div class="pf-history-search-controls">
+                            <label class="pf-field pf-history-search-query" for="historySearchInput">
+                                <span class="pf-label">Search history</span>
+                                <input id="historySearchInput" class="pf-input" type="search" placeholder="Search titles" autocomplete="off" />
+                            </label>
+                            <label class="pf-field" for="historySearchFieldSelect">
+                                <span class="pf-label">Search in</span>
+                                <select id="historySearchFieldSelect" class="pf-select">
+                                    <option value="title">Title</option>
+                                    <option value="description">Description</option>
+                                    <option value="user">User</option>
+                                </select>
+                            </label>
+                            <label class="pf-field" for="historySourceSelect">
+                                <span class="pf-label">Source</span>
+                                <select id="historySourceSelect" class="pf-select">
+                                    <option value="">All sources</option>
+                                </select>
+                            </label>
+                        </div>
                         <div id="historyList" class="pf-scroll-area pf-pinefetch-history-list"></div>
                         <div class="pf-pinefetch-history-actions">
                             <button id="loadMoreHistoryBtn" class="pf-btn pf-pinefetch-history-load-more" type="button" hidden>

@@ -77,7 +77,7 @@ pub(super) fn list_history_page_from_db(
     limit: u32,
     offset: u32,
 ) -> Result<HistoryPage, String> {
-    search_history_page_from_db(state, limit, offset, None)
+    search_history_page_from_db(state, limit, offset, None, None, None)
 }
 
 pub(super) fn search_history_page_from_db(
@@ -85,32 +85,67 @@ pub(super) fn search_history_page_from_db(
     limit: u32,
     offset: u32,
     query: Option<&str>,
+    search_field: Option<&str>,
+    source: Option<&str>,
 ) -> Result<HistoryPage, String> {
     let pattern = history_search_pattern(query);
+    let search_field = match search_field
+        .map(str::trim)
+        .filter(|field| !field.is_empty())
+    {
+        None | Some("title") => "title",
+        Some("description") => "description",
+        Some("user") => "user",
+        Some(field) => return Err(format!("Unsupported history search field: {field}")),
+    };
+    let source = source
+        .map(str::trim)
+        .filter(|source| !source.is_empty())
+        .map(str::to_ascii_lowercase);
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
     let total: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM history_entries
-             WHERE (?1 IS NULL OR title LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-                OR source LIKE ?1 ESCAPE '\\' COLLATE NOCASE)",
-            params![pattern],
+            "SELECT COUNT(*) FROM history_entries AS history
+             WHERE (?1 IS NULL
+                OR (?2 = 'title' AND history.title LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
+                OR (?2 = 'user' AND history.uploader LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
+                OR (?2 = 'description' AND EXISTS (
+                    SELECT 1 FROM captions
+                    WHERE captions.history_entry_id = history.id
+                      AND captions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                )))
+               AND (?3 IS NULL OR history.source = ?3 COLLATE NOCASE)",
+            params![pattern, search_field, source],
             |row| row.get(0),
         )
         .map_err(|e| format!("History read failed: {e}"))?;
     let mut stmt = conn
         .prepare(
             "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, sha256, medium, source, platform, output_path, pinefetch_version, created_at, completed_at
-             FROM history_entries
-             WHERE (?1 IS NULL OR title LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-                OR source LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
+             FROM history_entries AS history
+             WHERE (?1 IS NULL
+                OR (?2 = 'title' AND history.title LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
+                OR (?2 = 'user' AND history.uploader LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
+                OR (?2 = 'description' AND EXISTS (
+                    SELECT 1 FROM captions
+                    WHERE captions.history_entry_id = history.id
+                      AND captions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                )))
+               AND (?3 IS NULL OR history.source = ?3 COLLATE NOCASE)
              ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC, id DESC
-             LIMIT ?2 OFFSET ?3",
+             LIMIT ?4 OFFSET ?5",
         )
         .map_err(|e| format!("History read failed: {e}"))?;
 
     let rows = stmt
         .query_map(
-            params![pattern, i64::from(limit), i64::from(offset)],
+            params![
+                pattern,
+                search_field,
+                source,
+                i64::from(limit),
+                i64::from(offset)
+            ],
             |row| {
                 let created_at: i64 = row.get(16)?;
                 let completed_at: Option<i64> = row.get(17)?;
@@ -341,6 +376,7 @@ pub(super) fn store_transcription_for_history_entry(
     job: &DownloadJob,
     history_entry_id: &str,
     transcript_path: &str,
+    language: &str,
 ) -> Result<(), String> {
     let text = fs::read_to_string(transcript_path)
         .map_err(|e| format!("Transcript file could not be read: {e}"))?;
@@ -349,7 +385,7 @@ pub(super) fn store_transcription_for_history_entry(
     } else {
         "text"
     };
-    insert_transcription_in_db(state, history_entry_id, &text, transcription_type)
+    insert_transcription_in_db(state, history_entry_id, &text, transcription_type, language)
 }
 
 pub(super) fn insert_transcription_in_db(
@@ -357,16 +393,22 @@ pub(super) fn insert_transcription_in_db(
     history_entry_id: &str,
     text: &str,
     transcription_type: &str,
+    language: &str,
 ) -> Result<(), String> {
+    let language = language.trim().to_ascii_lowercase();
+    if language.is_empty() {
+        return Err("Transcription language is required".to_string());
+    }
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
     conn.execute(
-        "INSERT INTO transcriptions (id, history_entry_id, text, \"type\")
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO transcriptions (id, history_entry_id, text, \"type\", language)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             Uuid::new_v4().to_string(),
             history_entry_id,
             text,
             transcription_type,
+            language,
         ],
     )
     .map_err(|e| format!("Transcription insert failed: {e}"))?;

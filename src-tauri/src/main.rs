@@ -35,7 +35,7 @@ use std::{
     process::{Child, Command, Output, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
+        mpsc, Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -423,6 +423,12 @@ struct DownloadRunResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct TranscriptionRunResult {
+    transcript_path: String,
+    language: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SavedCaption {
     pub(crate) media_path: String,
     pub(crate) caption_path: String,
@@ -462,7 +468,8 @@ def format_timestamp(seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 model = WhisperModel(model_name, compute_type="int8")
-segments, _ = model.transcribe(audio_path, beam_size=5)
+segments, info = model.transcribe(audio_path, beam_size=5)
+print(f"pinefetch_language:{info.language}", flush=True)
 lines = []
 for segment in segments:
     text = segment.text.strip()
@@ -980,10 +987,19 @@ fn get_history(
     limit: Option<u32>,
     offset: Option<u32>,
     query: Option<String>,
+    search_field: Option<String>,
+    source: Option<String>,
 ) -> Result<HistoryPage, String> {
     let limit = limit.unwrap_or(20).clamp(1, 100);
     let offset = offset.unwrap_or(0);
-    search_history_page_from_db(state.inner(), limit, offset, query.as_deref())
+    search_history_page_from_db(
+        state.inner(),
+        limit,
+        offset,
+        query.as_deref(),
+        search_field.as_deref(),
+        source.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -1574,6 +1590,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             history_entry_id TEXT NOT NULL UNIQUE,
             text TEXT NOT NULL,
             "type" TEXT NOT NULL CHECK ("type" IN ('text', 'text with timestamps')),
+            language TEXT,
             FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
         );
 
@@ -1611,12 +1628,25 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_history_entries_text_column(conn, "medium")?;
     ensure_history_entries_text_column(conn, "source")?;
     ensure_history_entries_text_column(conn, "pinefetch_version")?;
+    ensure_transcriptions_language_column(conn)?;
     ensure_captions_sha256_column(conn)?;
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_history_entries_sha256 ON history_entries(sha256);
          CREATE INDEX IF NOT EXISTS idx_captions_sha256 ON captions(sha256);",
     )?;
     backfill_history_sources(conn)?;
+    Ok(())
+}
+
+fn ensure_transcriptions_language_column(conn: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('transcriptions') WHERE name = 'language')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute("ALTER TABLE transcriptions ADD COLUMN language TEXT", [])?;
+    }
     Ok(())
 }
 
@@ -2707,7 +2737,7 @@ mod tests {
     }
 
     #[test]
-    fn link_dump_migration_adds_history_metadata_columns_to_existing_table() {
+    fn link_dump_migration_adds_history_and_transcription_metadata_columns() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             r#"
@@ -2731,6 +2761,14 @@ mod tests {
                 text TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 PRIMARY KEY (history_entry_id, media_path),
+                FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE transcriptions (
+                id TEXT PRIMARY KEY,
+                history_entry_id TEXT NOT NULL UNIQUE,
+                text TEXT NOT NULL,
+                "type" TEXT NOT NULL CHECK ("type" IN ('text', 'text with timestamps')),
                 FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
             );
 
@@ -2774,6 +2812,15 @@ mod tests {
 
             assert_eq!(column_count, 1, "missing TEXT column {column_name}");
         }
+
+        let transcription_language_column: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('transcriptions') WHERE name = 'language' AND type = 'TEXT'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(transcription_language_column, 1);
 
         let source: Option<String> = conn
             .query_row(
@@ -3211,31 +3258,51 @@ mod tests {
             .unwrap();
         }
 
-        insert_transcription_in_db(&state, "history-text", "Plain transcript", "text").unwrap();
+        insert_transcription_in_db(&state, "history-text", "Plain transcript", "text", "EN")
+            .unwrap();
         insert_transcription_in_db(
             &state,
             "history-timestamps",
             "[00:00:01 → 00:00:02] Timestamped transcript",
             "text with timestamps",
+            "de",
         )
         .unwrap();
 
-        let invalid =
-            insert_transcription_in_db(&state, "history-invalid", "Invalid transcript", "invalid");
+        let invalid = insert_transcription_in_db(
+            &state,
+            "history-invalid",
+            "Invalid transcript",
+            "invalid",
+            "en",
+        );
         assert!(invalid.is_err());
+        let missing_language =
+            insert_transcription_in_db(&state, "history-invalid", "Missing language", "text", "  ");
+        assert!(missing_language.is_err());
 
         {
             let conn = state.db.lock().unwrap();
-            let stored: (String, String, String) = conn
+            let stored: (String, String, String, String) = conn
                 .query_row(
-                    "SELECT history_entry_id, text, \"type\" FROM transcriptions WHERE history_entry_id = 'history-timestamps'",
+                    "SELECT history_entry_id, text, \"type\", language FROM transcriptions WHERE history_entry_id = 'history-timestamps'",
                     [],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .unwrap();
             assert_eq!(stored.0, "history-timestamps");
             assert_eq!(stored.1, "[00:00:01 → 00:00:02] Timestamped transcript");
             assert_eq!(stored.2, "text with timestamps");
+            assert_eq!(stored.3, "de");
+
+            let normalized_language: String = conn
+                .query_row(
+                    "SELECT language FROM transcriptions WHERE history_entry_id = 'history-text'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(normalized_language, "en");
         }
 
         delete_history_entry_from_db(&state, "history-timestamps").unwrap();
@@ -3298,7 +3365,7 @@ mod tests {
                 &HistoryEntry {
                     id: format!("history-{index:02}"),
                     url: format!("https://example.com/{index}"),
-                    title: Some(if is_match && index % 2 == 0 {
+                    title: Some(if is_match {
                         format!("Pine needle {index}")
                     } else {
                         format!("Other {index}")
@@ -3312,11 +3379,7 @@ mod tests {
                     file_size_bytes: None,
                     sha256: None,
                     medium: None,
-                    source: Some(if is_match && index % 2 != 0 {
-                        "PINE source".to_string()
-                    } else {
-                        "other source".to_string()
-                    }),
+                    source: Some("other source".to_string()),
                     platform: None,
                     output_path: None,
                     pinefetch_version: None,
@@ -3327,18 +3390,22 @@ mod tests {
             .unwrap();
         }
 
-        let first = search_history_page_from_db(&state, 5, 0, Some(" pine ")).unwrap();
-        let second = search_history_page_from_db(&state, 5, 5, Some("pine")).unwrap();
+        let first =
+            search_history_page_from_db(&state, 5, 0, Some(" pine "), Some("title"), None).unwrap();
+        let second =
+            search_history_page_from_db(&state, 5, 5, Some("pine"), Some("title"), None).unwrap();
         assert_eq!(first.entries.len(), 5);
         assert!(first.has_more);
         assert_eq!(first.entries[0].id, "history-33");
         assert_eq!(second.entries[0].id, "history-18");
         assert!(second.has_more);
-        let final_page = search_history_page_from_db(&state, 5, 10, Some("pine")).unwrap();
+        let final_page =
+            search_history_page_from_db(&state, 5, 10, Some("pine"), Some("title"), None).unwrap();
         assert_eq!(final_page.entries.len(), 2);
         assert!(!final_page.has_more);
 
-        let empty_query = search_history_page_from_db(&state, 5, 0, Some("  ")).unwrap();
+        let empty_query =
+            search_history_page_from_db(&state, 5, 0, Some("  "), Some("title"), None).unwrap();
         assert_eq!(empty_query.entries[0].id, "history-34");
     }
 
@@ -3371,9 +3438,76 @@ mod tests {
             )
             .unwrap();
         }
-        let result = search_history_page_from_db(&state, 20, 0, Some("%_done")).unwrap();
+        let result =
+            search_history_page_from_db(&state, 20, 0, Some("%_done"), Some("title"), None)
+                .unwrap();
         assert_eq!(result.entries.len(), 1);
         assert_eq!(result.entries[0].id, "literal");
+    }
+
+    #[test]
+    fn history_search_filters_by_field_and_source() {
+        let state = link_dump_test_state();
+        for (id, title, uploader, source, created_at) in [
+            ("instagram", "Mountain view", "alice", "instagram", 3),
+            ("youtube", "City walk", "bob", "youtube", 2),
+            ("tiktok", "Morning coffee", "alice", "tiktok", 1),
+        ] {
+            insert_history_entry_in_db(
+                &state,
+                &HistoryEntry {
+                    id: id.to_string(),
+                    url: format!("https://example.com/{id}"),
+                    title: Some(title.to_string()),
+                    uploader: Some(uploader.to_string()),
+                    filename: None,
+                    thumbnail: None,
+                    upload_date: None,
+                    timestamp: None,
+                    duration_seconds: None,
+                    file_size_bytes: None,
+                    sha256: None,
+                    medium: Some("video".to_string()),
+                    source: Some(source.to_string()),
+                    platform: None,
+                    output_path: None,
+                    pinefetch_version: None,
+                    created_at,
+                    completed_at: None,
+                },
+            )
+            .unwrap();
+        }
+        insert_captions_in_db(
+            &state,
+            "instagram",
+            &[SavedCaption {
+                media_path: "/tmp/instagram.mp4".to_string(),
+                caption_path: "/tmp/instagram.caption.txt".to_string(),
+                text: "Golden sunset above the lake".to_string(),
+            }],
+        )
+        .unwrap();
+
+        let by_user =
+            search_history_page_from_db(&state, 20, 0, Some("alice"), Some("user"), None).unwrap();
+        assert_eq!(by_user.entries.len(), 2);
+
+        let by_description =
+            search_history_page_from_db(&state, 20, 0, Some("sunset"), Some("description"), None)
+                .unwrap();
+        assert_eq!(by_description.entries.len(), 1);
+        assert_eq!(by_description.entries[0].id, "instagram");
+
+        let by_source =
+            search_history_page_from_db(&state, 20, 0, Some("alice"), Some("user"), Some("tiktok"))
+                .unwrap();
+        assert_eq!(by_source.entries.len(), 1);
+        assert_eq!(by_source.entries[0].id, "tiktok");
+
+        let invalid_field =
+            search_history_page_from_db(&state, 20, 0, Some("alice"), Some("source"), None);
+        assert!(invalid_field.is_err());
     }
 
     #[test]

@@ -1,3 +1,0 @@
-- better search
-- view captions in history
-- collection system for projects

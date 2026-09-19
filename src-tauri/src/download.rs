@@ -1060,7 +1060,7 @@ pub(super) fn run_faster_whisper_transcription(
     state: &AppState,
     job: &DownloadJob,
     output_path: Option<&str>,
-) -> Result<String, String> {
+) -> Result<TranscriptionRunResult, String> {
     let media_path = output_path
         .ok_or_else(|| "Could not determine downloaded file path for transcription".to_string())?;
     if !Path::new(media_path).exists() {
@@ -1134,10 +1134,18 @@ pub(super) fn run_faster_whisper_transcription(
     }
     let app_stdout = app.clone();
     let job_id_stdout = job.id.clone();
+    let (language_sender, language_receiver) = mpsc::channel();
     let handle_out = thread::spawn(move || {
         if let Some(out) = stdout {
             let reader = BufReader::new(out);
             for line in reader.lines().flatten() {
+                if let Some(language) = line.strip_prefix("pinefetch_language:") {
+                    let language = language.trim().to_ascii_lowercase();
+                    if !language.is_empty() {
+                        let _ = language_sender.send(language);
+                    }
+                    continue;
+                }
                 emit_log(
                     &app_stdout,
                     LogEvent {
@@ -1195,7 +1203,22 @@ pub(super) fn run_faster_whisper_transcription(
         return Err("faster-whisper finished but no transcript file was created".to_string());
     }
 
-    Ok(transcript_path_str)
+    let language = language_receiver.try_recv().map_err(|_| {
+        "faster-whisper finished without reporting the detected language".to_string()
+    })?;
+    emit_log(
+        app,
+        LogEvent {
+            id: job.id.clone(),
+            line: format!("[faster-whisper] language: {language}"),
+            is_error: false,
+        },
+    );
+
+    Ok(TranscriptionRunResult {
+        transcript_path: transcript_path_str,
+        language,
+    })
 }
 
 pub(super) fn extract_temporary_transcription_audio(

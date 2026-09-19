@@ -1,6 +1,6 @@
 {
     "name": "pinefetch",
-    "version": "2.1.1",
+    "version": "2.2.0",
     "scripts": {
         "dev": "npm run sync:version && tauri dev",
         "sync:version": "node scripts/sync-tauri-version.mjs",

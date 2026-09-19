@@ -611,7 +611,8 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                             &job,
                             run_result.output_path.as_deref(),
                         ) {
-                            Ok(transcript_path) => {
+                            Ok(transcription) => {
+                                let transcript_path = transcription.transcript_path;
                                 emit_log(
                                     &app_handle,
                                     LogEvent {
@@ -644,6 +645,7 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                                 &job,
                                                 &history_entry_id,
                                                 &transcript_path,
+                                                &transcription.language,
                                             ) {
                                                 let warning =
                                                     format!("Transcript index save failed: {err}");

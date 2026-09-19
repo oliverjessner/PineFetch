@@ -1,9 +1,12 @@
-# 2.1.1
+# 2.2.0
 
 - storing the pinefetch version in the database
 - cli --version
-- visual fiex for cards
+- visual fix for cards in history
 - sha 256 for videos and captions
+- better search with filters
+- view captions and transcriptions in history
+- storing the language of the transcription
 
 # 2.1.0
 

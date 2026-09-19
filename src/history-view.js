@@ -7,6 +7,8 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
         historyDirty: true,
         historyRevision: 0,
         historyQuery: '',
+        historySearchField: 'title',
+        historySource: '',
         historyClearing: false,
     });
     const historyPageSize = 20;
@@ -102,6 +104,39 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
         els.historySourcesEmpty.hidden = els.historySourcesList.childElementCount > 0;
     };
 
+    const renderHistorySourceOptions = sourceCounts => {
+        const sources = [];
+        const seen = new Set();
+        for (const entry of Array.isArray(sourceCounts) ? sourceCounts : []) {
+            const source = `${entry?.source || ''}`.trim().toLowerCase();
+            if (!source || seen.has(source)) continue;
+            seen.add(source);
+            sources.push(source);
+        }
+
+        const fragment = document.createDocumentFragment();
+        const allOption = document.createElement('option');
+        allOption.value = '';
+        allOption.textContent = 'All sources';
+        fragment.appendChild(allOption);
+        for (const source of sources) {
+            const option = document.createElement('option');
+            option.value = source;
+            option.textContent = formatHistorySource(source);
+            fragment.appendChild(option);
+        }
+        els.historySourceSelect.replaceChildren(fragment);
+
+        if (!state.historySource || seen.has(state.historySource)) {
+            els.historySourceSelect.value = state.historySource;
+            return false;
+        }
+
+        state.historySource = '';
+        els.historySourceSelect.value = '';
+        return true;
+    };
+
     const renderHistoryStats = async () => {
         if (!invoke) return;
 
@@ -111,6 +146,10 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
             els.historyTotalSize.textContent = formatFileSize(stats?.total_file_size_bytes);
             els.historyTotalDuration.textContent = formatDuration(Number(stats?.total_duration_seconds || 0));
             renderHistorySources(stats?.source_counts);
+            if (renderHistorySourceOptions(stats?.source_counts)) {
+                invalidateHistoryCache();
+                if (!state.historyLoading && isActive()) void renderHistory({ force: true });
+            }
         } catch (err) {
             appendLog(`[history] ${err}`, true);
         }
@@ -216,6 +255,8 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
         if (!append) void renderHistoryStats();
         const requestedRevision = state.historyRevision;
         const requestedQuery = state.historyQuery;
+        const requestedSearchField = state.historySearchField;
+        const requestedSource = state.historySource;
         let needsFollowUpRefresh = false;
         const offset = append ? state.historyOffset : 0;
         setHistoryLoading(true);
@@ -225,6 +266,8 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
                 limit: historyPageSize,
                 offset,
                 ...(requestedQuery ? { query: requestedQuery } : {}),
+                searchField: requestedSearchField,
+                ...(requestedSource ? { source: requestedSource } : {}),
             });
             if (state.historyRevision !== requestedRevision) {
                 needsFollowUpRefresh = true;
@@ -243,9 +286,15 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
                 els.historyList.replaceChildren(fragment);
             }
 
-            els.historyHint.textContent = requestedQuery
-                ? `No history results for “${requestedQuery}”.`
-                : 'No history yet. Downloaded items will appear here.';
+            if (requestedQuery && requestedSource) {
+                els.historyHint.textContent = `No ${formatHistorySource(requestedSource)} results for “${requestedQuery}”.`;
+            } else if (requestedQuery) {
+                els.historyHint.textContent = `No history results for “${requestedQuery}”.`;
+            } else if (requestedSource) {
+                els.historyHint.textContent = `No history from ${formatHistorySource(requestedSource)}.`;
+            } else {
+                els.historyHint.textContent = 'No history yet. Downloaded items will appear here.';
+            }
             els.historyHint.hidden = entries.length > 0 || append;
             state.historyOffset = offset + entries.length;
             state.historyHasMore = hasMore;
@@ -265,6 +314,33 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
     };
 
     const bindEvents = () => {
+        const searchPlaceholders = {
+            title: 'Search titles',
+            description: 'Search descriptions',
+            user: 'Search users',
+        };
+        const applyHistoryFilters = () => {
+            const query = els.historySearchInput.value.trim();
+            const searchField = els.historySearchFieldSelect.value;
+            const source = els.historySourceSelect.value;
+            if (
+                query === state.historyQuery
+                && searchField === state.historySearchField
+                && source === state.historySource
+            ) return;
+            state.historyQuery = query;
+            state.historySearchField = searchField;
+            state.historySource = source;
+            invalidateHistoryCache();
+            void renderHistory({ force: true });
+        };
+        const applySelectFilters = () => {
+            if (historySearchTimer !== null) clearTimeout(historySearchTimer);
+            historySearchTimer = null;
+            els.historySearchInput.placeholder = searchPlaceholders[els.historySearchFieldSelect.value] || 'Search history';
+            applyHistoryFilters();
+        };
+
         els.loadMoreHistoryBtn.addEventListener('click', () => {
             void renderHistory({ append: true });
         });
@@ -272,13 +348,11 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
             if (historySearchTimer !== null) clearTimeout(historySearchTimer);
             historySearchTimer = setTimeout(() => {
                 historySearchTimer = null;
-                const query = els.historySearchInput.value.trim();
-                if (query === state.historyQuery) return;
-                state.historyQuery = query;
-                invalidateHistoryCache();
-                void renderHistory({ force: true });
+                applyHistoryFilters();
             }, historySearchDelayMs);
         });
+        els.historySearchFieldSelect.addEventListener('change', applySelectFilters);
+        els.historySourceSelect.addEventListener('change', applySelectFilters);
         els.clearHistoryBtn.addEventListener('click', async () => {
             if (!invoke || state.historyClearing) return;
             if (!window.confirm('Delete all history entries and saved transcripts? This cannot be undone. Downloaded files will stay on disk.')) return;
@@ -291,7 +365,12 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
                 if (historySearchTimer !== null) clearTimeout(historySearchTimer);
                 historySearchTimer = null;
                 els.historySearchInput.value = '';
+                els.historySearchFieldSelect.value = 'title';
+                els.historySearchInput.placeholder = searchPlaceholders.title;
+                els.historySourceSelect.value = '';
                 state.historyQuery = '';
+                state.historySearchField = 'title';
+                state.historySource = '';
                 invalidateHistoryCache();
                 await renderHistory({ force: true });
                 setHistoryActionStatus('History deleted. Downloaded files remain on disk.');

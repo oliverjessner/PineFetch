@@ -30,6 +30,9 @@ pub(super) fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
     entry.timestamp = entry.timestamp.filter(|timestamp| *timestamp >= 0);
     entry.duration_seconds = entry.duration_seconds.filter(|duration| *duration >= 0);
     entry.file_size_bytes = entry.file_size_bytes.filter(|size| *size >= 0);
+    entry.sha256 = trim_optional_string(entry.sha256)
+        .map(|hash| hash.to_ascii_lowercase())
+        .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
     entry.medium = trim_optional_string(entry.medium)
         .map(|medium| medium.to_ascii_lowercase())
         .filter(|medium| matches!(medium.as_str(), "video" | "audio" | "transcript"));
@@ -96,7 +99,7 @@ pub(super) fn search_history_page_from_db(
         .map_err(|e| format!("History read failed: {e}"))?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, medium, source, platform, output_path, pinefetch_version, created_at, completed_at
+            "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, sha256, medium, source, platform, output_path, pinefetch_version, created_at, completed_at
              FROM history_entries
              WHERE (?1 IS NULL OR title LIKE ?1 ESCAPE '\\' COLLATE NOCASE
                 OR source LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
@@ -109,8 +112,8 @@ pub(super) fn search_history_page_from_db(
         .query_map(
             params![pattern, i64::from(limit), i64::from(offset)],
             |row| {
-                let created_at: i64 = row.get(15)?;
-                let completed_at: Option<i64> = row.get(16)?;
+                let created_at: i64 = row.get(16)?;
+                let completed_at: Option<i64> = row.get(17)?;
                 Ok(HistoryEntry {
                     id: row.get(0)?,
                     url: row.get(1)?,
@@ -122,11 +125,12 @@ pub(super) fn search_history_page_from_db(
                     timestamp: row.get(7)?,
                     duration_seconds: row.get(8)?,
                     file_size_bytes: row.get(9)?,
-                    medium: row.get(10)?,
-                    source: row.get(11)?,
-                    platform: row.get(12)?,
-                    output_path: row.get(13)?,
-                    pinefetch_version: row.get(14)?,
+                    sha256: row.get(10)?,
+                    medium: row.get(11)?,
+                    source: row.get(12)?,
+                    platform: row.get(13)?,
+                    output_path: row.get(14)?,
+                    pinefetch_version: row.get(15)?,
                     created_at: i64_to_millis(created_at),
                     completed_at: optional_i64_to_millis(completed_at),
                 })
@@ -236,6 +240,7 @@ pub(super) fn insert_history_entry_in_db(
             timestamp,
             duration_seconds,
             file_size_bytes,
+            sha256,
             medium,
             source,
             platform,
@@ -243,7 +248,7 @@ pub(super) fn insert_history_entry_in_db(
             pinefetch_version,
             created_at,
             completed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
         ON CONFLICT(id) DO UPDATE SET
             url = excluded.url,
             title = excluded.title,
@@ -254,6 +259,7 @@ pub(super) fn insert_history_entry_in_db(
             timestamp = excluded.timestamp,
             duration_seconds = excluded.duration_seconds,
             file_size_bytes = excluded.file_size_bytes,
+            sha256 = excluded.sha256,
             medium = excluded.medium,
             source = excluded.source,
             platform = excluded.platform,
@@ -272,6 +278,7 @@ pub(super) fn insert_history_entry_in_db(
             entry.timestamp,
             entry.duration_seconds,
             entry.file_size_bytes,
+            entry.sha256,
             entry.medium,
             entry.source,
             entry.platform,
@@ -302,11 +309,12 @@ pub(super) fn insert_captions_in_db(
         let mut statement = transaction
             .prepare(
                 "INSERT INTO captions (
-                    history_entry_id, media_path, caption_path, text, created_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                    history_entry_id, media_path, caption_path, text, sha256, created_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ON CONFLICT(history_entry_id, media_path) DO UPDATE SET
                     caption_path = excluded.caption_path,
-                    text = excluded.text",
+                    text = excluded.text,
+                    sha256 = excluded.sha256",
             )
             .map_err(|e| format!("Caption insert failed: {e}"))?;
         for caption in captions {
@@ -316,6 +324,7 @@ pub(super) fn insert_captions_in_db(
                     caption.media_path,
                     caption.caption_path,
                     caption.text,
+                    sha256_hex(caption.text.as_bytes()),
                     millis_to_i64(current_timestamp_millis()),
                 ])
                 .map_err(|e| format!("Caption insert failed: {e}"))?;

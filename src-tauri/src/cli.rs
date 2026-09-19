@@ -3,7 +3,11 @@
 use super::*;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-pub const HELP: &str = "PineFetch CLI
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const HELP: &str = concat!(
+    "PineFetch CLI ",
+    env!("CARGO_PKG_VERSION"),
+    "
 
 Usage:
   PineFetch queue add --link <URL> [--preset <PRESET>]
@@ -12,6 +16,7 @@ Usage:
   PineFetch history list
   PineFetch stats
   PineFetch --help
+  PineFetch --version
 
 Presets: best (default), max, mp3, opus, text, 'text with timestamps'
 
@@ -19,7 +24,8 @@ PineFetch opens automatically when needed. Downloads follow the app's
 saved settings and auto-start mode. Queue numbers are one-based and refer
 to waiting downloads at the time the command runs, excluding active jobs.
 History lists the latest 25 entries and is read-only.
-";
+"
+);
 const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -27,6 +33,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(3);
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CliCommand {
     Help,
+    Version,
     QueueAdd { link: String, preset: String },
     QueueList,
     QueueRemove { number: usize },
@@ -39,6 +46,7 @@ pub fn parse(args: &[String]) -> Result<Option<CliCommand>, String> {
     match words.as_slice() {
         [] => Ok(None),
         ["--help" | "-h" | "help"] => Ok(Some(CliCommand::Help)),
+        ["--version" | "-V" | "version"] => Ok(Some(CliCommand::Version)),
         ["queue", "list"] => Ok(Some(CliCommand::QueueList)),
         ["history", "list"] => Ok(Some(CliCommand::HistoryList)),
         ["stats"] => Ok(Some(CliCommand::Stats)),
@@ -227,6 +235,7 @@ fn execute(app: &AppHandle, command: CliCommand) -> Result<String, String> {
     let state = app.state::<AppState>();
     match command {
         CliCommand::Help => Ok(HELP.into()),
+        CliCommand::Version => Ok(format!("PineFetch {VERSION}")),
         CliCommand::QueueAdd { link, preset } => {
             let request = build_request(&state, &link, &preset)?;
             let id = enqueue_download_request(app, &state, request)?;
@@ -575,6 +584,10 @@ mod tests {
     fn parses_all_commands_and_presets() {
         assert_eq!(parse(&[]).unwrap(), None);
         assert_eq!(parse(&args(&["--help"])).unwrap(), Some(CliCommand::Help));
+        assert_eq!(
+            parse(&args(&["--version"])).unwrap(),
+            Some(CliCommand::Version)
+        );
         for (words, command) in [
             (vec!["queue", "list"], CliCommand::QueueList),
             (
@@ -610,6 +623,13 @@ mod tests {
                 preset: "best".into()
             })
         );
+    }
+
+    #[test]
+    fn help_and_version_use_the_cargo_package_version() {
+        assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
+        assert!(HELP.starts_with(&format!("PineFetch CLI {VERSION}\n")));
+        assert!(HELP.contains("PineFetch --version"));
     }
 
     #[test]

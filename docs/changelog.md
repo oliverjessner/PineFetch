@@ -1,6 +1,9 @@
-# 2.2.0
+# 2.1.1
 
 - storing the pinefetch version in the database
+- cli --version
+- visual fiex for cards
+- sha 256 for videos and captions
 
 # 2.1.0
 

@@ -232,6 +232,8 @@ struct HistoryEntry {
     #[serde(default)]
     file_size_bytes: Option<i64>,
     #[serde(default)]
+    sha256: Option<String>,
+    #[serde(default)]
     medium: Option<String>,
     #[serde(default)]
     source: Option<String>,
@@ -1142,6 +1144,32 @@ fn file_size_bytes_from_path(path: Option<&str>) -> Option<i64> {
     i64::try_from(size).ok()
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    bytes_to_hex(&hasher.finalize())
+}
+
+fn sha256_from_path(path: Option<&str>) -> Result<Option<String>, String> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let mut file =
+        fs::File::open(path).map_err(|e| format!("Could not open output file for SHA-256: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|e| format!("Could not read output file for SHA-256: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(Some(bytes_to_hex(&hasher.finalize())))
+}
+
 fn add_history_entry_on_success(
     app: &AppHandle,
     state: &AppState,
@@ -1152,6 +1180,13 @@ fn add_history_entry_on_success(
     let filename = filename_from_path(output_path);
     let metadata = hydrate_history_metadata(job, filename.as_deref(), info);
     let file_size_bytes = file_size_bytes_from_path(output_path);
+    let sha256 = match sha256_from_path(output_path) {
+        Ok(hash) => hash,
+        Err(err) => {
+            emit_history_warning(app, &job.id, &err);
+            None
+        }
+    };
     let now = current_timestamp_millis();
     let history_entry_id = Uuid::new_v4().to_string();
     let entry = HistoryEntry {
@@ -1165,6 +1200,7 @@ fn add_history_entry_on_success(
         timestamp: metadata.timestamp,
         duration_seconds: metadata.duration_seconds,
         file_size_bytes,
+        sha256,
         medium: Some(medium_for_job(job).to_string()),
         source: source_from_url(&job.url),
         platform: detect_platform(&job.url),
@@ -1523,6 +1559,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             timestamp INTEGER,
             duration_seconds INTEGER,
             file_size_bytes INTEGER,
+            sha256 TEXT,
             medium TEXT,
             source TEXT,
             platform TEXT,
@@ -1545,6 +1582,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
             media_path TEXT NOT NULL,
             caption_path TEXT NOT NULL,
             text TEXT NOT NULL,
+            sha256 TEXT,
             created_at INTEGER NOT NULL,
             PRIMARY KEY (history_entry_id, media_path),
             FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
@@ -1555,6 +1593,7 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_history_entries_completed_at
             ON history_entries(completed_at, created_at);
+
         "#,
     )?;
 
@@ -1567,10 +1606,16 @@ fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
     ensure_history_entries_timestamp_column(conn)?;
     ensure_history_entries_duration_seconds_column(conn)?;
     ensure_history_entries_file_size_bytes_column(conn)?;
+    ensure_history_entries_text_column(conn, "sha256")?;
     ensure_history_entries_text_column(conn, "uploader")?;
     ensure_history_entries_text_column(conn, "medium")?;
     ensure_history_entries_text_column(conn, "source")?;
     ensure_history_entries_text_column(conn, "pinefetch_version")?;
+    ensure_captions_sha256_column(conn)?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_history_entries_sha256 ON history_entries(sha256);
+         CREATE INDEX IF NOT EXISTS idx_captions_sha256 ON captions(sha256);",
+    )?;
     backfill_history_sources(conn)?;
     Ok(())
 }
@@ -1758,6 +1803,18 @@ fn ensure_history_entries_text_column(
     ensure_history_entries_column(conn, column_name, "TEXT")
 }
 
+fn ensure_captions_sha256_column(conn: &Connection) -> rusqlite::Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('captions') WHERE name = 'sha256')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute("ALTER TABLE captions ADD COLUMN sha256 TEXT", [])?;
+    }
+    Ok(())
+}
+
 fn ensure_history_entries_column(
     conn: &Connection,
     column_name: &str,
@@ -1784,6 +1841,10 @@ fn main() {
     let command = match cli::parse(&args) {
         Ok(Some(cli::CliCommand::Help)) => {
             print!("{}", cli::HELP);
+            return;
+        }
+        Ok(Some(cli::CliCommand::Version)) => {
+            println!("PineFetch {}", cli::VERSION);
             return;
         }
         Ok(command) => command,
@@ -2663,6 +2724,16 @@ mod tests {
                 completed_at INTEGER
             );
 
+            CREATE TABLE captions (
+                history_entry_id TEXT NOT NULL,
+                media_path TEXT NOT NULL,
+                caption_path TEXT NOT NULL,
+                text TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (history_entry_id, media_path),
+                FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
+            );
+
             INSERT INTO history_entries (
                 id, url, title, filename, thumbnail, upload_date, platform,
                 output_path, created_at, completed_at
@@ -2686,7 +2757,13 @@ mod tests {
 
             assert_eq!(column_count, 1, "missing INTEGER column {column_name}");
         }
-        for column_name in ["uploader", "medium", "source", "pinefetch_version"] {
+        for column_name in [
+            "uploader",
+            "medium",
+            "source",
+            "pinefetch_version",
+            "sha256",
+        ] {
             let column_count: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM pragma_table_info('history_entries') WHERE name = ?1 AND type = 'TEXT'",
@@ -2714,6 +2791,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(pinefetch_version, None);
+        let caption_sha256_columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('captions') WHERE name = 'sha256' AND type = 'TEXT'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(caption_sha256_columns, 1);
     }
 
     #[test]
@@ -2848,6 +2933,7 @@ mod tests {
             timestamp: Some(1_714_560_000),
             duration_seconds: Some(754),
             file_size_bytes: Some(42_000_000),
+            sha256: Some("a".repeat(64)),
             medium: Some("video".to_string()),
             source: Some("youtube".to_string()),
             platform: Some("youtube".to_string()),
@@ -2878,6 +2964,10 @@ mod tests {
         assert_eq!(entries[0].timestamp, Some(1_714_560_000));
         assert_eq!(entries[0].duration_seconds, Some(754));
         assert_eq!(entries[0].file_size_bytes, Some(42_000_000));
+        assert_eq!(
+            entries[0].sha256.as_deref(),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
         assert_eq!(entries[0].medium.as_deref(), Some("video"));
         assert_eq!(entries[0].source.as_deref(), Some("youtube"));
 
@@ -2946,6 +3036,7 @@ mod tests {
                 timestamp: None,
                 duration_seconds: None,
                 file_size_bytes: None,
+                sha256: None,
                 medium: Some("video".to_string()),
                 source: Some("instagram".to_string()),
                 platform: Some("instagram".to_string()),
@@ -2961,24 +3052,48 @@ mod tests {
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM captions", [], |row| row.get(0))
             .unwrap();
-        let (caption_path, text): (String, String) = conn
+        let (caption_path, text, caption_sha256): (String, String, String) = conn
             .query_row(
-                "SELECT caption_path, text FROM captions WHERE history_entry_id = 'instagram-1' AND media_path = '/tmp/post.mp4'",
+                "SELECT caption_path, text, sha256 FROM captions WHERE history_entry_id = 'instagram-1' AND media_path = '/tmp/post.mp4'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        let second_text: String = conn
+        let (second_text, second_sha256): (String, String) = conn
             .query_row(
-                "SELECT text FROM captions WHERE history_entry_id = 'instagram-1' AND media_path = '/tmp/post-second.jpg'",
+                "SELECT text, sha256 FROM captions WHERE history_entry_id = 'instagram-1' AND media_path = '/tmp/post-second.jpg'",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
         assert_eq!(count, 2);
         assert_eq!(caption_path, "/tmp/post-updated.txt");
         assert_eq!(text, "Aktualisiert ✨\nMehr Text");
+        assert_eq!(
+            caption_sha256,
+            "a5f15944d0a0d218da37ffe97bc765f80dc385b47b34efdb0d7af260c9de0156"
+        );
         assert_eq!(second_text, "Zweites Medium 🖼️");
+        assert_eq!(
+            second_sha256,
+            "a9f434c157b8912f06759505c3aebfbd94fa6600fc1bb8197d8a208120d437c7"
+        );
+    }
+
+    #[test]
+    fn computes_sha256_for_text_and_files() {
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+
+        let path = std::env::temp_dir().join(format!("pinefetch-sha256-{}", Uuid::new_v4()));
+        fs::write(&path, b"PineFetch\n").unwrap();
+        assert_eq!(
+            sha256_from_path(path.to_str()).unwrap().as_deref(),
+            Some("21ddd0703e1fbcde4671e62b15d51386e6f6b22d3af0756e79538a66611ed32e")
+        );
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -3148,6 +3263,7 @@ mod tests {
                 timestamp: None,
                 duration_seconds: None,
                 file_size_bytes: None,
+                sha256: None,
                 medium: Some("video".to_string()),
                 source: Some("example".to_string()),
                 platform: Some("example".to_string()),
@@ -3194,6 +3310,7 @@ mod tests {
                     timestamp: None,
                     duration_seconds: None,
                     file_size_bytes: None,
+                    sha256: None,
                     medium: None,
                     source: Some(if is_match && index % 2 != 0 {
                         "PINE source".to_string()
@@ -3242,6 +3359,7 @@ mod tests {
                     timestamp: None,
                     duration_seconds: None,
                     file_size_bytes: None,
+                    sha256: None,
                     medium: None,
                     source: None,
                     platform: None,

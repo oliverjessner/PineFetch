@@ -111,9 +111,10 @@ Statistics cover the entire history, not just the latest 25 entries. Missing fil
 
 ```bash
 PineFetch --help
+PineFetch --version
 ```
 
-`PineFetch -h` and `PineFetch help` also display help. Help and invalid commands do not launch the desktop app.
+The help header and `PineFetch --version` show the installed PineFetch version. `PineFetch -h` and `PineFetch help` also display help; `PineFetch -V` and `PineFetch version` also display the version. These commands and invalid commands do not launch the desktop app.
 
 | Exit code | Meaning                                                                   |
 | --------- | ------------------------------------------------------------------------- |

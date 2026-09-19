@@ -1,7 +1,3 @@
-- parity with link-dump for most used platforms
-- history visual fix for cards
 - better search
 - view captions in history
-- md5 for videos
 - collection system for projects
-- cli --version and, PineFetch --help showing the version

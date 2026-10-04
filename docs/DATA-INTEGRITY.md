@@ -211,9 +211,14 @@ their marker after obtaining the writer lock. A missing file records a completed
 absence; adding a legacy file later does not automatically overwrite live data.
 Read/parse failure never writes that marker. A failed/aborted import rolls back
 all new entries and remains retryable. An existing matching history ID keeps its
-possibly newer SQLite metadata. Repeated URLs with **different IDs** remain
-separate history entries. Import does not depend on whether history is empty,
-and clearing history cannot silently resurrect the old JSON file.
+possibly newer SQLite metadata. New entries pass through the existing history
+normalization before insertion: blank optional metadata and invalid numeric/hash
+values are cleared, and missing filename/title/source/platform fields are derived
+where possible. This stores the values needed by SQL search and filtering without
+changing stable IDs, URLs or creation timestamps. Repeated URLs with
+**different IDs** remain separate history entries. Import does not depend on
+whether history is empty, and clearing history cannot silently resurrect the old
+JSON file.
 
 Normal config patches re-read the current persisted config under a writer lock,
 apply only the requested changes, commit, then update the process cache. A stale

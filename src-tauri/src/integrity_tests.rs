@@ -441,17 +441,37 @@ fn held_writer_lock_times_out_without_schema_change_then_retries() {
     owner
         .execute_batch(RELEASE_SCHEMAS.last().unwrap().1)
         .unwrap();
+    populate_legacy(&owner);
+    let original_schema = schema(&owner);
+    let original_bytes = fs::read(f.path("pinefetch.sqlite3")).unwrap();
     let tx = Transaction::new_unchecked(&owner, TransactionBehavior::Immediate).unwrap();
     let contender = Connection::open(f.path("pinefetch.sqlite3")).unwrap();
     let started = Instant::now();
     assert!(database::initialize(&contender)
         .unwrap_err()
         .contains("writer lock"));
-    assert!(started.elapsed() < Duration::from_secs(6));
+    // Check the actual SQLite setting independently of runner scheduling.
+    assert_eq!(
+        contender
+            .pragma_query_value::<i64, _>(None, "busy_timeout", |r| r.get(0))
+            .unwrap(),
+        3000
+    );
+    // Wall time includes scheduling and filesystem delays on shared CI hosts;
+    // keep a generous watchdog while retaining the production three-second limit.
+    assert!(started.elapsed() < Duration::from_secs(15));
     assert_eq!(version(&contender), 0);
+    assert_eq!(schema(&contender), original_schema);
+    assert_eq!(
+        fs::read(f.path("pinefetch.sqlite3")).unwrap(),
+        original_bytes
+    );
     assert!(f.backups().is_empty());
     tx.rollback().unwrap();
     database::initialize(&contender).unwrap();
+    assert_eq!(version(&contender), SCHEMA_VERSION);
+    assert_eq!(count(&contender, "history_entries"), 2);
+    assert_eq!(f.backups().len(), 1);
 }
 
 #[test]
@@ -560,6 +580,119 @@ fn history_json_import_is_atomic_retryable_idempotent_and_retains_existing_ids()
     fs::remove_file(&path).unwrap();
     import_legacy_history(&other, &path).unwrap();
     assert_eq!(count(&other, "legacy_imports"), 1);
+}
+
+#[test]
+fn history_json_import_normalizes_new_metadata_before_search_and_preserves_existing_rows() {
+    let f = Fixture::new();
+    let conn = f.db();
+    let path = f.path("history.json");
+    let mut existing = entry("existing");
+    existing.title = Some("  Newer database title  ".into());
+    existing.duration_seconds = Some(-7);
+    insert_history_entry_in_conn(&conn, &existing).unwrap();
+    let original = serde_json::to_vec(&json!([
+        {
+            "id": "derived",
+            "url": "https://www.youtube.com/watch?v=synthetic",
+            "created_at": 1700000000000_u64,
+            "completed_at": 1700000000100_u64,
+            "title": "  ",
+            "uploader": "  Synthetic creator  ",
+            "filename": "  ",
+            "thumbnail": "  ",
+            "upload_date": "  ",
+            "timestamp": -1,
+            "duration_seconds": -2,
+            "file_size_bytes": -3,
+            "sha256": format!("  {}  ", "AB".repeat(32)),
+            "medium": " VIDEO ",
+            "output_path": "/synthetic/Grüße 🌲.mp4",
+            "pinefetch_version": "  1.4.3  "
+        },
+        {
+            "id": "invalid",
+            "url": "https://www.youtube.com/watch?v=synthetic",
+            "created_at": 1700000000200_u64,
+            "title": "  Explicit title  ",
+            "uploader": "  ",
+            "filename": "  second.mp4  ",
+            "thumbnail": "  https://example.com/synthetic.jpg  ",
+            "upload_date": "  20200101  ",
+            "timestamp": 0,
+            "duration_seconds": 12,
+            "file_size_bytes": 123,
+            "sha256": "not-a-hash",
+            "medium": "unknown",
+            "source": " YoUTuBe ",
+            "platform": " YouTube ",
+            "output_path": "  ",
+            "pinefetch_version": "  "
+        },
+        entry("existing")
+    ]))
+    .unwrap();
+    fs::write(&path, &original).unwrap();
+    import_legacy_history(&conn, &path).unwrap();
+    // Read the persisted columns directly: history readers normalize returned
+    // rows too, which would hide bad stored values and broken SQL filtering.
+    let stored = |id| {
+        conn.query_row(
+            "SELECT title,uploader,filename,thumbnail,upload_date,timestamp,duration_seconds,file_size_bytes,sha256,medium,source,platform,output_path,pinefetch_version,created_at,completed_at FROM history_entries WHERE id=?1",
+            [id],
+            |r| Ok(json!({
+                "title": r.get::<_, Option<String>>(0)?,
+                "uploader": r.get::<_, Option<String>>(1)?,
+                "filename": r.get::<_, Option<String>>(2)?,
+                "thumbnail": r.get::<_, Option<String>>(3)?,
+                "upload_date": r.get::<_, Option<String>>(4)?,
+                "timestamp": r.get::<_, Option<i64>>(5)?,
+                "duration_seconds": r.get::<_, Option<i64>>(6)?,
+                "file_size_bytes": r.get::<_, Option<i64>>(7)?,
+                "sha256": r.get::<_, Option<String>>(8)?,
+                "medium": r.get::<_, Option<String>>(9)?,
+                "source": r.get::<_, Option<String>>(10)?,
+                "platform": r.get::<_, Option<String>>(11)?,
+                "output_path": r.get::<_, Option<String>>(12)?,
+                "pinefetch_version": r.get::<_, Option<String>>(13)?,
+                "created_at": r.get::<_, i64>(14)?,
+                "completed_at": r.get::<_, Option<i64>>(15)?
+            })),
+        ).unwrap()
+    };
+    assert_eq!(
+        stored("derived"),
+        json!({
+            "title": "Grüße 🌲", "uploader": "Synthetic creator", "filename": "Grüße 🌲.mp4",
+            "thumbnail": null, "upload_date": null, "timestamp": null,
+            "duration_seconds": null, "file_size_bytes": null, "sha256": "ab".repeat(32),
+            "medium": "video", "source": "youtube", "platform": "youtube",
+            "output_path": "/synthetic/Grüße 🌲.mp4", "pinefetch_version": "1.4.3",
+            "created_at": 1700000000000_i64, "completed_at": 1700000000100_i64
+        })
+    );
+    assert_eq!(
+        stored("invalid"),
+        json!({
+            "title": "Explicit title", "uploader": null, "filename": "second.mp4",
+            "thumbnail": "https://example.com/synthetic.jpg", "upload_date": "20200101", "timestamp": 0,
+            "duration_seconds": 12, "file_size_bytes": 123, "sha256": null,
+            "medium": null, "source": "youtube", "platform": "YouTube",
+            "output_path": null, "pinefetch_version": null,
+            "created_at": 1700000000200_i64, "completed_at": null
+        })
+    );
+    assert_eq!(stored("existing")["title"], "  Newer database title  ");
+    assert_eq!(stored("existing")["duration_seconds"], -7);
+    import_legacy_history(&conn, &path).unwrap();
+    assert_eq!(count(&conn, "history_entries"), 3);
+    assert_eq!(fs::read(path).unwrap(), original);
+    let state = app_state(conn);
+    let page =
+        search_history_page_from_db(&state, 20, 0, Some("Grüße"), Some("title"), Some("youtube"))
+            .unwrap();
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.entries[0].id, "derived");
 }
 
 #[test]

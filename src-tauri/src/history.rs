@@ -654,7 +654,10 @@ pub(super) fn import_legacy_history_with_hook(
         match existing {
             Some(url) if url != entry.url => return Err("Legacy history ID conflicts with an existing entry; import rolled back, original preserved".into()),
             Some(_) => {}, // stable imported ID; retain possibly newer DB metadata
-            None => insert_history_entry_in_conn(&tx, &entry)?,
+            None => {
+                let entry = normalize_history_entry(entry);
+                insert_history_entry_in_conn(&tx, &entry)?;
+            },
         }
         after_entry()?;
     }

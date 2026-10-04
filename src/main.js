@@ -1,7 +1,14 @@
 import { createBrowserImportView } from './browser-import-view.js';
 import { createSettingsView } from './settings-view.js';
 import { createHistoryView } from './history-view.js';
-import { detectPlatform, extractUrlStartTimestamp, isValidHttpUrl, normalizeTxtImportUrl, parseTxtImportLinks, resolveYouTubeThumbnail } from './url-utils.js';
+import {
+    detectPlatform,
+    extractUrlStartTimestamp,
+    isValidHttpUrl,
+    normalizeTxtImportUrl,
+    parseTxtImportLinks,
+    resolveYouTubeThumbnail,
+} from './url-utils.js';
 
 const tauriGlobal = window.__TAURI__;
 const invoke = tauriGlobal?.core?.invoke;
@@ -778,7 +785,8 @@ const renderQueue = () => {
 
         const badge = document.createElement('div');
         badge.className = 'pf-badge pf-badge-muted pf-queue-badge';
-        badge.textContent = ({ success: 'Completed', error: 'Failed', transcribing: 'Transcribing' })[job.state] || job.state || 'queued';
+        badge.textContent =
+            { success: 'Completed', error: 'Failed', transcribing: 'Transcribing' }[job.state] || job.state || 'queued';
 
         const moreBtn = document.createElement('button');
         moreBtn.className = 'pf-icon-btn pf-queue-more-btn';
@@ -802,8 +810,15 @@ const renderQueue = () => {
         progress.hidden = !isDownloading && !isProcessing && job.state !== 'success';
         progress.classList.toggle('pf-progress-indeterminate', isProcessing);
         progress.setAttribute('role', 'progressbar');
-        progress.setAttribute('aria-label', isProcessing ? (job.state === 'transcribing' ? 'Transcribing' : 'Cancelling') : 'Download progress');
-        if (!isProcessing) progress.setAttribute('aria-valuenow', String(Math.round(job.state === 'success' ? 100 : job.percent || 0)));
+        progress.setAttribute(
+            'aria-label',
+            isProcessing ? (job.state === 'transcribing' ? 'Transcribing' : 'Cancelling') : 'Download progress'
+        );
+        if (!isProcessing)
+            progress.setAttribute(
+                'aria-valuenow',
+                String(Math.round(job.state === 'success' ? 100 : job.percent || 0))
+            );
         progress.setAttribute('aria-valuemin', '0');
         progress.setAttribute('aria-valuemax', '100');
         const bar = document.createElement('span');
@@ -824,7 +839,8 @@ const renderQueue = () => {
             const errorText = document.createElement('p');
             const isHistoryWarning = job.state === 'success' && !job.clearError;
             errorText.className = `pf-status ${isHistoryWarning ? 'pf-queue-warning' : 'pf-status-error'} pf-queue-error`;
-            errorText.textContent = job.clearError || (job.state === 'success' ? `History warning: ${job.error}` : job.error);
+            errorText.textContent =
+                job.clearError || (job.state === 'success' ? `History warning: ${job.error}` : job.error);
             content.appendChild(errorText);
         }
         main.appendChild(content);
@@ -845,7 +861,9 @@ const renderQueue = () => {
     });
     if (focusedJobId) {
         const restoredItem = Array.from(els.queueList.children).find(item => item.dataset.jobId === focusedJobId);
-        restoredItem?.querySelector(focusedMoreButton ? '.pf-queue-more-btn' : '.pf-queue-title')?.focus({ preventScroll: true });
+        restoredItem
+            ?.querySelector(focusedMoreButton ? '.pf-queue-more-btn' : '.pf-queue-title')
+            ?.focus({ preventScroll: true });
     }
 
     if (state.contextMenuJobId && !state.jobs.has(state.contextMenuJobId)) {
@@ -878,7 +896,12 @@ const renderQueueProgress = () => {
 };
 
 const flushQueueRender = () => {
-    if (state.activeView !== 'download' || queueRenderFrame !== null || (!queueRenderDirty && queueProgressDirtyIds.size === 0)) return;
+    if (
+        state.activeView !== 'download' ||
+        queueRenderFrame !== null ||
+        (!queueRenderDirty && queueProgressDirtyIds.size === 0)
+    )
+        return;
 
     queueRenderFrame = requestAnimationFrame(() => {
         queueRenderFrame = null;
@@ -953,7 +976,9 @@ const updateJob = (id, patch) => {
     state.jobs.set(id, { ...existing, ...patch });
     const changedKeys = Object.keys(patch);
     if (previous && changedKeys.length === 1 && changedKeys[0] === 'previewLoading') return;
-    const progressOnly = previous && changedKeys.length > 0 &&
+    const progressOnly =
+        previous &&
+        changedKeys.length > 0 &&
         changedKeys.every(key => key === 'percent' || key === 'speed' || key === 'eta');
     if (progressOnly) queueProgressDirtyIds.add(id);
     scheduleQueueRender({ progressOnly });
@@ -1020,10 +1045,7 @@ const syncQueueStatus = async () => {
 };
 
 const browserImport = createBrowserImportView({ els, invoke, appendLog, appendTextSpans });
-const {
-    applyLinkDumpServerStatus,
-    syncLinkDumpOverview,
-} = browserImport;
+const { applyLinkDumpServerStatus, syncLinkDumpOverview } = browserImport;
 
 let loadInfoInFlight = false;
 let loadInfoPending = false;
@@ -1127,8 +1149,8 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     const uploaderForRequest = hasLoadedInfo ? state.info?.uploader || null : null;
     const thumbnailForRequest = hasLoadedInfo ? state.info?.thumbnail || null : (options.thumbnail ?? null);
     const uploadDateForRequest = hasLoadedInfo ? state.info?.upload_date || null : null;
-    const timestampForRequest = hasLoadedInfo ? state.info?.timestamp ?? null : null;
-    const durationSecondsForRequest = hasLoadedInfo ? state.info?.duration ?? null : null;
+    const timestampForRequest = hasLoadedInfo ? (state.info?.timestamp ?? null) : null;
+    const durationSecondsForRequest = hasLoadedInfo ? (state.info?.duration ?? null) : null;
 
     try {
         await settings.waitForPendingSave();
@@ -1440,12 +1462,23 @@ const clearQueue = async () => {
 };
 
 const settings = createSettingsView({
-    els, invoke, appendLog, normalizePresetKey, getSelectedPresetKey, updateDownloadOptionHints,
+    els,
+    invoke,
+    appendLog,
+    normalizePresetKey,
+    getSelectedPresetKey,
+    updateDownloadOptionHints,
     isActive: () => state.activeView === 'settings',
 });
 
 const historyView = createHistoryView({
-    els, invoke, appendLog, formatFileSize, formatDuration, detectPlatform, appendTextSpans,
+    els,
+    invoke,
+    appendLog,
+    formatFileSize,
+    formatDuration,
+    detectPlatform,
+    appendTextSpans,
     isActive: () => state.activeView === 'history',
 });
 

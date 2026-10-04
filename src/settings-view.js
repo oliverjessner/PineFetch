@@ -1,9 +1,16 @@
-export const createSettingsView = ({ els, invoke, appendLog, normalizePresetKey, getSelectedPresetKey, updateDownloadOptionHints, isActive }) => {
+export const createSettingsView = ({
+    els,
+    invoke,
+    appendLog,
+    normalizePresetKey,
+    getSelectedPresetKey,
+    updateDownloadOptionHints,
+    isActive,
+}) => {
     const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
     const defaultFasterWhisperModel = 'base';
     const fasterWhisperModels = new Set(['base', 'small', 'medium', 'large-v3']);
-    const normalizeFasterWhisperModel = model =>
-        fasterWhisperModels.has(model) ? model : defaultFasterWhisperModel;
+    const normalizeFasterWhisperModel = model => (fasterWhisperModels.has(model) ? model : defaultFasterWhisperModel);
     let config = null;
     let configSaveQueue = Promise.resolve();
     let configSaveRevision = 0;

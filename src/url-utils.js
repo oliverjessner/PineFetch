@@ -102,7 +102,12 @@ const isTikTokHostname = hostname => {
 
 const isInstagramHostname = hostname => {
     const host = normalizeHostname(hostname);
-    return host === 'instagram.com' || host.endsWith('.instagram.com') || host === 'instagr.am' || host.endsWith('.instagr.am');
+    return (
+        host === 'instagram.com' ||
+        host.endsWith('.instagram.com') ||
+        host === 'instagr.am' ||
+        host.endsWith('.instagr.am')
+    );
 };
 
 const getYouTubeVideoIdFromParsedUrl = parsed => {
@@ -176,9 +181,7 @@ const normalizeTikTokUrl = value => {
 
         const host = normalizeHostname(parsed.hostname);
         const pathParts = parsed.pathname.split('/').filter(Boolean);
-        const contentId = pathParts
-            .map(part => part.replace(/\.html$/i, ''))
-            .find(part => /^\d{6,}$/.test(part));
+        const contentId = pathParts.map(part => part.replace(/\.html$/i, '')).find(part => /^\d{6,}$/.test(part));
         const shortCode =
             host === 'vm.tiktok.com' || host === 'vt.tiktok.com'
                 ? pathParts[0] || null
@@ -228,7 +231,8 @@ const normalizeInstagramUrl = value => {
     }
 };
 
-const normalizeTxtImportUrl = value => normalizeYouTubeUrl(value) || normalizeTikTokUrl(value) || normalizeInstagramUrl(value);
+const normalizeTxtImportUrl = value =>
+    normalizeYouTubeUrl(value) || normalizeTikTokUrl(value) || normalizeInstagramUrl(value);
 
 const parseTxtImportLinks = content => {
     const rawContent = `${content || ''}`;
@@ -266,4 +270,11 @@ const parseTxtImportLinks = content => {
     return result;
 };
 
-export { detectPlatform, extractUrlStartTimestamp, isValidHttpUrl, normalizeTxtImportUrl, parseTxtImportLinks, resolveYouTubeThumbnail };
+export {
+    detectPlatform,
+    extractUrlStartTimestamp,
+    isValidHttpUrl,
+    normalizeTxtImportUrl,
+    parseTxtImportLinks,
+    resolveYouTubeThumbnail,
+};

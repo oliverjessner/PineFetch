@@ -1,7 +1,7 @@
 {
     "productName": "PineFetch",
     "mainBinaryName": "PineFetch",
-    "version": "2.2.0",
+    "version": "2.2.1",
     "identifier": "com.pinefetch.app",
     "build": {
         "beforeBuildCommand": "",
@@ -37,10 +37,6 @@
             "resources/deno-runtime",
             "icons/icon.png"
         ],
-        "icon": [
-            "icons/icon.png",
-            "icons/icon.icns",
-            "icons/icon.ico"
-        ]
+        "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"]
     }
 }

@@ -1,0 +1,24 @@
+# Dependencies and the deliberately preserved GLib security backport.
+node_modules/
+src-tauri/vendor/glib/
+src/vendor/
+
+# Generated metadata, bundled runtimes, binaries, and build output.
+**/target/
+src-tauri/gen/
+src-tauri/resources/
+src-tauri/icons/
+src/images/
+package-lock.json
+**/Cargo.lock
+dist/
+build/
+.next/
+coverage/
+
+# Local secrets, logs, and databases.
+.env
+.env.*
+*.log
+*.db
+*.sqlite

@@ -6,6 +6,11 @@ SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 REPO_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
 cd "$REPO_DIR"
 
+# Version preparation is explicit; the following gates are read-only.
+npm run sync:version
+npm run check
+npm run build:check
+
 RELEASE_REPO="oliverjessner/PineFetch"
 BUNDLE_DIR="src-tauri/target/release/bundle"
 APP="$BUNDLE_DIR/macos/PineFetch.app"
@@ -60,7 +65,6 @@ if ! git -C "$HOMEBREW_TAP_DIR" diff --quiet "HEAD..origin/$TAP_BRANCH"; then
     exit 1
 fi
 
-npm run sync:version
 VERSION=$(node -p 'require("./package.json").version || "0.0.0"')
 TAG="v$VERSION"
 

@@ -691,40 +691,38 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                 );
                             }
                         }
-                    } else {
-                        if finish_active_job_with_side_effect(
+                    } else if finish_active_job_with_side_effect(
+                        &app_handle,
+                        &state_handle,
+                        DownloadStateEvent {
+                            id: job.id.clone(),
+                            state: "success".to_string(),
+                            exit_code: Some(run_result.exit_code),
+                            error: None,
+                            output_path: run_result.output_path.clone(),
+                        },
+                        || match add_history_entry_on_success(
                             &app_handle,
                             &state_handle,
-                            DownloadStateEvent {
-                                id: job.id.clone(),
-                                state: "success".to_string(),
-                                exit_code: Some(run_result.exit_code),
-                                error: None,
-                                output_path: run_result.output_path.clone(),
-                            },
-                            || match add_history_entry_on_success(
+                            &job,
+                            run_result.output_path.as_deref(),
+                            run_result.info.as_ref(),
+                        ) {
+                            Ok(history_entry_id) => store_captions_with_warning(
                                 &app_handle,
                                 &state_handle,
-                                &job,
-                                run_result.output_path.as_deref(),
-                                run_result.info.as_ref(),
-                            ) {
-                                Ok(history_entry_id) => store_captions_with_warning(
-                                    &app_handle,
-                                    &state_handle,
-                                    &job.id,
-                                    &history_entry_id,
-                                    &run_result.captions,
-                                ),
-                                Err(err) => {
-                                    let warning = format!("History save failed: {err}");
-                                    emit_history_warning(&app_handle, &job.id, &warning);
-                                    Some(warning)
-                                }
-                            },
-                        ) {
-                            summary.succeeded += 1;
-                        }
+                                &job.id,
+                                &history_entry_id,
+                                &run_result.captions,
+                            ),
+                            Err(err) => {
+                                let warning = format!("History save failed: {err}");
+                                emit_history_warning(&app_handle, &job.id, &warning);
+                                Some(warning)
+                            }
+                        },
+                    ) {
+                        summary.succeeded += 1;
                     }
                 }
                 Err(err) => {

@@ -698,7 +698,7 @@ pub(super) fn write_json_response(
         ),
         status_code,
         status_text,
-        body.as_bytes().len(),
+        body.len(),
         body
     );
     stream

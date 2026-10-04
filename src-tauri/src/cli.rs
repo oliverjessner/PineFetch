@@ -365,7 +365,7 @@ fn start_server(app: &AppHandle) -> Result<CliServer, String> {
         port: listener.local_addr().map_err(|e| e.to_string())?.port(),
         token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
     };
-    let path = endpoint_path(&app.config())?;
+    let path = endpoint_path(app.config())?;
     fs::create_dir_all(path.parent().ok_or("Invalid CLI endpoint path")?)
         .map_err(|e| e.to_string())?;
     let temporary = path.with_extension(format!("{}.tmp", Uuid::new_v4()));

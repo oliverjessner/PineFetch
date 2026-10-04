@@ -588,8 +588,12 @@ body {
 }
 
 @keyframes pf-pinefetch-processing {
-    from { left: 0; }
-    to { left: 65%; }
+    from {
+        left: 0;
+    }
+    to {
+        left: 65%;
+    }
 }
 
 .pf-queue-title {

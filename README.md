@@ -99,7 +99,7 @@ You'll need Node.js, Rust, Tauri and yt-dlp.
 git clone https://github.com/oliverjessner/PineFetch.git
 cd PineFetch
 
-npm install
+npm ci
 npm run dev
 ```
 
@@ -110,6 +110,10 @@ npm run build
 ```
 
 Release notes are available in the [changelog](docs/changelog.md).
+
+Run `npm run check` before submitting changes. Toolchain setup, individual checks,
+the compile/link build check, and required CI gates are described in the
+[development guide](docs/DEVELOPMENT.md).
 
 ## Settings
 

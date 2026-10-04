@@ -1,6 +1,6 @@
 [package]
 name = "pinefetch"
-version = "2.2.0"
+version = "2.2.1"
 description = "Local yt-dlp desktop UI"
 authors = ["Oliver Jessner"]
 license = "MIT"
@@ -35,3 +35,8 @@ mac-notification-sys = "0.6.12"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+# Backport RUSTSEC-2024-0429 while Tauri's GTK3 stack requires glib 0.18.
+# See vendor/README.md for the upstream source and removal criteria.
+[patch.crates-io]
+glib = { path = "vendor/glib" }

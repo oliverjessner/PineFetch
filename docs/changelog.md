@@ -1,3 +1,7 @@
+# 2.2.1
+
+- security fixes
+
 # 2.2.0
 
 - storing the pinefetch version in the database

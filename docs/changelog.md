@@ -2,7 +2,6 @@
 
 - security fixes that are coming from dependabot
 - adding a ci
-- runtime bundle check for target systems
 - chore: strengthen data integrity and migration quality
 
 # 2.2.0

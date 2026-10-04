@@ -9,17 +9,6 @@ pub(super) fn legacy_history_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("history.json"))
 }
 
-pub(super) fn load_legacy_history_json(app: &AppHandle) -> Vec<HistoryEntry> {
-    if let Ok(path) = legacy_history_path(app) {
-        if let Ok(raw) = fs::read_to_string(path) {
-            if let Ok(history) = serde_json::from_str::<Vec<HistoryEntry>>(&raw) {
-                return history.into_iter().map(normalize_history_entry).collect();
-            }
-        }
-    }
-    Vec::new()
-}
-
 pub(super) fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
     entry.title = trim_optional_string(entry.title);
     entry.uploader = trim_optional_string(entry.uploader);
@@ -64,6 +53,7 @@ pub(super) fn optional_i64_to_millis(value: Option<i64>) -> Option<u64> {
     value.map(i64_to_millis)
 }
 
+#[cfg(test)]
 pub(super) fn count_history_entries_in_db(state: &AppState) -> Result<u64, String> {
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
     let count: i64 = conn
@@ -419,12 +409,20 @@ pub(super) fn get_history_stats_from_db(state: &AppState) -> Result<HistoryStats
     Ok(stats)
 }
 
+#[cfg(test)]
 pub(super) fn insert_history_entry_in_db(
     state: &AppState,
     entry: &HistoryEntry,
 ) -> Result<(), String> {
     let entry = normalize_history_entry(entry.clone());
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    insert_history_entry_in_conn(&conn, &entry)
+}
+
+pub(super) fn insert_history_entry_in_conn(
+    conn: &Connection,
+    entry: &HistoryEntry,
+) -> Result<(), String> {
     conn.execute(
         "INSERT INTO history_entries (
             id,
@@ -489,6 +487,7 @@ pub(super) fn insert_history_entry_in_db(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn insert_captions_in_db(
     state: &AppState,
     history_entry_id: &str,
@@ -502,8 +501,20 @@ pub(super) fn insert_captions_in_db(
     let transaction = conn
         .transaction()
         .map_err(|e| format!("Caption transaction failed: {e}"))?;
+    insert_captions_in_conn(&transaction, history_entry_id, captions)?;
+    transaction
+        .commit()
+        .map_err(|e| format!("Caption transaction failed: {e}"))?;
+    Ok(())
+}
+
+pub(super) fn insert_captions_in_conn(
+    conn: &Connection,
+    history_entry_id: &str,
+    captions: &[SavedCaption],
+) -> Result<(), String> {
     {
-        let mut statement = transaction
+        let mut statement = conn
             .prepare(
                 "INSERT INTO captions (
                     history_entry_id, media_path, caption_path, text, sha256, created_at
@@ -527,31 +538,23 @@ pub(super) fn insert_captions_in_db(
                 .map_err(|e| format!("Caption insert failed: {e}"))?;
         }
     }
-    transaction
-        .commit()
-        .map_err(|e| format!("Caption transaction failed: {e}"))?;
     Ok(())
 }
 
-pub(super) fn store_transcription_for_history_entry(
-    state: &AppState,
-    job: &DownloadJob,
-    history_entry_id: &str,
-    transcript_path: &str,
-    language: &str,
-) -> Result<(), String> {
-    let text = fs::read_to_string(transcript_path)
-        .map_err(|e| format!("Transcript file could not be read: {e}"))?;
-    let transcription_type = if job.transcribe_timestamps {
-        "text with timestamps"
-    } else {
-        "text"
-    };
-    insert_transcription_in_db(state, history_entry_id, &text, transcription_type, language)
-}
-
+#[cfg(test)]
 pub(super) fn insert_transcription_in_db(
     state: &AppState,
+    history_entry_id: &str,
+    text: &str,
+    transcription_type: &str,
+    language: &str,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    insert_transcription_in_conn(&conn, history_entry_id, text, transcription_type, language)
+}
+
+pub(super) fn insert_transcription_in_conn(
+    conn: &Connection,
     history_entry_id: &str,
     text: &str,
     transcription_type: &str,
@@ -561,7 +564,6 @@ pub(super) fn insert_transcription_in_db(
     if language.is_empty() {
         return Err("Transcription language is required".to_string());
     }
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
     conn.execute(
         "INSERT INTO transcriptions (id, history_entry_id, text, \"type\", language)
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -579,25 +581,88 @@ pub(super) fn insert_transcription_in_db(
 
 pub(super) fn delete_history_entry_from_db(state: &AppState, id: &str) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute("DELETE FROM history_entries WHERE id = ?1", params![id])
+    let tx = database::write_transaction(&conn)?;
+    tx.execute("DELETE FROM history_entries WHERE id = ?1", params![id])
         .map_err(|e| format!("History delete failed: {e}"))?;
-    Ok(())
+    tx.commit()
+        .map_err(|e| format!("History deletion commit failed: {e}"))
 }
 
 pub(super) fn clear_history_entries_in_db(state: &AppState) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute("DELETE FROM history_entries", [])
+    let tx = database::write_transaction(&conn)?;
+    tx.execute("DELETE FROM history_entries", [])
         .map_err(|e| format!("History clear failed: {e}"))?;
-    Ok(())
+    tx.commit()
+        .map_err(|e| format!("History deletion commit failed: {e}"))
 }
 
 pub(super) fn migrate_legacy_history_json(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    if count_history_entries_in_db(state)? > 0 {
+    let path = legacy_history_path(app)?;
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    import_legacy_history(&conn, &path)
+}
+
+pub(super) fn import_legacy_history(conn: &Connection, path: &Path) -> Result<(), String> {
+    import_legacy_history_with_hook(conn, path, || Ok(()))
+}
+
+pub(super) fn import_legacy_history_with_hook(
+    conn: &Connection,
+    path: &Path,
+    mut after_entry: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    let imported: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM legacy_imports WHERE name='history_json')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("History import marker read failed: {e}"))?;
+    if imported {
         return Ok(());
     }
-
-    for entry in load_legacy_history_json(app) {
-        insert_history_entry_in_db(state, &entry)?;
+    let entries = read_legacy_json::<Vec<HistoryEntry>>(path)?;
+    let tx = database::write_transaction(conn)
+        .map_err(|e| format!("History import transaction failed: {e}"))?;
+    let imported: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM legacy_imports WHERE name='history_json')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if imported {
+        return Ok(());
     }
-    Ok(())
+    let mut ids = HashSet::new();
+    for entry in entries.into_iter().flatten() {
+        if entry.id.trim().is_empty() || !ids.insert(entry.id.clone()) {
+            return Err(
+                "Legacy history has missing/duplicate IDs; import rolled back, original preserved"
+                    .into(),
+            );
+        }
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT url FROM history_entries WHERE id=?1",
+                [&entry.id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        match existing {
+            Some(url) if url != entry.url => return Err("Legacy history ID conflicts with an existing entry; import rolled back, original preserved".into()),
+            Some(_) => {}, // stable imported ID; retain possibly newer DB metadata
+            None => insert_history_entry_in_conn(&tx, &entry)?,
+        }
+        after_entry()?;
+    }
+    tx.execute(
+        "INSERT INTO legacy_imports(name, completed_at) VALUES ('history_json', ?1)",
+        [millis_to_i64(current_timestamp_millis())],
+    )
+    .map_err(|e| format!("History import marker failed: {e}"))?;
+    tx.commit()
+        .map_err(|e| format!("History import commit failed: {e}"))
 }

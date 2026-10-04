@@ -312,31 +312,47 @@ pub(super) fn finish_active_job(
     state: &AppState,
     event: DownloadStateEvent,
 ) -> bool {
-    finish_active_job_with_side_effect(app, state, event, || None)
+    finish_active_job_with_side_effect(app, state, event, || Ok(()))
 }
 
 pub(super) fn finish_active_job_with_side_effect(
     app: &AppHandle,
     state: &AppState,
     mut event: DownloadStateEvent,
-    after_success: impl FnOnce() -> Option<String>,
+    after_success: impl FnOnce() -> Result<(), String>,
 ) -> bool {
     if let Ok(mut current) = state.current_job_id.lock() {
         if let Ok(mut cancel) = state.cancel_requested.lock() {
             if cancel.as_deref() == Some(event.id.as_str()) {
                 *cancel = None;
                 event.state = "cancelled".to_string();
-                event.error = None;
-                event.output_path = None;
+                event.error = event
+                    .output_path
+                    .as_ref()
+                    .map(|_| "Cancelled after output creation; output file preserved".to_string());
             }
+        } else {
+            completion::apply_result(
+                &mut event,
+                Err("Cancellation state lock poisoned; output file preserved".into()),
+            );
         }
         if event.state == "success" {
-            event.error = after_success();
+            let result = after_success();
+            if let Err(error) = &result {
+                emit_history_warning(app, &event.id, error);
+            }
+            completion::apply_result(&mut event, result);
         }
         *current = None;
         if let Ok(mut active_key) = state.active_video_key.lock() {
             *active_key = None;
         }
+    } else {
+        completion::apply_result(
+            &mut event,
+            Err("Completion state lock poisoned; output file preserved".into()),
+        );
     }
     let succeeded = event.state == "success";
     emit_state(app, event);
@@ -423,20 +439,18 @@ pub(super) fn emit_history_warning(app: &AppHandle, job_id: &str, warning: &str)
     );
 }
 
-fn store_captions_with_warning(
+fn persist_job_completion(
     app: &AppHandle,
     state: &AppState,
-    job_id: &str,
-    history_entry_id: &str,
+    job: &DownloadJob,
+    path: Option<&str>,
+    info: Option<&InfoResponse>,
     captions: &[SavedCaption],
-) -> Option<String> {
-    insert_captions_in_db(state, history_entry_id, captions)
-        .err()
-        .map(|err| {
-            let warning = format!("Caption save failed: {err}");
-            emit_history_warning(app, job_id, &warning);
-            warning
-        })
+    language: Option<&str>,
+) -> Result<(), String> {
+    completion::complete(state, job, path, info, captions, language)?;
+    let _ = app.emit("history:changed", ());
+    Ok(())
 }
 
 pub(super) fn show_queue_notification(app: &AppHandle, body: &str) -> Result<(), String> {
@@ -547,7 +561,8 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                 },
             );
 
-            let result = run_download_job(&app_handle, &state_handle, &job);
+            let result = completion::begin(&state_handle, &job)
+                .and_then(|()| run_download_job(&app_handle, &state_handle, &job));
 
             match result {
                 Ok(run_result) => {
@@ -559,8 +574,11 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                 id: job.id.clone(),
                                 state: "cancelled".to_string(),
                                 exit_code: Some(run_result.exit_code),
-                                error: None,
-                                output_path: None,
+                                error: run_result
+                                    .output_path
+                                    .as_ref()
+                                    .map(|_| "Cancelled; produced output file preserved".into()),
+                                output_path: run_result.output_path.clone(),
                             },
                         );
                     } else if run_result.exit_code != 0 {
@@ -571,12 +589,28 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                 id: job.id.clone(),
                                 state: "error".to_string(),
                                 exit_code: Some(run_result.exit_code),
-                                error: Some(run_result.error.unwrap_or_else(|| {
-                                    format!("yt-dlp failed (exit code {})", run_result.exit_code)
-                                })),
-                                output_path: None,
+                                error: Some(format!(
+                                    "{}. Existing output files preserved.",
+                                    run_result.error.unwrap_or_else(|| {
+                                        format!(
+                                            "yt-dlp failed (exit code {})",
+                                            run_result.exit_code
+                                        )
+                                    })
+                                )),
+                                output_path: run_result.output_path.clone(),
                             },
                         );
+                    } else if let Err(err) = completion::output_ready(
+                        &state_handle,
+                        &job,
+                        run_result.output_path.as_deref(),
+                    ) {
+                        finish_active_job(&app_handle, &state_handle, DownloadStateEvent {
+                            id: job.id.clone(), state: "error".into(), exit_code: Some(run_result.exit_code),
+                            error: Some(format!("Output completion receipt failed: {err}. Existing output file preserved.")),
+                            output_path: run_result.output_path.clone(),
+                        });
                     } else if job.transcribe_text {
                         if job.download_video_with_transcript {
                             if let Some(video_path) = run_result.output_path.as_deref() {
@@ -631,47 +665,16 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                         error: None,
                                         output_path: Some(transcript_path.clone()),
                                     },
-                                    || match add_history_entry_on_success(
-                                        &app_handle,
-                                        &state_handle,
-                                        &job,
-                                        Some(&transcript_path),
-                                        run_result.info.as_ref(),
-                                    ) {
-                                        Ok(history_entry_id) => {
-                                            let mut warnings = Vec::new();
-                                            if let Err(err) = store_transcription_for_history_entry(
-                                                &state_handle,
-                                                &job,
-                                                &history_entry_id,
-                                                &transcript_path,
-                                                &transcription.language,
-                                            ) {
-                                                let warning =
-                                                    format!("Transcript index save failed: {err}");
-                                                emit_history_warning(
-                                                    &app_handle,
-                                                    &job.id,
-                                                    &warning,
-                                                );
-                                                warnings.push(warning);
-                                            }
-                                            if let Some(warning) = store_captions_with_warning(
-                                                &app_handle,
-                                                &state_handle,
-                                                &job.id,
-                                                &history_entry_id,
-                                                &run_result.captions,
-                                            ) {
-                                                warnings.push(warning);
-                                            }
-                                            (!warnings.is_empty()).then(|| warnings.join("; "))
-                                        }
-                                        Err(err) => {
-                                            let warning = format!("History save failed: {err}");
-                                            emit_history_warning(&app_handle, &job.id, &warning);
-                                            Some(warning)
-                                        }
+                                    || {
+                                        persist_job_completion(
+                                            &app_handle,
+                                            &state_handle,
+                                            &job,
+                                            Some(&transcript_path),
+                                            run_result.info.as_ref(),
+                                            &run_result.captions,
+                                            Some(&transcription.language),
+                                        )
                                     },
                                 ) {
                                     summary.succeeded += 1;
@@ -685,8 +688,8 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                         id: job.id.clone(),
                                         state: "error".to_string(),
                                         exit_code: Some(run_result.exit_code),
-                                        error: Some(err),
-                                        output_path: None,
+                                        error: Some(format!("Transcription failed: {err}. Existing media/output files preserved.")),
+                                        output_path: run_result.output_path.clone(),
                                     },
                                 );
                             }
@@ -701,31 +704,29 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                             error: None,
                             output_path: run_result.output_path.clone(),
                         },
-                        || match add_history_entry_on_success(
-                            &app_handle,
-                            &state_handle,
-                            &job,
-                            run_result.output_path.as_deref(),
-                            run_result.info.as_ref(),
-                        ) {
-                            Ok(history_entry_id) => store_captions_with_warning(
+                        || {
+                            persist_job_completion(
                                 &app_handle,
                                 &state_handle,
-                                &job.id,
-                                &history_entry_id,
+                                &job,
+                                run_result.output_path.as_deref(),
+                                run_result.info.as_ref(),
                                 &run_result.captions,
-                            ),
-                            Err(err) => {
-                                let warning = format!("History save failed: {err}");
-                                emit_history_warning(&app_handle, &job.id, &warning);
-                                Some(warning)
-                            }
+                                None,
+                            )
                         },
                     ) {
                         summary.succeeded += 1;
                     }
                 }
                 Err(err) => {
+                    let (output_path, receipt_error) =
+                        match completion::known_output(&state_handle, &job.id) {
+                            Ok(path) => (path, String::new()),
+                            Err(read_error) => {
+                                (None, format!(" Output location unavailable: {read_error}."))
+                            }
+                        };
                     finish_active_job(
                         &app_handle,
                         &state_handle,
@@ -733,8 +734,8 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                             id: job.id.clone(),
                             state: "error".to_string(),
                             exit_code: None,
-                            error: Some(err),
-                            output_path: None,
+                            error: Some(format!("Processing failed: {err}. Existing output files preserved.{receipt_error}")),
+                            output_path,
                         },
                     );
                 }

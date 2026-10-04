@@ -94,10 +94,17 @@ pub(super) fn update_config(
     change: impl FnOnce(&mut AppConfig),
 ) -> Result<AppConfig, String> {
     let mut current = state.config.lock().map_err(|_| "Config lock poisoned")?;
-    let mut next = current.clone();
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let tx = database::write_transaction(&conn)
+        .map_err(|e| format!("Config transaction failed: {e}"))?;
+    // Re-read under the SQLite writer lock: another app process may have
+    // changed fields since this process populated its UI cache.
+    let mut next = load_config_from_db(&tx)?;
     change(&mut next);
     let next = normalize_app_config(next);
-    save_config_to_db(state, &next)?;
+    upsert_app_config_in_conn(&tx, &next).map_err(|e| format!("Config write failed: {e}"))?;
+    tx.commit()
+        .map_err(|e| format!("Config commit failed: {e}"))?;
     *current = next.clone();
     Ok(next)
 }
@@ -141,17 +148,6 @@ pub(super) fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|_| "Config directory unavailable")?;
     fs::create_dir_all(&dir).map_err(|e| format!("Config dir create failed: {e}"))?;
     Ok(dir.join("config.json"))
-}
-
-pub(super) fn load_legacy_config_json(app: &AppHandle) -> Option<AppConfig> {
-    if let Ok(path) = config_path(app) {
-        if let Ok(raw) = fs::read_to_string(path) {
-            if let Ok(cfg) = serde_json::from_str::<AppConfig>(&raw) {
-                return Some(normalize_app_config(cfg));
-            }
-        }
-    }
-    None
 }
 
 pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
@@ -257,12 +253,35 @@ pub(super) fn upsert_app_config_in_conn(
     Ok(())
 }
 
-pub(super) fn save_config_to_db(state: &AppState, config: &AppConfig) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    upsert_app_config_in_conn(&conn, config).map_err(|e| format!("Config write failed: {e}"))
+pub(super) fn migrate_legacy_config_json(app: &AppHandle, conn: &Connection) -> Result<(), String> {
+    import_legacy_config(conn, &config_path(app)?)
 }
 
-pub(super) fn migrate_legacy_config_json(app: &AppHandle, conn: &Connection) -> Result<(), String> {
+pub(super) fn read_legacy_json<T: serde::de::DeserializeOwned>(
+    path: &Path,
+) -> Result<Option<T>, String> {
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(format!(
+                "Legacy JSON read failed for {}: {e}; original preserved",
+                path.display()
+            ))
+        }
+    };
+    serde_json::from_slice(&raw).map(Some).map_err(|e| {
+        format!(
+            "Legacy JSON is invalid for {} ({:?}, line {}, column {}); original preserved",
+            path.display(),
+            e.classify(),
+            e.line(),
+            e.column()
+        )
+    })
+}
+
+pub(super) fn import_legacy_config(conn: &Connection, path: &Path) -> Result<(), String> {
     let already_migrated: bool = conn
         .query_row(
             "SELECT legacy_config_json_migrated FROM app_config WHERE id = 1",
@@ -276,17 +295,60 @@ pub(super) fn migrate_legacy_config_json(app: &AppHandle, conn: &Connection) -> 
         return Ok(());
     }
 
-    if let Some(config) = load_legacy_config_json(app) {
-        upsert_app_config_in_conn(conn, &config)
+    let config = read_legacy_json::<serde_json::Value>(path)?
+        .map(|value| {
+            let recognized = [
+                "yt_dlp_path",
+                "default_output_dir",
+                "selected_preset_key",
+                "faster_whisper_model",
+                "download_video_with_transcript",
+                "magic_import_enabled",
+                "cut_at_timestamp_enabled",
+                "last_download_url",
+                "notifications_enabled",
+                "save_captions",
+                "save_instagram_captions",
+                "save_thumbnails",
+            ];
+            if !value
+                .as_object()
+                .is_some_and(|object| recognized.iter().any(|key| object.contains_key(*key)))
+            {
+                return Err(
+                    "Legacy config JSON has an unexpected structure; original preserved".into(),
+                );
+            }
+            serde_json::from_value::<AppConfig>(value).map_err(|_| {
+                "Legacy config JSON has invalid field types; original preserved".to_string()
+            })
+        })
+        .transpose()?;
+    let tx = database::write_transaction(conn)
+        .map_err(|e| format!("Config import transaction failed: {e}"))?;
+    // Competing starts must not overwrite an already imported configuration.
+    let migrated: bool = tx
+        .query_row(
+            "SELECT legacy_config_json_migrated != 0 FROM app_config WHERE id=1",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if migrated {
+        return Ok(());
+    }
+    if let Some(config) = config {
+        upsert_app_config_in_conn(&tx, &config)
             .map_err(|e| format!("Config migration failed: {e}"))?;
     }
 
-    conn.execute(
+    tx.execute(
         "UPDATE app_config SET legacy_config_json_migrated = 1 WHERE id = 1",
         [],
     )
     .map_err(|e| format!("Config migration marker failed: {e}"))?;
-    Ok(())
+    tx.commit()
+        .map_err(|e| format!("Config import commit failed: {e}"))
 }
 
 #[cfg(test)]
@@ -297,16 +359,15 @@ mod tests {
     fn settings_patch_preserves_newer_url_and_preset_and_clears_nullable_path() {
         let conn = Connection::open_in_memory().unwrap();
         run_link_dump_migrations(&conn).unwrap();
-        let state = AppState::new(
-            AppConfig {
-                yt_dlp_path: Some("/old/yt-dlp".to_string()),
-                default_output_dir: Some("/old/downloads".to_string()),
-                selected_preset_key: Some("audio_mp3".to_string()),
-                last_download_url: Some("https://example.com/new".to_string()),
-                ..AppConfig::default()
-            },
-            conn,
-        );
+        let initial = AppConfig {
+            yt_dlp_path: Some("/old/yt-dlp".to_string()),
+            default_output_dir: Some("/old/downloads".to_string()),
+            selected_preset_key: Some("audio_mp3".to_string()),
+            last_download_url: Some("https://example.com/new".to_string()),
+            ..AppConfig::default()
+        };
+        upsert_app_config_in_conn(&conn, &initial).unwrap();
+        let state = AppState::new(initial, conn);
         let changes: ConfigPatch = serde_json::from_value(json!({
             "yt_dlp_path": null,
             "notifications_enabled": true

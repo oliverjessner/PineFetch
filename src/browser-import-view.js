@@ -48,7 +48,9 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
         els.linkDumpServerStatusBadge.classList.toggle('pf-badge', true);
 
         if (status === 'running') {
-            setLinkDumpStatusText('Browser extensions can send YouTube, TikTok, Instagram, Facebook, X, and Reddit links to this PineFetch instance.');
+            setLinkDumpStatusText(
+                'Browser extensions can send YouTube, TikTok, Instagram, Facebook, X, and Reddit links to this PineFetch instance.'
+            );
         } else if (status === 'error') {
             setLinkDumpStatusText(serverStatus.error_message || 'Link Dump Server could not start.', true);
         } else {
@@ -104,7 +106,11 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
                 revokeBtn.type = 'button';
                 revokeBtn.textContent = 'Revoke';
                 revokeBtn.onclick = () => {
-                    if (!window.confirm('Revoke this connection? Extensions using this secret will no longer be able to send links.')) {
+                    if (
+                        !window.confirm(
+                            'Revoke this connection? Extensions using this secret will no longer be able to send links.'
+                        )
+                    ) {
                         return;
                     }
                     void revokeLinkDumpSecret(connection.id);
@@ -118,7 +124,11 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
                 deleteBtn.type = 'button';
                 deleteBtn.textContent = 'Delete';
                 deleteBtn.onclick = () => {
-                    if (!window.confirm('Delete this connection? Extensions using this secret will no longer be able to send links.')) {
+                    if (
+                        !window.confirm(
+                            'Delete this connection? Extensions using this secret will no longer be able to send links.'
+                        )
+                    ) {
                         return;
                     }
                     void deleteLinkDumpSecret(connection.id);

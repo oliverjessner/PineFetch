@@ -1,6 +1,15 @@
 import { createHistoryDetailsView } from './history-details-view.js';
 
-export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, formatDuration, detectPlatform, appendTextSpans, isActive }) => {
+export const createHistoryView = ({
+    els,
+    invoke,
+    appendLog,
+    formatFileSize,
+    formatDuration,
+    detectPlatform,
+    appendTextSpans,
+    isActive,
+}) => {
     const state = Object.seal({
         historyOffset: 0,
         historyHasMore: false,
@@ -93,7 +102,15 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
 
     const formatHistorySource = source => {
         const name = `${source || 'unknown'}`.trim().toLowerCase();
-        const known = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', twitch: 'Twitch', linkedin: 'LinkedIn', x: 'X' };
+        const known = {
+            youtube: 'YouTube',
+            tiktok: 'TikTok',
+            instagram: 'Instagram',
+            facebook: 'Facebook',
+            twitch: 'Twitch',
+            linkedin: 'LinkedIn',
+            x: 'X',
+        };
         return known[name] || (name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Unknown');
     };
 
@@ -336,10 +353,11 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
             const searchField = els.historySearchFieldSelect.value;
             const source = els.historySourceSelect.value;
             if (
-                query === state.historyQuery
-                && searchField === state.historySearchField
-                && source === state.historySource
-            ) return;
+                query === state.historyQuery &&
+                searchField === state.historySearchField &&
+                source === state.historySource
+            )
+                return;
             state.historyQuery = query;
             state.historySearchField = searchField;
             state.historySource = source;
@@ -349,7 +367,8 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
         const applySelectFilters = () => {
             if (historySearchTimer !== null) clearTimeout(historySearchTimer);
             historySearchTimer = null;
-            els.historySearchInput.placeholder = searchPlaceholders[els.historySearchFieldSelect.value] || 'Search history';
+            els.historySearchInput.placeholder =
+                searchPlaceholders[els.historySearchFieldSelect.value] || 'Search history';
             applyHistoryFilters();
         };
 
@@ -367,7 +386,12 @@ export const createHistoryView = ({ els, invoke, appendLog, formatFileSize, form
         els.historySourceSelect.addEventListener('change', applySelectFilters);
         els.clearHistoryBtn.addEventListener('click', async () => {
             if (!invoke || state.historyClearing) return;
-            if (!window.confirm('Delete all history entries and saved transcripts? This cannot be undone. Downloaded files will stay on disk.')) return;
+            if (
+                !window.confirm(
+                    'Delete all history entries and saved transcripts? This cannot be undone. Downloaded files will stay on disk.'
+                )
+            )
+                return;
 
             state.historyClearing = true;
             els.clearHistoryBtn.disabled = true;

@@ -414,7 +414,7 @@ struct LinkDumpQueueSummary {
     invalid: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct LinkDumpServerRuntime {
     status: LinkDumpServerStatus,
     shutdown: Option<Arc<AtomicBool>>,
@@ -426,16 +426,6 @@ struct ActiveConnectionPermit(Arc<AtomicUsize>);
 impl Drop for ActiveConnectionPermit {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-impl Default for LinkDumpServerRuntime {
-    fn default() -> Self {
-        Self {
-            status: LinkDumpServerStatus::default(),
-            shutdown: None,
-            handle: None,
-        }
     }
 }
 
@@ -852,7 +842,7 @@ fn terminate_child_process_tree(process: &mut Child) -> std::io::Result<()> {
         }
         let group_error = std::io::Error::last_os_error();
         let _ = process.kill();
-        return Err(group_error);
+        Err(group_error)
     }
     #[cfg(not(unix))]
     process.kill()
@@ -1970,14 +1960,14 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            let db = open_link_dump_db(&app.handle())?;
-            migrate_legacy_config_json(&app.handle(), &db)?;
+            let db = open_link_dump_db(app.handle())?;
+            migrate_legacy_config_json(app.handle(), &db)?;
             let config = load_config_from_db(&db)?;
             let state = AppState::new(config, db);
-            migrate_legacy_history_json(&app.handle(), &state)?;
+            migrate_legacy_history_json(app.handle(), &state)?;
             app.manage(state);
             let state = app.state::<AppState>();
-            let _ = start_link_dump_server_from_settings(&app.handle(), state.inner());
+            let _ = start_link_dump_server_from_settings(app.handle(), state.inner());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -3121,7 +3111,7 @@ mod tests {
             caption_path: "/tmp/post.txt".to_string(),
             text: "Grüße 🌲\nZweite Zeile".to_string(),
         };
-        insert_captions_in_db(&state, "instagram-1", &[original.clone()]).unwrap();
+        insert_captions_in_db(&state, "instagram-1", std::slice::from_ref(&original)).unwrap();
         insert_captions_in_db(&state, "instagram-1", &[original]).unwrap();
         insert_captions_in_db(
             &state,

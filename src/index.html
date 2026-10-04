@@ -69,7 +69,9 @@
                             <label class="pf-toggle" for="downloadVideoWithTranscript">
                                 <span class="pf-toggle-copy">
                                     <span class="pf-toggle-title">Keep video with transcript</span>
-                                    <span class="pf-toggle-hint">Save the video file alongside the generated transcript.</span>
+                                    <span class="pf-toggle-hint"
+                                        >Save the video file alongside the generated transcript.</span
+                                    >
                                 </span>
                                 <input id="downloadVideoWithTranscript" class="pf-toggle-input" type="checkbox" />
                                 <span class="pf-toggle-track" aria-hidden="true"></span>
@@ -104,14 +106,19 @@
                             </div>
                             <div class="pf-media-thumbnail pf-pinefetch-info-thumb" id="infoThumb"></div>
                         </div>
-
                     </div>
 
                     <div id="historyView" class="pf-panel-view pf-stack" hidden>
                         <div class="pf-history-search-controls">
                             <label class="pf-field pf-history-search-query" for="historySearchInput">
                                 <span class="pf-label">Search history</span>
-                                <input id="historySearchInput" class="pf-input" type="search" placeholder="Search titles" autocomplete="off" />
+                                <input
+                                    id="historySearchInput"
+                                    class="pf-input"
+                                    type="search"
+                                    placeholder="Search titles"
+                                    autocomplete="off"
+                                />
                             </label>
                             <label class="pf-field" for="historySearchFieldSelect">
                                 <span class="pf-label">Search in</span>
@@ -130,13 +137,22 @@
                         </div>
                         <div id="historyList" class="pf-scroll-area pf-pinefetch-history-list"></div>
                         <div class="pf-pinefetch-history-actions">
-                            <button id="loadMoreHistoryBtn" class="pf-btn pf-pinefetch-history-load-more" type="button" hidden>
+                            <button
+                                id="loadMoreHistoryBtn"
+                                class="pf-btn pf-pinefetch-history-load-more"
+                                type="button"
+                                hidden
+                            >
                                 Load more
                             </button>
-                            <button id="clearHistoryBtn" class="pf-btn pf-btn-danger" type="button">Clear History</button>
+                            <button id="clearHistoryBtn" class="pf-btn pf-btn-danger" type="button">
+                                Clear History
+                            </button>
                         </div>
                         <p id="historyActionStatus" class="pf-status" role="status" aria-live="polite" hidden></p>
-                        <p class="pf-hint" id="historyHint" hidden>No history yet. Downloaded items will appear here.</p>
+                        <p class="pf-hint" id="historyHint" hidden>
+                            No history yet. Downloaded items will appear here.
+                        </p>
                     </div>
 
                     <div id="settingsView" class="pf-panel-view pf-stack" hidden>
@@ -151,14 +167,18 @@
                                 <div class="pf-field-row pf-pinefetch-output-row">
                                     <input id="outputDir" class="pf-input" type="text" placeholder="/Users/..." />
                                     <button id="pickDirBtn" class="pf-btn pf-btn-ghost" type="button">Choose</button>
-                                    <button id="openFolderBtn" class="pf-btn pf-btn-ghost" type="button">Open folder</button>
+                                    <button id="openFolderBtn" class="pf-btn pf-btn-ghost" type="button">
+                                        Open folder
+                                    </button>
                                 </div>
                             </div>
 
                             <label class="pf-toggle" for="cutAtTimestampEnabled">
                                 <span class="pf-toggle-copy">
                                     <span class="pf-toggle-title">Cut at timestamp</span>
-                                    <span class="pf-toggle-hint">Links with a timestamp such as t=61 start the download at that second.</span>
+                                    <span class="pf-toggle-hint"
+                                        >Links with a timestamp such as t=61 start the download at that second.</span
+                                    >
                                 </span>
                                 <input id="cutAtTimestampEnabled" class="pf-toggle-input" type="checkbox" checked />
                                 <span class="pf-toggle-track" aria-hidden="true"></span>
@@ -167,7 +187,10 @@
                             <label class="pf-toggle" for="saveCaptions">
                                 <span class="pf-toggle-copy">
                                     <span class="pf-toggle-title">Save post captions</span>
-                                    <span class="pf-toggle-hint">Save post text from YouTube, TikTok, Instagram, Facebook, X and Reddit as .caption.txt.</span>
+                                    <span class="pf-toggle-hint"
+                                        >Save post text from YouTube, TikTok, Instagram, Facebook, X and Reddit as
+                                        .caption.txt.</span
+                                    >
                                 </span>
                                 <input id="saveCaptions" class="pf-toggle-input" type="checkbox" />
                                 <span class="pf-toggle-track" aria-hidden="true"></span>
@@ -176,7 +199,9 @@
                             <label class="pf-toggle" for="saveThumbnails">
                                 <span class="pf-toggle-copy">
                                     <span class="pf-toggle-title">Save thumbnails</span>
-                                    <span class="pf-toggle-hint">Save available thumbnail images beside downloads.</span>
+                                    <span class="pf-toggle-hint"
+                                        >Save available thumbnail images beside downloads.</span
+                                    >
                                 </span>
                                 <input id="saveThumbnails" class="pf-toggle-input" type="checkbox" />
                                 <span class="pf-toggle-track" aria-hidden="true"></span>
@@ -193,7 +218,10 @@
                                     <option value="medium">High (medium)</option>
                                     <option value="large-v3">Best (large-v3)</option>
                                 </select>
-                                <span class="pf-hint">Larger models improve accuracy but need more download time, memory, and processing time.</span>
+                                <span class="pf-hint"
+                                    >Larger models improve accuracy but need more download time, memory, and processing
+                                    time.</span
+                                >
                             </label>
                         </section>
 
@@ -202,7 +230,10 @@
                             <label class="pf-toggle" for="magicImportEnabled">
                                 <span class="pf-toggle-copy">
                                     <span class="pf-toggle-title">Magic import</span>
-                                    <span class="pf-toggle-hint">Click PineFetch with an empty URL field to import a URL from the clipboard.</span>
+                                    <span class="pf-toggle-hint"
+                                        >Click PineFetch with an empty URL field to import a URL from the
+                                        clipboard.</span
+                                    >
                                 </span>
                                 <input id="magicImportEnabled" class="pf-toggle-input" type="checkbox" checked />
                                 <span class="pf-toggle-track" aria-hidden="true"></span>
@@ -211,7 +242,9 @@
                             <label class="pf-toggle" for="notificationsEnabled">
                                 <span class="pf-toggle-copy">
                                     <span class="pf-toggle-title">Download notifications</span>
-                                    <span class="pf-toggle-hint">Notify when a queue of more than one video finishes successfully.</span>
+                                    <span class="pf-toggle-hint"
+                                        >Notify when a queue of more than one video finishes successfully.</span
+                                    >
                                 </span>
                                 <input id="notificationsEnabled" class="pf-toggle-input" type="checkbox" />
                                 <span class="pf-toggle-track" aria-hidden="true"></span>
@@ -222,7 +255,12 @@
                             <h3 id="settingsDiagnosticsTitle" class="pf-section-title">Diagnostics</h3>
                             <label class="pf-field" for="ytDlpPath">
                                 <span class="pf-label">yt-dlp path</span>
-                                <input id="ytDlpPath" class="pf-input" type="text" placeholder="Auto-detect from PATH" />
+                                <input
+                                    id="ytDlpPath"
+                                    class="pf-input"
+                                    type="text"
+                                    placeholder="Auto-detect from PATH"
+                                />
                             </label>
 
                             <div class="pf-field">
@@ -240,8 +278,12 @@
                                         <p class="pf-subtitle" id="logHint">stdout / stderr</p>
                                     </div>
                                     <div class="pf-row">
-                                        <button id="copyLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>Copy</button>
-                                        <button id="clearLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>Clear</button>
+                                        <button id="copyLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>
+                                            Copy
+                                        </button>
+                                        <button id="clearLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>
+                                            Clear
+                                        </button>
                                     </div>
                                 </div>
                                 <div id="logBody" class="pf-terminal-body pf-pinefetch-log-body"></div>
@@ -255,7 +297,8 @@
                                 <div class="pf-panel-heading">
                                     <h3 class="pf-section-title">Local Link Dump Server</h3>
                                     <p class="pf-subtitle" id="linkDumpServerHint">
-                                        Browser extensions can send YouTube, TikTok, Instagram, Facebook, X, and Reddit links to this PineFetch instance.
+                                        Browser extensions can send YouTube, TikTok, Instagram, Facebook, X, and Reddit
+                                        links to this PineFetch instance.
                                     </p>
                                 </div>
                                 <span class="pf-badge pf-badge-muted" id="linkDumpServerStatusBadge">Stopped</span>
@@ -320,12 +363,22 @@
                         </div>
                         <div class="pf-row">
                             <div class="pf-badge" id="queueBadge">0 waiting · 0 active</div>
-                            <button id="queueCollapseBtn" class="pf-btn pf-btn-ghost" type="button" aria-expanded="true" aria-controls="queueProgressView">Hide queue</button>
+                            <button
+                                id="queueCollapseBtn"
+                                class="pf-btn pf-btn-ghost"
+                                type="button"
+                                aria-expanded="true"
+                                aria-controls="queueProgressView"
+                            >
+                                Hide queue
+                            </button>
                         </div>
                     </div>
 
                     <div id="queueProgressView" class="pf-pinefetch-right-panel-view">
-                        <p id="queueEmptyHint" class="pf-hint">The queue is empty. Paste a link, choose a format, then click Queue.</p>
+                        <p id="queueEmptyHint" class="pf-hint">
+                            The queue is empty. Paste a link, choose a format, then click Queue.
+                        </p>
                         <div id="queueList" class="pf-scroll-area pf-pinefetch-queue-list" hidden></div>
                         <p id="queueModeHint" class="pf-hint" hidden></p>
                         <div class="pf-pinefetch-queue-actions">
@@ -339,9 +392,13 @@
                                     Auto-start: on
                                 </button>
                                 <button id="startQueueBtn" class="pf-btn" type="button">Download</button>
-                                <button id="pauseQueueBtn" class="pf-btn pf-btn-ghost" type="button">Pause after current</button>
+                                <button id="pauseQueueBtn" class="pf-btn pf-btn-ghost" type="button">
+                                    Pause after current
+                                </button>
                             </div>
-                            <button id="clearQueueBtn" class="pf-btn pf-btn-ghost" type="button">Cancel and clear</button>
+                            <button id="clearQueueBtn" class="pf-btn pf-btn-ghost" type="button">
+                                Cancel and clear
+                            </button>
                         </div>
                     </div>
 
@@ -452,7 +509,13 @@
                 </button>
             </div>
 
-            <div id="historyContextMenu" class="pf-menu pf-menu-popover pf-history-context-menu" role="menu" aria-label="History actions" hidden>
+            <div
+                id="historyContextMenu"
+                class="pf-menu pf-menu-popover pf-history-context-menu"
+                role="menu"
+                aria-label="History actions"
+                hidden
+            >
                 <button id="historyShowMoreDataBtn" class="pf-menu-item" type="button" role="menuitem">
                     Show More Data
                 </button>
@@ -465,39 +528,114 @@
                             <h2 id="historyDetailsTitle" class="pf-section-title">History Details</h2>
                             <p id="historyDetailsSubtitle" class="pf-subtitle"></p>
                         </div>
-                        <button id="historyDetailsCloseBtn" class="pf-icon-btn" type="button" aria-label="Close history details">×</button>
+                        <button
+                            id="historyDetailsCloseBtn"
+                            class="pf-icon-btn"
+                            type="button"
+                            aria-label="Close history details"
+                        >
+                            ×
+                        </button>
                     </header>
 
                     <p id="historyDetailsStatus" class="pf-status" role="status" aria-live="polite"></p>
 
                     <div id="historyDetailsContent" class="pf-history-details-content" hidden>
-                        <div id="historyDetailsTabs" class="pf-segmented pf-history-details-tabs" role="tablist" aria-label="History details">
-                            <button id="historyOverviewTab" class="pf-segmented-btn" type="button" role="tab" aria-selected="true" aria-controls="historyOverviewPanel" data-history-tab="overview">Overview</button>
-                            <button id="historyTranscriptTab" class="pf-segmented-btn" type="button" role="tab" aria-selected="false" aria-controls="historyTranscriptPanel" data-history-tab="transcript" hidden>Transcript</button>
-                            <button id="historyCaptionsTab" class="pf-segmented-btn" type="button" role="tab" aria-selected="false" aria-controls="historyCaptionsPanel" data-history-tab="captions" hidden>Captions</button>
+                        <div
+                            id="historyDetailsTabs"
+                            class="pf-segmented pf-history-details-tabs"
+                            role="tablist"
+                            aria-label="History details"
+                        >
+                            <button
+                                id="historyOverviewTab"
+                                class="pf-segmented-btn"
+                                type="button"
+                                role="tab"
+                                aria-selected="true"
+                                aria-controls="historyOverviewPanel"
+                                data-history-tab="overview"
+                            >
+                                Overview
+                            </button>
+                            <button
+                                id="historyTranscriptTab"
+                                class="pf-segmented-btn"
+                                type="button"
+                                role="tab"
+                                aria-selected="false"
+                                aria-controls="historyTranscriptPanel"
+                                data-history-tab="transcript"
+                                hidden
+                            >
+                                Transcript
+                            </button>
+                            <button
+                                id="historyCaptionsTab"
+                                class="pf-segmented-btn"
+                                type="button"
+                                role="tab"
+                                aria-selected="false"
+                                aria-controls="historyCaptionsPanel"
+                                data-history-tab="captions"
+                                hidden
+                            >
+                                Captions
+                            </button>
                         </div>
 
-                        <section id="historyOverviewPanel" class="pf-history-details-panel" role="tabpanel" aria-labelledby="historyOverviewTab">
+                        <section
+                            id="historyOverviewPanel"
+                            class="pf-history-details-panel"
+                            role="tabpanel"
+                            aria-labelledby="historyOverviewTab"
+                        >
                             <dl id="historyOverviewList" class="pf-history-overview-list"></dl>
                         </section>
 
-                        <section id="historyTranscriptPanel" class="pf-history-details-panel" role="tabpanel" aria-labelledby="historyTranscriptTab" hidden>
+                        <section
+                            id="historyTranscriptPanel"
+                            class="pf-history-details-panel"
+                            role="tabpanel"
+                            aria-labelledby="historyTranscriptTab"
+                            hidden
+                        >
                             <div class="pf-history-content-toolbar">
                                 <p id="historyTranscriptMeta" class="pf-muted"></p>
-                                <button id="historyTranscriptCopyBtn" class="pf-btn pf-btn-ghost" type="button" disabled>Copy</button>
+                                <button
+                                    id="historyTranscriptCopyBtn"
+                                    class="pf-btn pf-btn-ghost"
+                                    type="button"
+                                    disabled
+                                >
+                                    Copy
+                                </button>
                             </div>
                             <p id="historyTranscriptNotice" class="pf-hint" hidden></p>
                             <p id="historyTranscriptStatus" class="pf-status" role="status" aria-live="polite"></p>
                             <pre id="historyTranscriptText" class="pf-history-text-viewer" tabindex="0" hidden></pre>
                         </section>
 
-                        <section id="historyCaptionsPanel" class="pf-history-details-panel" role="tabpanel" aria-labelledby="historyCaptionsTab" hidden>
+                        <section
+                            id="historyCaptionsPanel"
+                            class="pf-history-details-panel"
+                            role="tabpanel"
+                            aria-labelledby="historyCaptionsTab"
+                            hidden
+                        >
                             <div class="pf-history-content-toolbar">
-                                <label id="historyCaptionTrackField" class="pf-field pf-history-caption-track" for="historyCaptionTrackSelect" hidden>
+                                <label
+                                    id="historyCaptionTrackField"
+                                    class="pf-field pf-history-caption-track"
+                                    for="historyCaptionTrackSelect"
+                                    hidden
+                                >
                                     <span class="pf-label">Caption track</span>
                                     <select id="historyCaptionTrackSelect" class="pf-select"></select>
                                 </label>
-                                <button id="historyCaptionCopyBtn" class="pf-btn pf-btn-ghost" type="button" disabled>Copy</button>
+                                <button id="historyCaptionCopyBtn" class="pf-btn pf-btn-ghost" type="button" disabled>
+                                    Copy
+                                </button>
                             </div>
                             <p id="historyCaptionMeta" class="pf-muted"></p>
                             <p id="historyCaptionNotice" class="pf-hint" hidden></p>

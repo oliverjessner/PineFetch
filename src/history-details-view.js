@@ -1,4 +1,11 @@
-export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSize, formatDuration, detectPlatform }) => {
+export const createHistoryDetailsView = ({
+    els,
+    invoke,
+    appendLog,
+    formatFileSize,
+    formatDuration,
+    detectPlatform,
+}) => {
     const state = {
         contextEntryId: null,
         contextReturnFocus: null,
@@ -11,7 +18,16 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
 
     const formatSource = source => {
         const name = `${source || 'unknown'}`.trim().toLowerCase();
-        const known = { youtube: 'YouTube', tiktok: 'TikTok', instagram: 'Instagram', facebook: 'Facebook', twitch: 'Twitch', linkedin: 'LinkedIn', reddit: 'Reddit', x: 'X' };
+        const known = {
+            youtube: 'YouTube',
+            tiktok: 'TikTok',
+            instagram: 'Instagram',
+            facebook: 'Facebook',
+            twitch: 'Twitch',
+            linkedin: 'LinkedIn',
+            reddit: 'Reddit',
+            x: 'X',
+        };
         return known[name] || (name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Unknown');
     };
 
@@ -55,7 +71,10 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
             if (els.historyContextMenu.hidden || state.contextEntryId !== entryId) return;
             const margin = 12;
             const left = Math.max(margin, Math.min(x, window.innerWidth - els.historyContextMenu.offsetWidth - margin));
-            const top = Math.max(margin, Math.min(y, window.innerHeight - els.historyContextMenu.offsetHeight - margin));
+            const top = Math.max(
+                margin,
+                Math.min(y, window.innerHeight - els.historyContextMenu.offsetHeight - margin)
+            );
             els.historyContextMenu.style.left = `${left}px`;
             els.historyContextMenu.style.top = `${top}px`;
             els.historyShowMoreDataBtn.focus({ preventScroll: true });
@@ -76,19 +95,27 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
         const entry = details.entry || {};
         const source = entry.source || detectPlatform(entry.url);
         const platform = `${entry.platform || ''}`.trim();
-        const uploaded = Number(entry.timestamp) > 0
-            ? formatDateTime(Number(entry.timestamp) * 1000)
-            : formatUploadDate(entry.upload_date);
+        const uploaded =
+            Number(entry.timestamp) > 0
+                ? formatDateTime(Number(entry.timestamp) * 1000)
+                : formatUploadDate(entry.upload_date);
         const downloaded = formatDateTime(entry.completed_at || entry.created_at);
         const transcript = details.transcript;
         const transcriptLabel = transcript
-            ? [transcript.language?.toUpperCase(), transcript.transcription_type, transcript.file_available ? null : 'file missing'].filter(Boolean).join(' · ')
+            ? [
+                  transcript.language?.toUpperCase(),
+                  transcript.transcription_type,
+                  transcript.file_available ? null : 'file missing',
+              ]
+                  .filter(Boolean)
+                  .join(' · ')
             : null;
         const captionCount = Array.isArray(details.captions) ? details.captions.length : 0;
 
         els.historyOverviewList.replaceChildren();
         addOverviewRow('Source', source ? formatSource(source) : null);
-        if (platform && platform.toLowerCase() !== `${source || ''}`.toLowerCase()) addOverviewRow('Platform', platform);
+        if (platform && platform.toLowerCase() !== `${source || ''}`.toLowerCase())
+            addOverviewRow('Platform', platform);
         addOverviewRow('Original URL', entry.url, entry.url);
         addOverviewRow('Title', entry.title);
         addOverviewRow('Creator', entry.uploader);
@@ -96,20 +123,25 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
         addOverviewRow('Uploaded', uploaded);
         addOverviewRow(
             'Duration',
-            entry.duration_seconds !== null && entry.duration_seconds !== undefined && Number(entry.duration_seconds) >= 0
+            entry.duration_seconds !== null &&
+                entry.duration_seconds !== undefined &&
+                Number(entry.duration_seconds) >= 0
                 ? formatDuration(Number(entry.duration_seconds))
-                : null,
+                : null
         );
         addOverviewRow('Media type', entry.medium);
         addOverviewRow('Filename', entry.filename);
         addOverviewRow('File path', entry.output_path, entry.output_path);
-        addOverviewRow('File status', entry.output_path ? (details.output_file_available ? 'Available' : 'Missing') : null);
+        addOverviewRow(
+            'File status',
+            entry.output_path ? (details.output_file_available ? 'Available' : 'Missing') : null
+        );
         addOverviewRow('Extension', details.file_extension?.toUpperCase());
         addOverviewRow(
             'File size',
             entry.file_size_bytes !== null && entry.file_size_bytes !== undefined && Number(entry.file_size_bytes) >= 0
                 ? formatFileSize(entry.file_size_bytes)
-                : null,
+                : null
         );
         addOverviewRow('SHA-256', entry.sha256);
         addOverviewRow('Thumbnail', entry.thumbnail ? 'Available' : null);
@@ -147,7 +179,8 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
             .filter(Boolean)
             .join(' · ');
         if (!content.file_available) {
-            els.historyTranscriptNotice.textContent = 'Transcript file is no longer available. Stored transcript text is shown below.';
+            els.historyTranscriptNotice.textContent =
+                'Transcript file is no longer available. Stored transcript text is shown below.';
             els.historyTranscriptNotice.hidden = false;
         }
         if (!content.text) {
@@ -182,7 +215,8 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
         }
     };
 
-    const captionLabel = (caption, index) => basename(caption.media_path) || basename(caption.caption_path) || `Caption ${index + 1}`;
+    const captionLabel = (caption, index) =>
+        basename(caption.media_path) || basename(caption.caption_path) || `Caption ${index + 1}`;
 
     const renderCaptionOptions = captions => {
         const fragment = document.createDocumentFragment();
@@ -214,7 +248,8 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
         ].filter(Boolean);
         els.historyCaptionMeta.textContent = metadata.join(' · ');
         if (!content.file_available) {
-            els.historyCaptionNotice.textContent = 'Caption file is no longer available. Stored caption text is shown below.';
+            els.historyCaptionNotice.textContent =
+                'Caption file is no longer available. Stored caption text is shown below.';
             els.historyCaptionNotice.hidden = false;
         }
         if (!content.text) {
@@ -239,7 +274,12 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
         els.historyCaptionCopyBtn.disabled = true;
         try {
             const content = await invoke('get_history_caption', { id: entryId, mediaPath });
-            if (!els.historyDetailsDialog.open || state.details?.entry?.id !== entryId || els.historyCaptionTrackSelect.value !== mediaPath) return;
+            if (
+                !els.historyDetailsDialog.open ||
+                state.details?.entry?.id !== entryId ||
+                els.historyCaptionTrackSelect.value !== mediaPath
+            )
+                return;
             state.captions.set(mediaPath, content || null);
             renderCaption(content || null);
         } catch (err) {
@@ -333,7 +373,7 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
                 item.dataset.historyId,
                 event.clientX,
                 event.clientY,
-                item.querySelector('.pf-history-open-btn'),
+                item.querySelector('.pf-history-open-btn')
             );
         });
         els.historyContextMenu.addEventListener('contextmenu', event => event.preventDefault());
@@ -388,16 +428,20 @@ export const createHistoryDetailsView = ({ els, invoke, appendLog, formatFileSiz
             const currentIndex = tabs.indexOf(document.activeElement);
             if (currentIndex < 0) return;
             event.preventDefault();
-            const nextIndex = event.key === 'Home'
-                ? 0
-                : event.key === 'End'
-                    ? tabs.length - 1
-                    : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+            const nextIndex =
+                event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                      ? tabs.length - 1
+                      : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
             tabs[nextIndex].focus();
             activateTab(tabs[nextIndex].dataset.historyTab);
         });
         els.historyCaptionTrackSelect.addEventListener('change', () => void loadSelectedCaption());
-        els.historyTranscriptCopyBtn.addEventListener('click', () => void copyContent(state.transcript, els.historyTranscriptStatus, 'Transcript'));
+        els.historyTranscriptCopyBtn.addEventListener(
+            'click',
+            () => void copyContent(state.transcript, els.historyTranscriptStatus, 'Transcript')
+        );
         els.historyCaptionCopyBtn.addEventListener('click', () => {
             const content = state.captions.get(els.historyCaptionTrackSelect.value);
             void copyContent(content, els.historyCaptionStatus, 'Caption');

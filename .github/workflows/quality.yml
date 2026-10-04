@@ -1,0 +1,42 @@
+name: Quality
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks-macos:
+    name: Quality checks (macOS)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Run the local quality gate
+        run: npm run check
+
+  build-macos:
+    name: Build (macOS)
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Compile and link the release application
+        run: npm run build:check

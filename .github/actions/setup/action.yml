@@ -1,0 +1,21 @@
+name: Set up PineFetch checks
+description: Install the pinned toolchains and locked npm dependencies on macOS.
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version-file: .node-version
+        cache: npm
+    - name: Set up Rust and verify the macOS SDK
+      shell: bash
+      run: |
+        # rustup reads rust-toolchain.toml, including clippy and rustfmt.
+        rustup show
+        cargo --version
+        xcrun --find clang
+        xcrun --sdk macosx --show-sdk-path
+    - name: Install npm dependencies
+      shell: bash
+      run: npm ci

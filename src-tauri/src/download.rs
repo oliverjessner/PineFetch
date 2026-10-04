@@ -127,7 +127,7 @@ pub(super) fn run_download_job(
     let handle_out = thread::spawn(move || {
         if let Some(out) = stdout {
             let reader = BufReader::new(out);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if !line.starts_with("pinefetch_caption:")
                     && !line.starts_with("pinefetch_metadata:")
                 {
@@ -181,7 +181,7 @@ pub(super) fn run_download_job(
     let handle_err = thread::spawn(move || {
         if let Some(err) = stderr {
             let reader = BufReader::new(err);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() {
                     if let Ok(mut reason) = error_for_stderr.lock() {
@@ -1138,7 +1138,7 @@ pub(super) fn run_faster_whisper_transcription(
     let handle_out = thread::spawn(move || {
         if let Some(out) = stdout {
             let reader = BufReader::new(out);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if let Some(language) = line.strip_prefix("pinefetch_language:") {
                     let language = language.trim().to_ascii_lowercase();
                     if !language.is_empty() {
@@ -1163,7 +1163,7 @@ pub(super) fn run_faster_whisper_transcription(
     let handle_err = thread::spawn(move || {
         if let Some(err) = stderr {
             let reader = BufReader::new(err);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 emit_log(
                     &app_stderr,
                     LogEvent {

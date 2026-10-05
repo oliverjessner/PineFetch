@@ -19,6 +19,7 @@
         "build:check": "cargo build --manifest-path src-tauri/Cargo.toml --locked --release --features custom-protocol",
         "dev": "npm run sync:version && tauri dev",
         "sync:version": "node scripts/sync-tauri-version.mjs",
+        "screenshots": "node scripts/screenshots.mjs",
         "prepare:whisper-runtime": "bash scripts/prepare-whisper-runtime.sh",
         "prepare:ffmpeg-runtime": "bash scripts/prepare-ffmpeg-runtime.sh",
         "prepare:deno-runtime": "bash scripts/prepare-deno-runtime.sh",
@@ -41,7 +42,9 @@
         "@tauri-apps/cli": "^2.11.4",
         "eslint": "10.12.0",
         "globals": "17.13.0",
-        "prettier": "3.9.9"
+        "playwright": "1.63.0",
+        "prettier": "3.9.9",
+        "sharp": "0.35.5"
     },
     "contributors": [
         {

@@ -1,10 +1,6 @@
 # PineFetch 🍍
 
-[![Dependabot Updates](https://github.com/oliverjessner/PineFetch/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/dependabot/dependabot-updates)
-
-[![CodeQL](https://github.com/oliverjessner/PineFetch/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/github-code-scanning/codeql)
-
-[![CI](https://github.com/oliverjessner/PineFetch/actions/workflows/ci.yml/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/ci.yml)
+[![Dependabot Updates](https://github.com/oliverjessner/PineFetch/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/dependabot/dependabot-updates) [![CodeQL](https://github.com/oliverjessner/PineFetch/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/github-code-scanning/codeql) [![CI](https://github.com/oliverjessner/PineFetch/actions/workflows/ci.yml/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/ci.yml)
 
 **Download videos, audio, captions and transcripts without fighting the command line.**
 

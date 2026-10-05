@@ -27,6 +27,7 @@ use crate::models::DownloadStateEvent;
 use crate::models::HistoryEntry;
 use crate::models::LinkDumpSettingsPatch;
 use crate::models::SavedCaption;
+use crate::startup;
 use crate::state::AppState;
 use rusqlite::Connection;
 use rusqlite::OpenFlags;
@@ -155,6 +156,245 @@ const RELEASE_SCHEMAS: &[(&str, &str)] = &[
     ("v2.1.0", include_str!("../test-fixtures/schema/v2.1.0.sql")),
     ("v2.2.0", include_str!("../test-fixtures/schema/v2.2.0.sql")),
 ];
+
+// Schema-only reproduction of the reported upgraded database. All rows below
+// are synthetic; this is not a fixture copied from a user's database.
+fn reported_upgraded_layout(conn: &Connection) {
+    let sql = RELEASE_SCHEMAS.last().unwrap().1.replace(
+        "pinefetch_version TEXT,",
+        "pinefetch_version TEXT NOT NULL DEFAULT '2.1.0',",
+    );
+    conn.execute_batch(&sql).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE app_config ADD COLUMN save_instagram_captions INTEGER NOT NULL DEFAULT 0;
+         UPDATE app_config SET save_instagram_captions=1,save_captions=0;",
+    )
+    .unwrap();
+    populate_legacy(conn);
+}
+
+#[test]
+fn reported_upgraded_columns_preserve_settings_history_constraints_and_reopen() {
+    let f = Fixture::new();
+    let path = f.path("pinefetch.sqlite3");
+    let conn = Connection::open(&path).unwrap();
+    reported_upgraded_layout(&conn);
+    let before = schema(&conn);
+    drop(conn);
+
+    let conn = database::open(&path).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    assert_eq!(count(&conn, "history_entries"), 2);
+    assert!(!load_config_from_db(&conn).unwrap().save_captions);
+    assert_eq!(
+        conn.query_row("SELECT save_instagram_captions FROM app_config", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT pinefetch_version FROM history_entries WHERE id='old-1'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "2.1.0"
+    );
+    let backup =
+        Connection::open_with_flags(&f.backups()[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(version(&backup), 0);
+    assert_eq!(schema(&backup), before);
+    assert_eq!(count(&backup, "history_entries"), 2);
+    assert_eq!(count(&conn, "transcriptions"), 1);
+    assert_eq!(count(&conn, "captions"), 1);
+    drop(backup);
+
+    // Older JSON entries have no app version. Retain this layout's own
+    // historical default while preserving NULL in normal nullable layouts.
+    insert_history_entry_in_conn(&conn, &entry("imported")).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT pinefetch_version FROM history_entries WHERE id='imported'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "2.1.0"
+    );
+    let mut explicit = entry("explicit");
+    explicit.pinefetch_version = Some("1.4.3".into());
+    insert_history_entry_in_conn(&conn, &explicit).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT pinefetch_version FROM history_entries WHERE id='explicit'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "1.4.3"
+    );
+    let migrated_schema = schema(&conn);
+    drop(conn);
+    let bytes = fs::read(&path).unwrap();
+    let reopened = database::open(&path).unwrap();
+    assert_eq!(schema(&reopened), migrated_schema);
+    assert_eq!(count(&reopened, "history_entries"), 4);
+    drop(reopened);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert_eq!(f.backups().len(), 1);
+}
+
+#[test]
+fn reported_upgrade_failure_rolls_back_and_retry_preserves_original_rows() {
+    let f = Fixture::new();
+    let path = f.path("pinefetch.sqlite3");
+    let conn = Connection::open(&path).unwrap();
+    reported_upgraded_layout(&conn);
+    let before = schema(&conn);
+    drop(conn);
+    let bytes = fs::read(&path).unwrap();
+    let error = database::open_with_hook(&path, |point| {
+        if point == MigrationPoint::Receipts {
+            Err("synthetic interrupted upgrade".into())
+        } else {
+            Ok(())
+        }
+    })
+    .err()
+    .unwrap();
+    assert!(error.contains("synthetic interrupted upgrade"));
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    let original = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(schema(&original), before);
+    assert_eq!(version(&original), 0);
+    assert_eq!(count(&original, "history_entries"), 2);
+    drop(original);
+    let reopened = database::open(&path).unwrap();
+    assert_eq!(version(&reopened), SCHEMA_VERSION);
+    assert_eq!(count(&reopened, "transcriptions"), 1);
+    assert_eq!(count(&reopened, "captions"), 1);
+    assert_eq!(count(&reopened, "history_entries"), 2);
+}
+
+#[test]
+fn reported_column_compatibility_still_rejects_unrelated_definitions() {
+    for (history_definition, caption_definition) in [
+        (
+            "TEXT NOT NULL DEFAULT 'other'",
+            "INTEGER NOT NULL DEFAULT 0",
+        ),
+        ("TEXT DEFAULT '2.1.0'", "INTEGER NOT NULL DEFAULT 0"),
+        ("TEXT NOT NULL DEFAULT '2.1.0'", "TEXT NOT NULL DEFAULT 0"),
+        (
+            "TEXT NOT NULL DEFAULT '2.1.0'",
+            "INTEGER NOT NULL DEFAULT 1",
+        ),
+    ] {
+        let f = Fixture::new();
+        let path = f.path("pinefetch.sqlite3");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(&RELEASE_SCHEMAS.last().unwrap().1.replace(
+            "pinefetch_version TEXT,",
+            &format!("pinefetch_version {history_definition},"),
+        ))
+        .unwrap();
+        conn.execute_batch(&format!(
+            "ALTER TABLE app_config ADD COLUMN save_instagram_captions {caption_definition};"
+        ))
+        .unwrap();
+        let before = schema(&conn);
+        drop(conn);
+        let bytes = fs::read(&path).unwrap();
+        assert!(database::open(&path)
+            .unwrap_err()
+            .contains("database preserved"));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        let reopened =
+            Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        assert_eq!(schema(&reopened), before);
+        assert_eq!(version(&reopened), 0);
+        assert!(f.backups().is_empty());
+    }
+}
+
+#[test]
+fn persistence_startup_imports_before_managing_state_and_reopens_idempotently() {
+    let f = Fixture::new();
+    let data_dir = f.path("data");
+    let config_dir = f.path("config");
+    fs::create_dir(&data_dir).unwrap();
+    fs::create_dir(&config_dir).unwrap();
+    let config_path = config_dir.join("config.json");
+    let history_path = data_dir.join("history.json");
+    let config = json!({"yt_dlp_path":null,"default_output_dir":"/synthetic/output",
+        "save_captions":true,"selected_preset_key":"audio_mp3"})
+    .to_string();
+    let history = serde_json::to_string(&vec![entry("startup-entry")]).unwrap();
+    fs::write(&config_path, &config).unwrap();
+    fs::write(&history_path, &history).unwrap();
+    let state = startup::load_from_dirs(&data_dir, &config_dir).unwrap();
+    assert_eq!(
+        state.config.lock().unwrap().default_output_dir.as_deref(),
+        Some("/synthetic/output")
+    );
+    assert!(state.config.lock().unwrap().save_captions);
+    assert_eq!(count(&state.db.lock().unwrap(), "history_entries"), 1);
+    assert_eq!(fs::read_to_string(&config_path).unwrap(), config);
+    assert_eq!(fs::read_to_string(&history_path).unwrap(), history);
+    // Receipts prevent re-reading obsolete files, including malformed ones.
+    drop(state);
+    let bytes = fs::read(data_dir.join("pinefetch.sqlite")).unwrap();
+    fs::write(&config_path, "obsolete invalid config").unwrap();
+    fs::write(&history_path, "obsolete invalid history").unwrap();
+    let state = startup::load_from_dirs(&data_dir, &config_dir).unwrap();
+    assert_eq!(count(&state.db.lock().unwrap(), "history_entries"), 1);
+    drop(state);
+    assert_eq!(fs::read(data_dir.join("pinefetch.sqlite")).unwrap(), bytes);
+}
+
+#[test]
+fn persistence_startup_returns_errors_and_preserves_refused_inputs() {
+    let f = Fixture::new();
+    let config_dir = f.path("config");
+    fs::create_dir(&config_dir).unwrap();
+    fs::write(config_dir.join("config.json"), "synthetic malformed JSON").unwrap();
+    let conn = f.db();
+    conn.pragma_update(None, "user_version", 999).unwrap();
+    drop(conn);
+    fs::rename(f.path("pinefetch.sqlite3"), f.path("pinefetch.sqlite")).unwrap();
+    let before = fs::read(f.path("pinefetch.sqlite")).unwrap();
+    let error = startup::load_from_dirs(&f.0, &config_dir).err().unwrap();
+    assert!(error.contains("999"));
+    assert_eq!(fs::read(f.path("pinefetch.sqlite")).unwrap(), before);
+    assert_eq!(
+        fs::read_to_string(config_dir.join("config.json")).unwrap(),
+        "synthetic malformed JSON"
+    );
+    assert!(f.backups().is_empty());
+
+    let fresh_data = f.path("fresh");
+    let error = startup::load_from_dirs(&fresh_data, &config_dir)
+        .err()
+        .unwrap();
+    assert!(error.contains("Legacy JSON is invalid"));
+    let conn = Connection::open_with_flags(
+        fresh_data.join("pinefetch.sqlite"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT legacy_config_json_migrated FROM app_config",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(count(&conn, "history_entries"), 0);
+}
 
 fn populate_legacy(conn: &Connection) {
     conn.execute("INSERT INTO history_entries(id,url,title,created_at,completed_at) VALUES ('old-1','https://www.youtube.com/watch?v=synthetic','Grüße 🌲',1700000000000, NULL)", []).unwrap();

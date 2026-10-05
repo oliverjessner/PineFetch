@@ -1,7 +1,5 @@
 use crate::browser_import::start_link_dump_server_from_settings;
 use crate::browser_import::stop_link_dump_server;
-use crate::config::load_config_from_db;
-use crate::startup::{migrate_legacy_config_json, migrate_legacy_history_json, open_link_dump_db};
 use crate::state::AppState;
 use crate::worker::stop_active_download_on_exit;
 use tauri::Manager;
@@ -70,17 +68,21 @@ fn main() {
         }
         return;
     }
-    tauri::Builder::default()
+    // Tauri panics when setup returns an error. On macOS that panic crosses
+    // an Objective-C callback and aborts instead of reporting a normal error.
+    let state = match startup::load_for_identifier(&context.config().identifier) {
+        Ok(state) => state,
+        Err(err) => {
+            eprintln!("PineFetch could not start: {err}");
+            std::process::exit(1);
+        }
+    };
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
-            let db = open_link_dump_db(app.handle())?;
-            migrate_legacy_config_json(app.handle(), &db)?;
-            let config = load_config_from_db(&db)?;
-            let state = AppState::new(config, db);
-            migrate_legacy_history_json(app.handle(), &state.db)?;
+        .setup(move |app| {
             app.manage(state);
             let state = app.state::<AppState>();
             let _ = start_link_dump_server_from_settings(app.handle(), state.inner());
@@ -124,16 +126,22 @@ fn main() {
             commands::delete_link_dump_secret,
             commands::restart_link_dump_server,
         ])
-        .build(context)
-        .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                let state = app_handle.state::<AppState>();
-                stop_active_download_on_exit(state.inner());
-                stop_link_dump_server(state.inner());
-                if let Some(server) = app_handle.try_state::<cli::CliServer>() {
-                    server.stop();
-                }
+        .build(context);
+    let app = match app {
+        Ok(app) => app,
+        Err(err) => {
+            eprintln!("PineFetch could not start: {err}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            let state = app_handle.state::<AppState>();
+            stop_active_download_on_exit(state.inner());
+            stop_link_dump_server(state.inner());
+            if let Some(server) = app_handle.try_state::<cli::CliServer>() {
+                server.stop();
             }
-        });
+        }
+    });
 }

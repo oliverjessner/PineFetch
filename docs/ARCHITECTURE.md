@@ -99,6 +99,9 @@ Repositories are concrete modules, not traits. They use one mutex-protected
 connection and `database::write_transaction`. Config updates retain their
 transactional re-read and update the cache after commit. Startup resolves legacy
 paths and passes them to the import functions; stores do not need an `AppHandle`.
+Database initialization and legacy imports finish before the native event loop
+starts. `main` handles persistence errors with a diagnostic and exit code 1;
+Tauri's setup hook only installs the initialized state and starts services.
 
 Schema version, migration SQL, legacy JSON formats, completion receipts, backup
 policy and file ownership rules are unchanged. See [DATA-INTEGRITY.md](DATA-INTEGRITY.md)

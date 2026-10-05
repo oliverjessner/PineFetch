@@ -415,6 +415,12 @@ pub(super) fn insert_history_entry_in_conn(
     conn: &Connection,
     entry: &HistoryEntry,
 ) -> Result<(), String> {
+    let legacy_version = if entry.pinefetch_version.is_none() {
+        database::legacy_history_version_default(conn)
+            .map_err(|e| format!("History version default read failed: {e}"))?
+    } else {
+        None
+    };
     conn.execute(
         "INSERT INTO history_entries (
             id,
@@ -470,7 +476,7 @@ pub(super) fn insert_history_entry_in_conn(
             entry.source,
             entry.platform,
             entry.output_path,
-            entry.pinefetch_version,
+            entry.pinefetch_version.as_deref().or(legacy_version),
             millis_to_i64(entry.created_at),
             entry.completed_at.map(millis_to_i64),
         ],

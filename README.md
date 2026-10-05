@@ -1,6 +1,6 @@
 # PineFetch 🍍
 
-[![Dependabot Updates](https://github.com/oliverjessner/PineFetch/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/dependabot/dependabot-updates) [![CodeQL](https://github.com/oliverjessner/PineFetch/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/github-code-scanning/codeql) [![CI](https://github.com/oliverjessner/PineFetch/actions/workflows/quality.yml/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/quality.yml)
+[![Dependabot Updates](https://github.com/oliverjessner/PineFetch/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/dependabot/dependabot-updates) [![CI](https://github.com/oliverjessner/PineFetch/actions/workflows/quality.yml/badge.svg)](https://github.com/oliverjessner/PineFetch/actions/workflows/quality.yml)
 
 **Download videos, audio, captions and transcripts without fighting the command line.**
 

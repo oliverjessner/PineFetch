@@ -28,7 +28,11 @@ pub(super) fn update_link_dump_settings_in_db(
     state: &AppState,
     patch: LinkDumpSettingsPatch,
 ) -> Result<LinkDumpSettings, String> {
-    let mut current = get_link_dump_settings(state)?;
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let transaction = database::write_transaction(&conn)
+        .map_err(|e| format!("Link Dump settings transaction failed: {e}"))?;
+    let mut current = get_link_dump_settings_from_conn(&transaction)
+        .map_err(|e| format!("Link Dump settings read failed: {e}"))?;
     if let Some(enabled) = patch.server_enabled {
         current.server_enabled = enabled;
     }
@@ -45,20 +49,24 @@ pub(super) fn update_link_dump_settings_in_db(
         current.port = port;
     }
 
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute(
-        "UPDATE link_dump_settings
+    transaction
+        .execute(
+            "UPDATE link_dump_settings
          SET server_enabled = ?1, host = ?2, port = ?3, updated_at = datetime('now')
          WHERE id = 1",
-        params![
-            if current.server_enabled { 1 } else { 0 },
-            current.host,
-            i64::from(current.port)
-        ],
-    )
-    .map_err(|e| format!("Link Dump settings update failed: {e}"))?;
-    get_link_dump_settings_from_conn(&conn)
-        .map_err(|e| format!("Link Dump settings read failed: {e}"))
+            params![
+                if current.server_enabled { 1 } else { 0 },
+                current.host,
+                i64::from(current.port)
+            ],
+        )
+        .map_err(|e| format!("Link Dump settings update failed: {e}"))?;
+    let settings = get_link_dump_settings_from_conn(&transaction)
+        .map_err(|e| format!("Link Dump settings read failed: {e}"))?;
+    transaction
+        .commit()
+        .map_err(|e| format!("Link Dump settings commit failed: {e}"))?;
+    Ok(settings)
 }
 
 pub(super) fn list_link_dump_secrets_from_conn(
@@ -149,26 +157,29 @@ pub(super) fn create_link_dump_secret_in_db(
     name: Option<String>,
 ) -> Result<GeneratedLinkDumpSecret, String> {
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let transaction = database::write_transaction(&conn)
+        .map_err(|e| format!("Link Dump secret transaction failed: {e}"))?;
     let clean_name = name
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .map(Ok)
-        .unwrap_or_else(|| next_link_dump_secret_name(&conn))
+        .unwrap_or_else(|| next_link_dump_secret_name(&transaction))
         .map_err(|e| format!("Link Dump name generation failed: {e}"))?;
 
     let secret = generate_link_dump_secret_value()?;
     let secret_hash = hash_link_dump_secret(&secret);
     let id = Uuid::new_v4().to_string();
-    conn.execute(
-        "INSERT INTO link_dump_secrets (id, name, secret_hash, created_at)
+    transaction
+        .execute(
+            "INSERT INTO link_dump_secrets (id, name, secret_hash, created_at)
          VALUES (?1, ?2, ?3, datetime('now'))",
-        params![id, clean_name, secret_hash],
-    )
-    .map_err(|e| format!("Link Dump secret create failed: {e}"))?;
+            params![id, clean_name, secret_hash],
+        )
+        .map_err(|e| format!("Link Dump secret create failed: {e}"))?;
 
-    let connection = conn
+    let connection = transaction
         .query_row(
             "SELECT id, name, created_at, last_used_at, revoked_at, deleted_at
              FROM link_dump_secrets
@@ -188,31 +199,38 @@ pub(super) fn create_link_dump_secret_in_db(
         )
         .map_err(|e| format!("Link Dump secret read failed: {e}"))?;
 
+    transaction
+        .commit()
+        .map_err(|e| format!("Link Dump secret commit failed: {e}"))?;
     Ok(GeneratedLinkDumpSecret { secret, connection })
 }
 
 pub(super) fn revoke_link_dump_secret_in_db(state: &AppState, id: &str) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute(
+    let tx = database::write_transaction(&conn)?;
+    tx.execute(
         "UPDATE link_dump_secrets
          SET revoked_at = COALESCE(revoked_at, datetime('now'))
          WHERE id = ?1 AND deleted_at IS NULL",
         params![id],
     )
     .map_err(|e| format!("Link Dump secret revoke failed: {e}"))?;
-    Ok(())
+    tx.commit()
+        .map_err(|e| format!("Link Dump secret commit failed: {e}"))
 }
 
 pub(super) fn delete_link_dump_secret_in_db(state: &AppState, id: &str) -> Result<(), String> {
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.execute(
+    let tx = database::write_transaction(&conn)?;
+    tx.execute(
         "UPDATE link_dump_secrets
          SET deleted_at = COALESCE(deleted_at, datetime('now'))
          WHERE id = ?1",
         params![id],
     )
     .map_err(|e| format!("Link Dump secret delete failed: {e}"))?;
-    Ok(())
+    tx.commit()
+        .map_err(|e| format!("Link Dump secret commit failed: {e}"))
 }
 
 pub(super) fn validate_link_dump_secret(
@@ -252,11 +270,17 @@ pub(super) fn validate_link_dump_secret(
     }
 
     if let Some(valid) = matched.as_ref() {
-        conn.execute(
-            "UPDATE link_dump_secrets SET last_used_at = datetime('now') WHERE id = ?1",
+        let tx = database::write_transaction(&conn)?;
+        let updated = tx.execute(
+            "UPDATE link_dump_secrets SET last_used_at = datetime('now') WHERE id = ?1 AND revoked_at IS NULL AND deleted_at IS NULL",
             params![valid.id],
         )
         .map_err(|e| format!("Link Dump secret last-used update failed: {e}"))?;
+        if updated != 1 {
+            return Ok(None);
+        }
+        tx.commit()
+            .map_err(|e| format!("Link Dump secret last-used commit failed: {e}"))?;
     }
 
     Ok(matched)

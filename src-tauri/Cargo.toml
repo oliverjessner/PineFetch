@@ -21,7 +21,7 @@ tauri-plugin-notification = "2"
 regex = "1"
 base64 = "0.22"
 getrandom = "0.2"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"

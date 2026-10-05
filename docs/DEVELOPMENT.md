@@ -1,5 +1,9 @@
 # Development and quality checks
 
+Database migrations, legacy imports, SQLite snapshots and file completion rules
+are documented in [DATA-INTEGRITY.md](DATA-INTEGRITY.md). Their offline regression
+tests run in the same Rust suite and `npm run check` gate described here.
+
 PineFetch's documented release and Homebrew installation target macOS on Apple
 silicon. The quality workflow uses `macos-15` (arm64). The existing Windows build
 helper remains available; this workflow does not establish Windows or Linux

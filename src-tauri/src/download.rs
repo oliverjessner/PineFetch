@@ -1,5 +1,51 @@
 use super::*;
 
+#[derive(Debug)]
+pub(super) struct OwnedTemporaryFile {
+    pub(super) path: PathBuf,
+    file: fs::File,
+}
+
+impl OwnedTemporaryFile {
+    pub(super) fn create_at(path: PathBuf) -> Result<Self, String> {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).read(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(&path)
+            .map_err(|e| format!("Could not reserve job temporary file: {e}"))?;
+        Ok(Self { path, file })
+    }
+
+    fn sync(&self) -> Result<(), String> {
+        self.file
+            .sync_all()
+            .map_err(|e| format!("Could not flush produced temporary file: {e}"))
+    }
+}
+
+impl Drop for OwnedTemporaryFile {
+    fn drop(&mut self) {
+        // A path can have been replaced by another process. Delete only the
+        // inode reserved by this job; preserve ambiguous paths elsewhere.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if let (Ok(owned), Ok(current)) =
+                (self.file.metadata(), fs::symlink_metadata(&self.path))
+            {
+                if owned.dev() == current.dev() && owned.ino() == current.ino() {
+                    let _ = fs::remove_file(&self.path);
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn run_download_job(
     app: &AppHandle,
     state: &AppState,
@@ -244,6 +290,10 @@ pub(super) fn run_download_job(
                 .map(|(_, info)| info.clone())
         });
 
+        completion::output_ready(state, job, output_path.as_deref()).map_err(|e| {
+            format!("Downloaded output receipt failed: {e}; any produced file preserved")
+        })?;
+
         let original_output_path = output_path.clone();
         if let Some(cut_start_time) = job.cut_start_time {
             let trimmed_path = trim_downloaded_file(
@@ -377,10 +427,14 @@ pub(super) fn write_caption_sidecar(media_path: &Path, caption: &str) -> Result<
             media_path.display()
         ));
     }
-    let caption_path = media_path.with_extension("caption.txt");
-    fs::write(&caption_path, caption)
-        .map_err(|e| format!("Failed to save caption to {}: {e}", caption_path.display()))?;
-    Ok(caption_path)
+    let mut temporary =
+        OwnedTemporaryFile::create_at(build_cut_sidecar_path(media_path, "caption")?)?;
+    temporary
+        .file
+        .write_all(caption.as_bytes())
+        .map_err(|e| format!("Caption write failed: {e}; media preserved"))?;
+    temporary.sync()?;
+    publish_unique_output(&temporary.path, &media_path.with_extension("caption.txt"))
 }
 
 pub(super) fn effective_download_job(job: &DownloadJob) -> DownloadJob {
@@ -442,7 +496,11 @@ pub(super) fn trim_downloaded_file(
         },
     );
 
-    let temp_path = build_cut_sidecar_path(input_path, "cut")?;
+    let temporary = OwnedTemporaryFile::create_at(build_cut_sidecar_path(
+        input_path,
+        &format!("cut-{}", job.id),
+    )?)?;
+    let temp_path = &temporary.path;
 
     let input_path_str = input_path.to_string_lossy().to_string();
     let temp_path_str = temp_path.to_string_lossy().to_string();
@@ -488,25 +546,18 @@ pub(super) fn trim_downloaded_file(
     }
 
     if !output.status.success() {
-        let _ = fs::remove_file(&temp_path);
         let code = output.status.code().unwrap_or(-1);
         return Err(format!("ffmpeg timestamp cut failed with exit code {code}"));
     }
 
-    if !temp_path.exists() {
+    if !temp_path.is_file() || fs::metadata(temp_path).map_err(|e| e.to_string())?.len() == 0 {
         return Err("ffmpeg finished but no cut file was created".to_string());
     }
 
-    let final_path = match preserve_unique_cut_output(&temp_path, input_path, cut_start_time) {
-        Ok(path) => path,
-        Err(err) => {
-            let _ = fs::remove_file(&temp_path);
-            return Err(err);
-        }
-    };
-    let _ = fs::remove_file(&temp_path);
-    // Only remove the full download after the cut exists at a distinct path.
-    let _ = fs::remove_file(input_path);
+    temporary.sync()?;
+    let final_path = preserve_unique_cut_output(temp_path, input_path, cut_start_time)?;
+    // yt-dlp can reuse a pre-existing full download. Its ownership is unknown;
+    // keep it even after the new cut has been published.
 
     emit_log(
         app,
@@ -566,9 +617,13 @@ pub(super) fn preserve_unique_cut_output(
     cut_start_time: f64,
 ) -> Result<PathBuf, String> {
     let base = build_timestamp_cut_output_path(input_path, cut_start_time)?;
+    publish_unique_output(temp_path, &base)
+}
+
+pub(super) fn publish_unique_output(temp_path: &Path, base: &Path) -> Result<PathBuf, String> {
     for index in 1..=1000 {
         let candidate = if index == 1 {
-            base.clone()
+            base.to_path_buf()
         } else {
             let stem = base
                 .file_stem()
@@ -584,32 +639,56 @@ pub(super) fn preserve_unique_cut_output(
         };
 
         match fs::hard_link(temp_path, &candidate) {
-            Ok(()) => return Ok(candidate),
+            Ok(()) => {
+                sync_output(&candidate)?;
+                return Ok(candidate);
+            }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(_) => {
                 // Some removable and network filesystems do not support hard links.
                 let mut source = fs::File::open(temp_path)
                     .map_err(|err| format!("Could not read cut file: {err}"))?;
-                let mut destination = match fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&candidate)
+                let mut options = fs::OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(unix)]
                 {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(0o600);
+                }
+                let mut destination = match options.open(&candidate) {
                     Ok(file) => file,
                     Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                    Err(err) => return Err(format!("Could not save cut file: {err}")),
+                    Err(err) => {
+                        return Err(format!(
+                            "Could not save output file: {err}; previous files preserved"
+                        ))
+                    }
                 };
-                if let Err(err) =
-                    std::io::copy(&mut source, &mut destination).and_then(|_| destination.flush())
+                if let Err(err) = std::io::copy(&mut source, &mut destination)
+                    .and_then(|_| destination.sync_all())
                 {
-                    let _ = fs::remove_file(&candidate);
+                    // The partially copied candidate is ambiguous after an I/O
+                    // failure. Preserve it and the source; never remove a path
+                    // another process may now own.
                     return Err(format!("Could not copy cut file: {err}"));
                 }
+                sync_output(&candidate)?;
                 return Ok(candidate);
             }
         }
     }
-    Err("Could not find a free file name for the timestamp cut".to_string())
+    Err("Could not find a free output file name; previous files preserved".to_string())
+}
+
+pub(super) fn sync_output(path: &Path) -> Result<(), String> {
+    fs::File::open(path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| format!("Output file flush failed: {e}; file preserved"))?;
+    #[cfg(unix)]
+    fs::File::open(path.parent().ok_or("Output parent unavailable")?)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| format!("Output directory flush failed: {e}; file preserved"))?;
+    Ok(())
 }
 
 pub(super) fn format_timestamp_filename_suffix(seconds: f64) -> String {
@@ -1094,7 +1173,11 @@ pub(super) fn run_faster_whisper_transcription(
         },
     );
 
-    let transcript_path = Path::new(media_path).with_extension("txt");
+    let transcript_temporary = OwnedTemporaryFile::create_at(build_cut_sidecar_path(
+        Path::new(media_path),
+        &format!("transcript-{}", job.id),
+    )?)?;
+    let transcript_path = &transcript_temporary.path;
     let transcript_path_str = transcript_path.to_string_lossy().to_string();
     let model_name = normalize_faster_whisper_model(&job.faster_whisper_model);
     emit_log(
@@ -1215,8 +1298,13 @@ pub(super) fn run_faster_whisper_transcription(
         },
     );
 
+    transcript_temporary.sync()?;
+    let final_path = publish_unique_output(
+        transcript_path,
+        &Path::new(media_path).with_extension("txt"),
+    )?;
     Ok(TranscriptionRunResult {
-        transcript_path: transcript_path_str,
+        transcript_path: final_path.to_string_lossy().to_string(),
         language,
     })
 }
@@ -1242,7 +1330,12 @@ pub(super) fn extract_temporary_transcription_audio(
     let parent = video_path
         .parent()
         .ok_or_else(|| "Downloaded video has no parent directory".to_string())?;
-    let audio_path = parent.join(format!(".pinefetch-transcription-{}.wav", Uuid::new_v4()));
+    let audio_path = parent.join(format!(
+        ".pinefetch-transcription-{}-{}.wav",
+        job.id,
+        Uuid::new_v4()
+    ));
+    let temporary = OwnedTemporaryFile::create_at(audio_path.clone())?;
     let video_path_str = video_path.to_string_lossy().to_string();
     let audio_path_str = audio_path.to_string_lossy().to_string();
 
@@ -1276,7 +1369,6 @@ pub(super) fn extract_temporary_transcription_audio(
         .map_err(|e| format!("Failed to prepare audio for transcription: {e}"))?;
 
     if !output.status.success() {
-        let _ = fs::remove_file(&audio_path);
         let details = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if details.is_empty() {
             format!(
@@ -1287,11 +1379,12 @@ pub(super) fn extract_temporary_transcription_audio(
             format!("ffmpeg transcription audio extraction failed: {details}")
         });
     }
-    if !audio_path.exists() {
+    if !audio_path.is_file() || fs::metadata(&audio_path).map_err(|e| e.to_string())?.len() == 0 {
         return Err("ffmpeg finished but no transcription audio was created".to_string());
     }
 
-    Ok(TemporaryTranscriptionAudio { path: audio_path })
+    temporary.sync()?;
+    Ok(temporary)
 }
 
 pub(super) fn build_output_template(output_dir: &str, filename_suffix: Option<&str>) -> String {

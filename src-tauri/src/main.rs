@@ -1,14 +1,20 @@
 mod browser_import;
 mod cli;
+mod completion;
 mod config;
+mod database;
 mod download;
 mod history;
+#[cfg(test)]
+mod integrity_tests;
 mod platform;
 mod presets;
 mod queue;
 
 use browser_import::*;
 use config::*;
+#[cfg(test)]
+use database::initialize as run_link_dump_migrations;
 use download::*;
 use history::*;
 #[cfg(test)]
@@ -470,16 +476,7 @@ pub(crate) struct SavedCaption {
     pub(crate) text: String,
 }
 
-#[derive(Debug)]
-struct TemporaryTranscriptionAudio {
-    path: PathBuf,
-}
-
-impl Drop for TemporaryTranscriptionAudio {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
+type TemporaryTranscriptionAudio = OwnedTemporaryFile;
 
 const FASTER_WHISPER_TRANSCRIBE_SNIPPET: &str = r#"
 import sys
@@ -1246,25 +1243,17 @@ fn sha256_from_path(path: Option<&str>) -> Result<Option<String>, String> {
     Ok(Some(bytes_to_hex(&hasher.finalize())))
 }
 
-fn add_history_entry_on_success(
-    app: &AppHandle,
-    state: &AppState,
+fn prepare_history_entry(
     job: &DownloadJob,
     output_path: Option<&str>,
     info: Option<&InfoResponse>,
-) -> Result<String, String> {
+) -> Result<HistoryEntry, String> {
     let filename = filename_from_path(output_path);
     let metadata = hydrate_history_metadata(job, filename.as_deref(), info);
     let file_size_bytes = file_size_bytes_from_path(output_path);
-    let sha256 = match sha256_from_path(output_path) {
-        Ok(hash) => hash,
-        Err(err) => {
-            emit_history_warning(app, &job.id, &err);
-            None
-        }
-    };
+    let sha256 = sha256_from_path(output_path)?;
     let now = current_timestamp_millis();
-    let history_entry_id = Uuid::new_v4().to_string();
+    let history_entry_id = job.id.clone();
     let entry = HistoryEntry {
         id: history_entry_id.clone(),
         url: job.url.clone(),
@@ -1286,9 +1275,7 @@ fn add_history_entry_on_success(
         completed_at: Some(now),
     };
 
-    insert_history_entry_in_db(state, &entry)?;
-    let _ = app.emit("history:changed", ());
-    Ok(history_entry_id)
+    Ok(entry)
 }
 
 #[tauri::command]
@@ -1536,394 +1523,7 @@ fn link_dump_db_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn open_link_dump_db(app: &AppHandle) -> Result<Connection, String> {
     let path = link_dump_db_path(app)?;
-    let conn = Connection::open(path).map_err(|e| format!("SQLite open failed: {e}"))?;
-    run_link_dump_migrations(&conn)
-        .map_err(|e| format!("Link Dump SQLite migration failed: {e}"))?;
-    println!("SQLite migration completed");
-    Ok(conn)
-}
-
-fn run_link_dump_migrations(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        r#"
-        PRAGMA foreign_keys = ON;
-
-        CREATE TABLE IF NOT EXISTS link_dump_settings (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            server_enabled INTEGER NOT NULL DEFAULT 1,
-            host TEXT NOT NULL DEFAULT '127.0.0.1',
-            port INTEGER NOT NULL DEFAULT 2255,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        INSERT OR IGNORE INTO link_dump_settings (
-            id,
-            server_enabled,
-            host,
-            port,
-            created_at,
-            updated_at
-        ) VALUES (
-            1,
-            1,
-            '127.0.0.1',
-            2255,
-            datetime('now'),
-            datetime('now')
-        );
-
-        CREATE TABLE IF NOT EXISTS app_config (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            yt_dlp_path TEXT,
-            default_output_dir TEXT,
-            selected_preset_key TEXT,
-            faster_whisper_model TEXT NOT NULL DEFAULT 'base',
-            download_video_with_transcript INTEGER NOT NULL DEFAULT 0,
-            save_captions INTEGER NOT NULL DEFAULT 0,
-            save_thumbnails INTEGER NOT NULL DEFAULT 0,
-            magic_import_enabled INTEGER NOT NULL DEFAULT 1,
-            cut_at_timestamp_enabled INTEGER NOT NULL DEFAULT 1,
-            last_download_url TEXT,
-            legacy_config_json_migrated INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        INSERT OR IGNORE INTO app_config (
-            id,
-            yt_dlp_path,
-            default_output_dir,
-            selected_preset_key,
-            magic_import_enabled,
-            cut_at_timestamp_enabled,
-            last_download_url,
-            created_at,
-            updated_at
-        ) VALUES (
-            1,
-            NULL,
-            NULL,
-            'best',
-            1,
-            1,
-            NULL,
-            datetime('now'),
-            datetime('now')
-        );
-
-        CREATE TABLE IF NOT EXISTS link_dump_secrets (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            secret_hash TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL,
-            last_used_at TEXT,
-            revoked_at TEXT,
-            deleted_at TEXT
-        );
-
-        DROP TABLE IF EXISTS link_dump_request_log;
-
-        CREATE TABLE IF NOT EXISTS history_entries (
-            id TEXT PRIMARY KEY,
-            url TEXT NOT NULL,
-            title TEXT,
-            uploader TEXT,
-            filename TEXT,
-            thumbnail TEXT,
-            upload_date TEXT,
-            timestamp INTEGER,
-            duration_seconds INTEGER,
-            file_size_bytes INTEGER,
-            sha256 TEXT,
-            medium TEXT,
-            source TEXT,
-            platform TEXT,
-            output_path TEXT,
-            pinefetch_version TEXT,
-            created_at INTEGER NOT NULL,
-            completed_at INTEGER
-        );
-
-        CREATE TABLE IF NOT EXISTS transcriptions (
-            id TEXT PRIMARY KEY,
-            history_entry_id TEXT NOT NULL UNIQUE,
-            text TEXT NOT NULL,
-            "type" TEXT NOT NULL CHECK ("type" IN ('text', 'text with timestamps')),
-            language TEXT,
-            FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS captions (
-            history_entry_id TEXT NOT NULL,
-            media_path TEXT NOT NULL,
-            caption_path TEXT NOT NULL,
-            text TEXT NOT NULL,
-            sha256 TEXT,
-            created_at INTEGER NOT NULL,
-            PRIMARY KEY (history_entry_id, media_path),
-            FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_link_dump_secrets_active
-            ON link_dump_secrets(revoked_at, deleted_at);
-
-        CREATE INDEX IF NOT EXISTS idx_history_entries_completed_at
-            ON history_entries(completed_at, created_at);
-
-        "#,
-    )?;
-
-    ensure_app_config_notifications_enabled_column(conn)?;
-    ensure_app_config_faster_whisper_model_column(conn)?;
-    ensure_app_config_download_video_with_transcript_column(conn)?;
-    ensure_app_config_save_captions_column(conn)?;
-    ensure_app_config_save_thumbnails_column(conn)?;
-    ensure_app_config_legacy_migration_column(conn)?;
-    ensure_history_entries_timestamp_column(conn)?;
-    ensure_history_entries_duration_seconds_column(conn)?;
-    ensure_history_entries_file_size_bytes_column(conn)?;
-    ensure_history_entries_text_column(conn, "sha256")?;
-    ensure_history_entries_text_column(conn, "uploader")?;
-    ensure_history_entries_text_column(conn, "medium")?;
-    ensure_history_entries_text_column(conn, "source")?;
-    ensure_history_entries_text_column(conn, "pinefetch_version")?;
-    ensure_transcriptions_language_column(conn)?;
-    ensure_captions_sha256_column(conn)?;
-    conn.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_history_entries_sha256 ON history_entries(sha256);
-         CREATE INDEX IF NOT EXISTS idx_captions_sha256 ON captions(sha256);",
-    )?;
-    backfill_history_sources(conn)?;
-    Ok(())
-}
-
-fn ensure_transcriptions_language_column(conn: &Connection) -> rusqlite::Result<()> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('transcriptions') WHERE name = 'language')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        conn.execute("ALTER TABLE transcriptions ADD COLUMN language TEXT", [])?;
-    }
-    Ok(())
-}
-
-fn ensure_app_config_notifications_enabled_column(conn: &Connection) -> rusqlite::Result<()> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'notifications_enabled')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        conn.execute(
-            "ALTER TABLE app_config ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-    Ok(())
-}
-
-fn ensure_app_config_faster_whisper_model_column(conn: &Connection) -> rusqlite::Result<()> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'faster_whisper_model')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        conn.execute(
-            "ALTER TABLE app_config ADD COLUMN faster_whisper_model TEXT NOT NULL DEFAULT 'base'",
-            [],
-        )?;
-    }
-    Ok(())
-}
-
-fn ensure_app_config_download_video_with_transcript_column(
-    conn: &Connection,
-) -> rusqlite::Result<()> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'download_video_with_transcript')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        conn.execute(
-            "ALTER TABLE app_config ADD COLUMN download_video_with_transcript INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-    Ok(())
-}
-
-fn ensure_app_config_save_captions_column(conn: &Connection) -> rusqlite::Result<()> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'save_captions')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        let has_instagram_column: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'save_instagram_captions')",
-            [],
-            |row| row.get(0),
-        )?;
-        if has_instagram_column {
-            conn.execute(
-                "ALTER TABLE app_config RENAME COLUMN save_instagram_captions TO save_captions",
-                [],
-            )?;
-        } else {
-            conn.execute(
-                "ALTER TABLE app_config ADD COLUMN save_captions INTEGER NOT NULL DEFAULT 0",
-                [],
-            )?;
-        }
-    }
-    Ok(())
-}
-
-fn ensure_app_config_save_thumbnails_column(conn: &Connection) -> rusqlite::Result<()> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'save_thumbnails')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        conn.execute(
-            "ALTER TABLE app_config ADD COLUMN save_thumbnails INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-    Ok(())
-}
-
-fn ensure_app_config_legacy_migration_column(conn: &Connection) -> rusqlite::Result<()> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('app_config') WHERE name = 'legacy_config_json_migrated')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        conn.execute(
-            "ALTER TABLE app_config ADD COLUMN legacy_config_json_migrated INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-
-    let already_migrated: i64 = conn.query_row(
-        "SELECT legacy_config_json_migrated FROM app_config WHERE id = 1",
-        [],
-        |row| row.get::<_, i64>(0),
-    )?;
-    if already_migrated != 0 {
-        return Ok(());
-    }
-
-    let has_legacy_meta: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_meta')",
-        [],
-        |row| row.get(0),
-    )?;
-    if has_legacy_meta {
-        let migrated: Option<String> = conn
-            .query_row(
-                "SELECT value FROM app_meta WHERE key = ?1",
-                params![LEGACY_CONFIG_MIGRATION_KEY],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if migrated.as_deref() == Some("1") {
-            conn.execute(
-                "UPDATE app_config SET legacy_config_json_migrated = 1 WHERE id = 1",
-                [],
-            )?;
-        }
-    }
-    Ok(())
-}
-
-fn backfill_history_sources(conn: &Connection) -> rusqlite::Result<()> {
-    let entries = {
-        let mut stmt = conn.prepare(
-            "SELECT id, url FROM history_entries WHERE source IS NULL OR TRIM(source) = ''",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
-    };
-
-    for (id, url) in entries {
-        if let Some(source) = source_from_url(&url) {
-            conn.execute(
-                "UPDATE history_entries SET source = ?1 WHERE id = ?2",
-                params![source, id],
-            )?;
-        }
-    }
-
-    Ok(())
-}
-
-fn ensure_history_entries_timestamp_column(conn: &Connection) -> rusqlite::Result<()> {
-    ensure_history_entries_integer_column(conn, "timestamp")
-}
-
-fn ensure_history_entries_duration_seconds_column(conn: &Connection) -> rusqlite::Result<()> {
-    ensure_history_entries_integer_column(conn, "duration_seconds")
-}
-
-fn ensure_history_entries_file_size_bytes_column(conn: &Connection) -> rusqlite::Result<()> {
-    ensure_history_entries_integer_column(conn, "file_size_bytes")
-}
-
-fn ensure_history_entries_integer_column(
-    conn: &Connection,
-    column_name: &str,
-) -> rusqlite::Result<()> {
-    ensure_history_entries_column(conn, column_name, "INTEGER")
-}
-
-fn ensure_history_entries_text_column(
-    conn: &Connection,
-    column_name: &str,
-) -> rusqlite::Result<()> {
-    ensure_history_entries_column(conn, column_name, "TEXT")
-}
-
-fn ensure_captions_sha256_column(conn: &Connection) -> rusqlite::Result<()> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('captions') WHERE name = 'sha256')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        conn.execute("ALTER TABLE captions ADD COLUMN sha256 TEXT", [])?;
-    }
-    Ok(())
-}
-
-fn ensure_history_entries_column(
-    conn: &Connection,
-    column_name: &str,
-    column_type: &str,
-) -> rusqlite::Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(history_entries)")?;
-    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    for column in columns {
-        if column? == column_name {
-            return Ok(());
-        }
-    }
-    drop(stmt);
-
-    conn.execute(
-        &format!("ALTER TABLE history_entries ADD COLUMN {column_name} {column_type}"),
-        [],
-    )?;
-    Ok(())
+    database::open(&path)
 }
 
 fn main() {
@@ -2029,6 +1629,7 @@ mod tests {
     fn link_dump_test_state_with_config(config: AppConfig) -> AppState {
         let conn = Connection::open_in_memory().unwrap();
         run_link_dump_migrations(&conn).unwrap();
+        upsert_app_config_in_conn(&conn, &config).unwrap();
         AppState::new(config, conn)
     }
 
@@ -2732,10 +2333,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pinefetch-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("transcription.wav");
-        fs::write(&path, b"temporary audio").unwrap();
-
         {
-            let _temporary_audio = TemporaryTranscriptionAudio { path: path.clone() };
+            let _temporary_audio = TemporaryTranscriptionAudio::create_at(path.clone()).unwrap();
+            fs::write(&path, b"temporary audio").unwrap();
             assert!(path.exists());
         }
 

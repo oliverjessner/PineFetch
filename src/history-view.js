@@ -2,7 +2,7 @@ import { createHistoryDetailsView } from './history-details-view.js';
 
 export const createHistoryView = ({
     els,
-    invoke,
+    api,
     appendLog,
     formatFileSize,
     formatDuration,
@@ -27,7 +27,7 @@ export const createHistoryView = ({
     let historySearchTimer = null;
     const historyDetailsView = createHistoryDetailsView({
         els,
-        invoke,
+        api,
         appendLog,
         formatFileSize,
         formatDuration,
@@ -165,10 +165,10 @@ export const createHistoryView = ({
     };
 
     const renderHistoryStats = async () => {
-        if (!invoke) return;
+        if (!api.available) return;
 
         try {
-            const stats = await invoke('get_history_stats');
+            const stats = await api.getHistoryStats();
             els.historyVideoCount.textContent = Number(stats?.video_count || 0).toLocaleString();
             els.historyTotalSize.textContent = formatFileSize(stats?.total_file_size_bytes);
             els.historyTotalDuration.textContent = formatDuration(Number(stats?.total_duration_seconds || 0));
@@ -200,9 +200,9 @@ export const createHistoryView = ({
         openBtn.onclick = async () => {
             // Rust uses snake_case: output_path, not outputPath
             const outputPath = entry.output_path || entry.outputPath;
-            if (outputPath && invoke) {
+            if (outputPath && api.available) {
                 try {
-                    const exists = await invoke('open_file_path', { path: outputPath });
+                    const exists = await api.openFilePath({ path: outputPath });
                     if (!exists) {
                         appendLog(`[history] File not found: ${outputPath}`, true);
                     }
@@ -253,7 +253,7 @@ export const createHistoryView = ({
         removeBtn.onclick = async event => {
             event.stopPropagation();
             try {
-                await invoke('remove_history_entry', { id: entry.id });
+                await api.removeHistoryEntry({ id: entry.id });
                 invalidateHistoryCache();
                 void renderHistory({ force: true });
             } catch (err) {
@@ -268,7 +268,7 @@ export const createHistoryView = ({
     const renderHistory = async ({ append = false, force = false } = {}) => {
         if (!append && !force && state.historyLoaded && !state.historyDirty) return;
 
-        if (!invoke) {
+        if (!api.available) {
             els.historyList.replaceChildren();
             els.historyHint.hidden = true;
             state.historyHasMore = false;
@@ -290,7 +290,7 @@ export const createHistoryView = ({
         setHistoryLoading(true);
 
         try {
-            const page = await invoke('get_history', {
+            const page = await api.getHistory({
                 limit: historyPageSize,
                 offset,
                 ...(requestedQuery ? { query: requestedQuery } : {}),
@@ -385,7 +385,7 @@ export const createHistoryView = ({
         els.historySearchFieldSelect.addEventListener('change', applySelectFilters);
         els.historySourceSelect.addEventListener('change', applySelectFilters);
         els.clearHistoryBtn.addEventListener('click', async () => {
-            if (!invoke || state.historyClearing) return;
+            if (!api.available || state.historyClearing) return;
             if (
                 !window.confirm(
                     'Delete all history entries and saved transcripts? This cannot be undone. Downloaded files will stay on disk.'
@@ -397,7 +397,7 @@ export const createHistoryView = ({
             els.clearHistoryBtn.disabled = true;
             setHistoryActionStatus('Deleting history...');
             try {
-                await invoke('clear_history');
+                await api.clearHistory();
                 if (historySearchTimer !== null) clearTimeout(historySearchTimer);
                 historySearchTimer = null;
                 els.historySearchInput.value = '';

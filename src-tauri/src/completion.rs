@@ -1,52 +1,21 @@
 //! A small completion receipt, not a persisted queue or automatic retry system.
-use super::*;
+use crate::files::current_timestamp_millis;
+use crate::files::file_size_bytes_from_path;
+use crate::files::sync_output;
+use crate::hashing::sha256_from_path;
+use crate::history_rules::filename_from_path;
+use crate::history_rules::hydrate_history_metadata;
+use crate::history_rules::medium_for_job;
+use crate::history_rules::source_from_url;
+use crate::models::DownloadJob;
+use crate::models::HistoryEntry;
+use crate::models::InfoResponse;
+use crate::models::SavedCaption;
+use crate::platform::detect_platform;
+use std::fs;
+use std::path::Path;
 
-pub(super) fn begin(state: &AppState, job: &DownloadJob) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    let tx = database::write_transaction(&conn).map_err(|e| e.to_string())?;
-    tx.execute("INSERT INTO job_completions(job_id,url,state,updated_at) VALUES (?1,?2,'processing',?3) ON CONFLICT(job_id) DO NOTHING",
-        params![job.id, job.url, millis_to_i64(current_timestamp_millis())]).map_err(|e| format!("Processing receipt failed: {e}"))?;
-    let (url, status): (String, String) = tx
-        .query_row(
-            "SELECT url,state FROM job_completions WHERE job_id=?1",
-            [&job.id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .map_err(|e| e.to_string())?;
-    if url != job.url || status != "processing" {
-        return Err("Job identity already has a different/completed receipt".into());
-    }
-    tx.commit()
-        .map_err(|e| format!("Processing receipt commit failed: {e}"))
-}
-
-pub(super) fn output_ready(
-    state: &AppState,
-    job: &DownloadJob,
-    path: Option<&str>,
-) -> Result<(), String> {
-    let path = require_output(path)?;
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    let tx = database::write_transaction(&conn)?;
-    let updated = tx.execute("UPDATE job_completions SET output_path=?1, state='output_ready', updated_at=?2 WHERE job_id=?3 AND url=?4 AND state IN ('processing','output_ready')",
-        params![path, millis_to_i64(current_timestamp_millis()), job.id, job.url])
-        .map_err(|e| format!("Output receipt failed: {e}"))?;
-    if updated == 0 {
-        let existing: Option<(String, String, String)> = tx
-            .query_row(
-                "SELECT url,output_path,state FROM job_completions WHERE job_id=?1",
-                [&job.id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        if existing != Some((job.url.clone(), path.to_string(), "complete".into())) {
-            return Err("Output receipt does not match the processing job".into());
-        }
-    }
-    tx.commit()
-        .map_err(|e| format!("Output receipt commit failed: {e}"))
-}
+pub(crate) use crate::completion_store::{begin, known_output, CompletionPoint};
 
 fn require_output(path: Option<&str>) -> Result<&str, String> {
     let path = path.ok_or("Required output file is missing; completion not committed")?;
@@ -58,28 +27,8 @@ fn require_output(path: Option<&str>) -> Result<&str, String> {
     Ok(path)
 }
 
-pub(super) fn known_output(state: &AppState, job_id: &str) -> Result<Option<String>, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    conn.query_row(
-        "SELECT output_path FROM job_completions WHERE job_id=?1",
-        [job_id],
-        |r| r.get(0),
-    )
-    .optional()
-    .map(Option::flatten)
-    .map_err(|e| format!("Output receipt read failed: {e}"))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum CompletionPoint {
-    History,
-    Transcript,
-    Captions,
-    BeforeCommit,
-}
-
 pub(super) fn complete(
-    state: &AppState,
+    state: &crate::database::Database,
     job: &DownloadJob,
     path: Option<&str>,
     info: Option<&InfoResponse>,
@@ -90,13 +39,13 @@ pub(super) fn complete(
 }
 
 pub(super) fn complete_with_hook(
-    state: &AppState,
+    state: &crate::database::Database,
     job: &DownloadJob,
     path: Option<&str>,
     info: Option<&InfoResponse>,
     captions: &[SavedCaption],
     language: Option<&str>,
-    mut hook: impl FnMut(CompletionPoint) -> Result<(), String>,
+    hook: impl FnMut(CompletionPoint) -> Result<(), String>,
 ) -> Result<(), String> {
     let result = (|| -> Result<(), String> {
         let path = require_output(path)?;
@@ -124,59 +73,20 @@ pub(super) fn complete_with_hook(
                 return Err("Produced caption changed before persistence".into());
             }
         }
-        let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-        let tx = database::write_transaction(&conn)
-            .map_err(|e| format!("Completion writer lock failed: {e}"))?;
-        let (url, stored_path, status, history_id): (String, Option<String>, String, Option<String>) = tx.query_row(
-            "SELECT url,output_path,state,history_entry_id FROM job_completions WHERE job_id=?1", [&job.id],
-            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(|e| format!("Completion receipt read failed: {e}"))?;
-        if url != job.url || stored_path.as_deref() != Some(path) {
-            return Err("Completion job identity/path conflict".into());
-        }
-        if status == "complete" {
-            if history_id.as_deref() != Some(&job.id) {
-                return Err(
-                    "Completed history was removed; receipt retained, no implicit recreation"
-                        .into(),
-                );
-            }
-            return Ok(());
-        }
-        let collision: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM history_entries WHERE id=?1)",
-                [&job.id],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if collision {
-            return Err(
-                "Completion ID conflicts with existing history; existing entry preserved".into(),
-            );
-        }
-        insert_history_entry_in_conn(&tx, &entry)?;
-        hook(CompletionPoint::History)?;
-        if let Some((text, language)) = transcript {
-            insert_transcription_in_conn(
-                &tx,
-                &job.id,
-                &text,
-                if job.transcribe_timestamps {
-                    "text with timestamps"
-                } else {
-                    "text"
-                },
-                language,
-            )?;
-        }
-        hook(CompletionPoint::Transcript)?;
-        insert_captions_in_conn(&tx, &job.id, captions)?;
-        hook(CompletionPoint::Captions)?;
-        tx.execute("UPDATE job_completions SET state='complete',history_entry_id=?1,updated_at=?2 WHERE job_id=?1",
-            params![job.id, millis_to_i64(current_timestamp_millis())]).map_err(|e| format!("Completion marker failed: {e}"))?;
-        hook(CompletionPoint::BeforeCommit)?;
-        tx.commit()
-            .map_err(|e| format!("Completion commit failed: {e}"))
+        let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
+        crate::completion_store::commit(
+            &conn,
+            crate::completion_store::CompletionData {
+                job,
+                path,
+                entry: &entry,
+                captions,
+                transcript: transcript
+                    .as_ref()
+                    .map(|(text, language)| (text.as_str(), *language)),
+            },
+            hook,
+        )
     })();
     result.map_err(|e| {
         let preserved = path.is_some_and(|p| Path::new(p).is_file());
@@ -192,9 +102,54 @@ pub(super) fn complete_with_hook(
 }
 
 // Used by the worker and by file-backed regression tests; errors retain paths.
-pub(super) fn apply_result(event: &mut DownloadStateEvent, result: Result<(), String>) {
-    if let Err(error) = result {
-        event.state = "error".into();
-        event.error = Some(error);
-    }
+#[cfg(test)]
+pub(super) fn apply_result(
+    event: &mut crate::models::DownloadStateEvent,
+    result: Result<(), String>,
+) {
+    event.apply_result(result);
+}
+
+pub(crate) fn prepare_history_entry(
+    job: &DownloadJob,
+    output_path: Option<&str>,
+    info: Option<&InfoResponse>,
+) -> Result<HistoryEntry, String> {
+    let filename = filename_from_path(output_path);
+    let metadata = hydrate_history_metadata(job, filename.as_deref(), info);
+    let file_size_bytes = file_size_bytes_from_path(output_path);
+    let sha256 = sha256_from_path(output_path)?;
+    let now = current_timestamp_millis();
+    let history_entry_id = job.id.clone();
+    let entry = HistoryEntry {
+        id: history_entry_id.clone(),
+        url: job.url.clone(),
+        title: metadata.title,
+        uploader: metadata.uploader,
+        filename,
+        thumbnail: metadata.thumbnail,
+        upload_date: metadata.upload_date,
+        timestamp: metadata.timestamp,
+        duration_seconds: metadata.duration_seconds,
+        file_size_bytes,
+        sha256,
+        medium: Some(medium_for_job(job).to_string()),
+        source: source_from_url(&job.url),
+        platform: detect_platform(&job.url),
+        output_path: output_path.map(|s| s.to_string()),
+        pinefetch_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        created_at: now,
+        completed_at: Some(now),
+    };
+
+    Ok(entry)
+}
+
+pub(crate) fn output_ready(
+    database: &crate::database::Database,
+    job: &DownloadJob,
+    path: Option<&str>,
+) -> Result<(), String> {
+    let path = require_output(path)?;
+    crate::completion_store::output_ready(database, job, path)
 }

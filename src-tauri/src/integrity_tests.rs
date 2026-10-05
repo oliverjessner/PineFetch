@@ -1,8 +1,60 @@
 //! All fixtures are synthetic, file-backed and confined to a fresh temp root.
-use super::*;
-use database::{MigrationPoint, SCHEMA_VERSION};
-use rusqlite::{OpenFlags, Transaction, TransactionBehavior};
+use crate::completion;
+use crate::config::import_legacy_config;
+use crate::config::load_config_from_db;
+use crate::config::update_config;
+use crate::database;
+use crate::database::MigrationPoint;
+use crate::database::SCHEMA_VERSION;
+use crate::download::write_caption_sidecar;
+use crate::files::OwnedTemporaryFile;
+use crate::hashing::sha256_hex;
+use crate::history::clear_history_entries_in_db;
+use crate::history::delete_history_entry_from_db;
+use crate::history::import_legacy_history;
+use crate::history::import_legacy_history_with_hook;
+use crate::history::insert_history_entry_in_conn;
+use crate::history::search_history_page_from_db;
+use crate::link_dump_store::create_link_dump_secret_in_db;
+use crate::link_dump_store::delete_link_dump_secret_in_db;
+use crate::link_dump_store::get_link_dump_settings_from_conn;
+use crate::link_dump_store::revoke_link_dump_secret_in_db;
+use crate::link_dump_store::update_link_dump_settings_in_db;
+use crate::link_dump_store::validate_link_dump_secret;
+use crate::models::DownloadJob;
+use crate::models::DownloadState;
+use crate::models::DownloadStateEvent;
+use crate::models::HistoryEntry;
+use crate::models::LinkDumpSettingsPatch;
+use crate::models::SavedCaption;
+use crate::startup;
+use crate::state::AppState;
+use rusqlite::Connection;
+use rusqlite::OpenFlags;
+use rusqlite::Transaction;
+use rusqlite::TransactionBehavior;
+use serde_json::json;
+use std::collections::HashSet;
+use std::fs;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Read;
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use std::sync::mpsc;
+use std::sync::Arc;
 use std::sync::Barrier;
+use std::thread;
+use std::time::Duration;
+use std::time::Instant;
+use uuid::Uuid;
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -104,6 +156,245 @@ const RELEASE_SCHEMAS: &[(&str, &str)] = &[
     ("v2.1.0", include_str!("../test-fixtures/schema/v2.1.0.sql")),
     ("v2.2.0", include_str!("../test-fixtures/schema/v2.2.0.sql")),
 ];
+
+// Schema-only reproduction of the reported upgraded database. All rows below
+// are synthetic; this is not a fixture copied from a user's database.
+fn reported_upgraded_layout(conn: &Connection) {
+    let sql = RELEASE_SCHEMAS.last().unwrap().1.replace(
+        "pinefetch_version TEXT,",
+        "pinefetch_version TEXT NOT NULL DEFAULT '2.1.0',",
+    );
+    conn.execute_batch(&sql).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE app_config ADD COLUMN save_instagram_captions INTEGER NOT NULL DEFAULT 0;
+         UPDATE app_config SET save_instagram_captions=1,save_captions=0;",
+    )
+    .unwrap();
+    populate_legacy(conn);
+}
+
+#[test]
+fn reported_upgraded_columns_preserve_settings_history_constraints_and_reopen() {
+    let f = Fixture::new();
+    let path = f.path("pinefetch.sqlite3");
+    let conn = Connection::open(&path).unwrap();
+    reported_upgraded_layout(&conn);
+    let before = schema(&conn);
+    drop(conn);
+
+    let conn = database::open(&path).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    assert_eq!(count(&conn, "history_entries"), 2);
+    assert!(!load_config_from_db(&conn).unwrap().save_captions);
+    assert_eq!(
+        conn.query_row("SELECT save_instagram_captions FROM app_config", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT pinefetch_version FROM history_entries WHERE id='old-1'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "2.1.0"
+    );
+    let backup =
+        Connection::open_with_flags(&f.backups()[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(version(&backup), 0);
+    assert_eq!(schema(&backup), before);
+    assert_eq!(count(&backup, "history_entries"), 2);
+    assert_eq!(count(&conn, "transcriptions"), 1);
+    assert_eq!(count(&conn, "captions"), 1);
+    drop(backup);
+
+    // Older JSON entries have no app version. Retain this layout's own
+    // historical default while preserving NULL in normal nullable layouts.
+    insert_history_entry_in_conn(&conn, &entry("imported")).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT pinefetch_version FROM history_entries WHERE id='imported'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "2.1.0"
+    );
+    let mut explicit = entry("explicit");
+    explicit.pinefetch_version = Some("1.4.3".into());
+    insert_history_entry_in_conn(&conn, &explicit).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT pinefetch_version FROM history_entries WHERE id='explicit'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "1.4.3"
+    );
+    let migrated_schema = schema(&conn);
+    drop(conn);
+    let bytes = fs::read(&path).unwrap();
+    let reopened = database::open(&path).unwrap();
+    assert_eq!(schema(&reopened), migrated_schema);
+    assert_eq!(count(&reopened, "history_entries"), 4);
+    drop(reopened);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert_eq!(f.backups().len(), 1);
+}
+
+#[test]
+fn reported_upgrade_failure_rolls_back_and_retry_preserves_original_rows() {
+    let f = Fixture::new();
+    let path = f.path("pinefetch.sqlite3");
+    let conn = Connection::open(&path).unwrap();
+    reported_upgraded_layout(&conn);
+    let before = schema(&conn);
+    drop(conn);
+    let bytes = fs::read(&path).unwrap();
+    let error = database::open_with_hook(&path, |point| {
+        if point == MigrationPoint::Receipts {
+            Err("synthetic interrupted upgrade".into())
+        } else {
+            Ok(())
+        }
+    })
+    .err()
+    .unwrap();
+    assert!(error.contains("synthetic interrupted upgrade"));
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    let original = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(schema(&original), before);
+    assert_eq!(version(&original), 0);
+    assert_eq!(count(&original, "history_entries"), 2);
+    drop(original);
+    let reopened = database::open(&path).unwrap();
+    assert_eq!(version(&reopened), SCHEMA_VERSION);
+    assert_eq!(count(&reopened, "transcriptions"), 1);
+    assert_eq!(count(&reopened, "captions"), 1);
+    assert_eq!(count(&reopened, "history_entries"), 2);
+}
+
+#[test]
+fn reported_column_compatibility_still_rejects_unrelated_definitions() {
+    for (history_definition, caption_definition) in [
+        (
+            "TEXT NOT NULL DEFAULT 'other'",
+            "INTEGER NOT NULL DEFAULT 0",
+        ),
+        ("TEXT DEFAULT '2.1.0'", "INTEGER NOT NULL DEFAULT 0"),
+        ("TEXT NOT NULL DEFAULT '2.1.0'", "TEXT NOT NULL DEFAULT 0"),
+        (
+            "TEXT NOT NULL DEFAULT '2.1.0'",
+            "INTEGER NOT NULL DEFAULT 1",
+        ),
+    ] {
+        let f = Fixture::new();
+        let path = f.path("pinefetch.sqlite3");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(&RELEASE_SCHEMAS.last().unwrap().1.replace(
+            "pinefetch_version TEXT,",
+            &format!("pinefetch_version {history_definition},"),
+        ))
+        .unwrap();
+        conn.execute_batch(&format!(
+            "ALTER TABLE app_config ADD COLUMN save_instagram_captions {caption_definition};"
+        ))
+        .unwrap();
+        let before = schema(&conn);
+        drop(conn);
+        let bytes = fs::read(&path).unwrap();
+        assert!(database::open(&path)
+            .unwrap_err()
+            .contains("database preserved"));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        let reopened =
+            Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        assert_eq!(schema(&reopened), before);
+        assert_eq!(version(&reopened), 0);
+        assert!(f.backups().is_empty());
+    }
+}
+
+#[test]
+fn persistence_startup_imports_before_managing_state_and_reopens_idempotently() {
+    let f = Fixture::new();
+    let data_dir = f.path("data");
+    let config_dir = f.path("config");
+    fs::create_dir(&data_dir).unwrap();
+    fs::create_dir(&config_dir).unwrap();
+    let config_path = config_dir.join("config.json");
+    let history_path = data_dir.join("history.json");
+    let config = json!({"yt_dlp_path":null,"default_output_dir":"/synthetic/output",
+        "save_captions":true,"selected_preset_key":"audio_mp3"})
+    .to_string();
+    let history = serde_json::to_string(&vec![entry("startup-entry")]).unwrap();
+    fs::write(&config_path, &config).unwrap();
+    fs::write(&history_path, &history).unwrap();
+    let state = startup::load_from_dirs(&data_dir, &config_dir).unwrap();
+    assert_eq!(
+        state.config.lock().unwrap().default_output_dir.as_deref(),
+        Some("/synthetic/output")
+    );
+    assert!(state.config.lock().unwrap().save_captions);
+    assert_eq!(count(&state.db.lock().unwrap(), "history_entries"), 1);
+    assert_eq!(fs::read_to_string(&config_path).unwrap(), config);
+    assert_eq!(fs::read_to_string(&history_path).unwrap(), history);
+    // Receipts prevent re-reading obsolete files, including malformed ones.
+    drop(state);
+    let bytes = fs::read(data_dir.join("pinefetch.sqlite")).unwrap();
+    fs::write(&config_path, "obsolete invalid config").unwrap();
+    fs::write(&history_path, "obsolete invalid history").unwrap();
+    let state = startup::load_from_dirs(&data_dir, &config_dir).unwrap();
+    assert_eq!(count(&state.db.lock().unwrap(), "history_entries"), 1);
+    drop(state);
+    assert_eq!(fs::read(data_dir.join("pinefetch.sqlite")).unwrap(), bytes);
+}
+
+#[test]
+fn persistence_startup_returns_errors_and_preserves_refused_inputs() {
+    let f = Fixture::new();
+    let config_dir = f.path("config");
+    fs::create_dir(&config_dir).unwrap();
+    fs::write(config_dir.join("config.json"), "synthetic malformed JSON").unwrap();
+    let conn = f.db();
+    conn.pragma_update(None, "user_version", 999).unwrap();
+    drop(conn);
+    fs::rename(f.path("pinefetch.sqlite3"), f.path("pinefetch.sqlite")).unwrap();
+    let before = fs::read(f.path("pinefetch.sqlite")).unwrap();
+    let error = startup::load_from_dirs(&f.0, &config_dir).err().unwrap();
+    assert!(error.contains("999"));
+    assert_eq!(fs::read(f.path("pinefetch.sqlite")).unwrap(), before);
+    assert_eq!(
+        fs::read_to_string(config_dir.join("config.json")).unwrap(),
+        "synthetic malformed JSON"
+    );
+    assert!(f.backups().is_empty());
+
+    let fresh_data = f.path("fresh");
+    let error = startup::load_from_dirs(&fresh_data, &config_dir)
+        .err()
+        .unwrap();
+    assert!(error.contains("Legacy JSON is invalid"));
+    let conn = Connection::open_with_flags(
+        fresh_data.join("pinefetch.sqlite"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT legacy_config_json_migrated FROM app_config",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(count(&conn, "history_entries"), 0);
+}
 
 fn populate_legacy(conn: &Connection) {
     conn.execute("INSERT INTO history_entries(id,url,title,created_at,completed_at) VALUES ('old-1','https://www.youtube.com/watch?v=synthetic','Grüße 🌲',1700000000000, NULL)", []).unwrap();
@@ -390,7 +681,6 @@ fn wal_snapshot_restores_committed_contents_and_links_on_an_isolated_copy() {
     assert_eq!(count(&restored, "captions"), 1);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         assert_eq!(
             fs::metadata(backup_path).unwrap().permissions().mode() & 0o777,
             0o600
@@ -688,9 +978,15 @@ fn history_json_import_normalizes_new_metadata_before_search_and_preserves_exist
     assert_eq!(count(&conn, "history_entries"), 3);
     assert_eq!(fs::read(path).unwrap(), original);
     let state = app_state(conn);
-    let page =
-        search_history_page_from_db(&state, 20, 0, Some("Grüße"), Some("title"), Some("youtube"))
-            .unwrap();
+    let page = search_history_page_from_db(
+        &state.db,
+        20,
+        0,
+        Some("Grüße"),
+        Some("title"),
+        Some("youtube"),
+    )
+    .unwrap();
     assert_eq!(page.entries.len(), 1);
     assert_eq!(page.entries[0].id, "derived");
 }
@@ -710,22 +1006,29 @@ fn completion_db_failure_preserves_output_and_rolls_back_related_metadata_then_r
         caption_path: caption.to_string_lossy().into_owned(),
         text: "Caption 🌲".into(),
     }];
-    completion::begin(&state, &job).unwrap();
+    completion::begin(&state.db, &job).unwrap();
     state.db.lock().unwrap().execute_batch("CREATE TRIGGER fail_caption BEFORE INSERT ON captions BEGIN SELECT RAISE(ABORT,'synthetic caption failure'); END;").unwrap();
-    let result = completion::complete(&state, &job, output.to_str(), None, &captions, Some("de"));
+    let result = completion::complete(
+        &state.db,
+        &job,
+        output.to_str(),
+        None,
+        &captions,
+        Some("de"),
+    );
     assert!(result
         .as_ref()
         .unwrap_err()
         .contains("Output file preserved"));
     let mut event = DownloadStateEvent {
         id: job.id.clone(),
-        state: "success".into(),
+        state: DownloadState::Success,
         exit_code: Some(0),
         error: None,
         output_path: Some(output.to_string_lossy().into_owned()),
     };
     completion::apply_result(&mut event, result);
-    assert_eq!(event.state, "error");
+    assert_eq!(event.state, DownloadState::Error);
     assert!(event.output_path.is_some());
     {
         let conn = state.db.lock().unwrap();
@@ -741,8 +1044,24 @@ fn completion_db_failure_preserves_output_and_rolls_back_related_metadata_then_r
         conn.execute_batch("DROP TRIGGER fail_caption").unwrap();
     }
     assert_eq!(fs::read_to_string(&output).unwrap(), "Grüße\nTranscript");
-    completion::complete(&state, &job, output.to_str(), None, &captions, Some("de")).unwrap();
-    completion::complete(&state, &job, output.to_str(), None, &captions, Some("de")).unwrap();
+    completion::complete(
+        &state.db,
+        &job,
+        output.to_str(),
+        None,
+        &captions,
+        Some("de"),
+    )
+    .unwrap();
+    completion::complete(
+        &state.db,
+        &job,
+        output.to_str(),
+        None,
+        &captions,
+        Some("de"),
+    )
+    .unwrap();
     let conn = state.db.lock().unwrap();
     assert_eq!(count(&conn, "history_entries"), 1);
     assert_eq!(count(&conn, "transcriptions"), 1);
@@ -758,9 +1077,9 @@ fn optional_caption_missing_required_output_missing_repeated_url_and_deleted_his
     let output = f.path("already existing Grüße 🌲.mp4");
     fs::write(&output, b"existing file").unwrap();
     let first = job("first", &f.0, false);
-    completion::begin(&state, &first).unwrap();
+    completion::begin(&state.db, &first).unwrap();
     assert!(completion::complete(
-        &state,
+        &state.db,
         &first,
         Some("/synthetic/missing-output"),
         None,
@@ -769,15 +1088,15 @@ fn optional_caption_missing_required_output_missing_repeated_url_and_deleted_his
     )
     .is_err());
     assert_eq!(count(&state.db.lock().unwrap(), "history_entries"), 0);
-    completion::complete(&state, &first, output.to_str(), None, &[], None).unwrap();
+    completion::complete(&state.db, &first, output.to_str(), None, &[], None).unwrap();
     let second = job("second", &f.0, false);
-    completion::begin(&state, &second).unwrap();
-    completion::complete(&state, &second, output.to_str(), None, &[], None).unwrap();
+    completion::begin(&state.db, &second).unwrap();
+    completion::complete(&state.db, &second, output.to_str(), None, &[], None).unwrap();
     assert_eq!(count(&state.db.lock().unwrap(), "history_entries"), 2);
     assert_eq!(fs::read(&output).unwrap(), b"existing file");
-    delete_history_entry_from_db(&state, "first").unwrap();
+    delete_history_entry_from_db(&state.db, "first").unwrap();
     assert!(
-        completion::complete(&state, &first, output.to_str(), None, &[], None)
+        completion::complete(&state.db, &first, output.to_str(), None, &[], None)
             .unwrap_err()
             .contains("removed")
     );
@@ -791,9 +1110,9 @@ fn controlled_failure_before_commit_retains_receipt_and_no_half_history() {
     let job = job("hook-failure", &f.0, false);
     let output = f.path("video.mp4");
     fs::write(&output, b"video").unwrap();
-    completion::begin(&state, &job).unwrap();
+    completion::begin(&state.db, &job).unwrap();
     assert!(completion::complete_with_hook(
-        &state,
+        &state.db,
         &job,
         output.to_str(),
         None,
@@ -808,7 +1127,7 @@ fn controlled_failure_before_commit_retains_receipt_and_no_half_history() {
     )
     .is_err());
     assert_eq!(count(&state.db.lock().unwrap(), "history_entries"), 0);
-    completion::complete(&state, &job, output.to_str(), None, &[], None).unwrap();
+    completion::complete(&state.db, &job, output.to_str(), None, &[], None).unwrap();
 }
 
 #[test]
@@ -863,11 +1182,11 @@ fn configuration_patches_read_latest_values_across_connections() {
     let f = Fixture::new();
     let first = app_state(f.db());
     let second = app_state(f.db());
-    update_config(&first, |cfg| {
+    update_config(&first.config, |cfg| {
         cfg.last_download_url = Some("https://example.com/newer".into())
     })
     .unwrap();
-    update_config(&second, |cfg| cfg.save_captions = true).unwrap();
+    update_config(&second.config, |cfg| cfg.save_captions = true).unwrap();
     let persisted = load_config_from_db(&first.db.lock().unwrap()).unwrap();
     assert_eq!(
         persisted.last_download_url.as_deref(),
@@ -926,8 +1245,8 @@ fn completion_readonly_lock_and_disk_full_errors_preserve_files_and_retry_after_
     let job = job("persistence-errors", &f.0, true);
     let output = f.path("Grüße 🌲 required transcript.txt");
     fs::write(&output, "x".repeat(1024 * 1024)).unwrap();
-    completion::begin(&writable, &job).unwrap();
-    completion::output_ready(&writable, &job, output.to_str()).unwrap();
+    completion::begin(&writable.db, &job).unwrap();
+    completion::output_ready(&writable.db, &job, output.to_str()).unwrap();
     let read_only = Connection::open_with_flags(
         f.path("pinefetch.sqlite3"),
         OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -936,20 +1255,20 @@ fn completion_readonly_lock_and_disk_full_errors_preserve_files_and_retry_after_
     database::initialize(&read_only).unwrap();
     let read_only = app_state(read_only);
     assert!(
-        completion::complete(&read_only, &job, output.to_str(), None, &[], Some("de"))
+        completion::complete(&read_only.db, &job, output.to_str(), None, &[], Some("de"))
             .unwrap_err()
             .contains("preserved")
     );
     drop(read_only);
     assert!(
-        completion::complete(&writable, &job, output.to_str(), None, &[], None)
+        completion::complete(&writable.db, &job, output.to_str(), None, &[], None)
             .unwrap_err()
             .contains("language")
     );
     let owner = f.db();
     let tx = Transaction::new_unchecked(&owner, TransactionBehavior::Immediate).unwrap();
     assert!(
-        completion::complete(&writable, &job, output.to_str(), None, &[], Some("de"))
+        completion::complete(&writable.db, &job, output.to_str(), None, &[], Some("de"))
             .unwrap_err()
             .contains("locked")
     );
@@ -963,7 +1282,7 @@ fn completion_readonly_lock_and_disk_full_errors_preserve_files_and_retry_after_
         conn.pragma_update(None, "max_page_count", pages).unwrap();
     }
     assert!(
-        completion::complete(&writable, &job, output.to_str(), None, &[], Some("de"))
+        completion::complete(&writable.db, &job, output.to_str(), None, &[], Some("de"))
             .unwrap_err()
             .contains("full")
     );
@@ -972,7 +1291,7 @@ fn completion_readonly_lock_and_disk_full_errors_preserve_files_and_retry_after_
     assert_eq!(fs::metadata(&output).unwrap().len(), 1024 * 1024);
     drop(writable);
     let reopened = app_state(f.db());
-    completion::complete(&reopened, &job, output.to_str(), None, &[], Some("de")).unwrap();
+    completion::complete(&reopened.db, &job, output.to_str(), None, &[], Some("de")).unwrap();
     assert_eq!(count(&reopened.db.lock().unwrap(), "history_entries"), 1);
     assert_eq!(count(&reopened.db.lock().unwrap(), "transcriptions"), 1);
 }
@@ -984,7 +1303,7 @@ fn simultaneous_completion_commits_only_one_history_and_preserves_identity_confl
     fs::write(&output, b"synthetic video").unwrap();
     let job = job("same-job", &f.0, false);
     let initial = app_state(f.db());
-    completion::begin(&initial, &job).unwrap();
+    completion::begin(&initial.db, &job).unwrap();
     drop(initial);
     let barrier = Arc::new(Barrier::new(2));
     let handles: Vec<_> = (0..2)
@@ -996,7 +1315,7 @@ fn simultaneous_completion_commits_only_one_history_and_preserves_identity_confl
             thread::spawn(move || {
                 let state = app_state(conn);
                 barrier.wait();
-                completion::complete(&state, &job, output.to_str(), None, &[], None).unwrap();
+                completion::complete(&state.db, &job, output.to_str(), None, &[], None).unwrap();
             })
         })
         .collect();
@@ -1007,7 +1326,7 @@ fn simultaneous_completion_commits_only_one_history_and_preserves_identity_confl
     assert_eq!(count(&state.db.lock().unwrap(), "history_entries"), 1);
     let mut conflict = job.clone();
     conflict.url = "https://example.com/different".into();
-    assert!(completion::complete(&state, &conflict, output.to_str(), None, &[], None).is_err());
+    assert!(completion::complete(&state.db, &conflict, output.to_str(), None, &[], None).is_err());
     let original: String = state
         .db
         .lock()
@@ -1018,9 +1337,9 @@ fn simultaneous_completion_commits_only_one_history_and_preserves_identity_confl
     let mut collision = job.clone();
     collision.id = "legacy-id-collision".into();
     insert_history_entry_in_conn(&state.db.lock().unwrap(), &entry(&collision.id)).unwrap();
-    completion::begin(&state, &collision).unwrap();
+    completion::begin(&state.db, &collision).unwrap();
     assert!(
-        completion::complete(&state, &collision, output.to_str(), None, &[], None)
+        completion::complete(&state.db, &collision, output.to_str(), None, &[], None)
             .unwrap_err()
             .contains("conflicts")
     );
@@ -1072,18 +1391,18 @@ fn a_running_older_instance_refuses_every_write_after_another_process_upgrades()
     let output = f.path("existing output.mp4");
     fs::write(&output, b"synthetic existing output").unwrap();
     let job = job("running-old-instance", &f.0, false);
-    completion::begin(&state, &job).unwrap();
-    completion::output_ready(&state, &job, output.to_str()).unwrap();
+    completion::begin(&state.db, &job).unwrap();
+    completion::output_ready(&state.db, &job, output.to_str()).unwrap();
     insert_history_entry_in_conn(&state.db.lock().unwrap(), &entry("existing")).unwrap();
-    let secret = create_link_dump_secret_in_db(&state, Some("Synthetic".into())).unwrap();
+    let secret = create_link_dump_secret_in_db(&state.db, Some("Synthetic".into())).unwrap();
     let other = f.db();
     other.pragma_update(None, "user_version", 99).unwrap();
     let before = schema(&other);
-    assert!(update_config(&state, |cfg| cfg.save_captions = true)
+    assert!(update_config(&state.config, |cfg| cfg.save_captions = true)
         .unwrap_err()
         .contains("99"));
     assert!(update_link_dump_settings_in_db(
-        &state,
+        &state.db,
         LinkDumpSettingsPatch {
             server_enabled: Some(false),
             host: None,
@@ -1091,14 +1410,14 @@ fn a_running_older_instance_refuses_every_write_after_another_process_upgrades()
         }
     )
     .is_err());
-    assert!(completion::begin(&state, &job).is_err());
-    assert!(completion::complete(&state, &job, output.to_str(), None, &[], None).is_err());
-    assert!(delete_history_entry_from_db(&state, "existing").is_err());
-    assert!(clear_history_entries_in_db(&state).is_err());
-    assert!(create_link_dump_secret_in_db(&state, None).is_err());
-    assert!(revoke_link_dump_secret_in_db(&state, &secret.connection.id).is_err());
-    assert!(delete_link_dump_secret_in_db(&state, &secret.connection.id).is_err());
-    assert!(validate_link_dump_secret(&state, Some(&secret.secret)).is_err());
+    assert!(completion::begin(&state.db, &job).is_err());
+    assert!(completion::complete(&state.db, &job, output.to_str(), None, &[], None).is_err());
+    assert!(delete_history_entry_from_db(&state.db, "existing").is_err());
+    assert!(clear_history_entries_in_db(&state.db).is_err());
+    assert!(create_link_dump_secret_in_db(&state.db, None).is_err());
+    assert!(revoke_link_dump_secret_in_db(&state.db, &secret.connection.id).is_err());
+    assert!(delete_link_dump_secret_in_db(&state.db, &secret.connection.id).is_err());
+    assert!(validate_link_dump_secret(&state.db, Some(&secret.secret)).is_err());
     assert!(import_legacy_config(&other, &f.path("missing config.json")).is_err());
     assert!(import_legacy_history(&other, &f.path("missing history.json")).is_err());
     assert_eq!(version(&other), 99);
@@ -1132,7 +1451,6 @@ fn a_running_older_instance_refuses_every_write_after_another_process_upgrades()
 #[cfg(unix)]
 #[test]
 fn permissions_block_json_output_database_and_required_backup_without_mutation() {
-    use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
     let conn = f.db();
     let json = f.path("config.json");
@@ -1227,9 +1545,9 @@ fn abrupt_child() {
         let state = app_state(conn);
         let job = job("crash-job", &root, true);
         let output = root.join("Grüße 🌲 transcript.txt");
-        completion::begin(&state, &job).unwrap();
+        completion::begin(&state.db, &job).unwrap();
         completion::complete_with_hook(
-            &state,
+            &state.db,
             &job,
             output.to_str(),
             None,
@@ -1249,7 +1567,6 @@ fn abrupt_child() {
 #[cfg(unix)]
 #[test]
 fn abrupt_process_kill_rolls_back_migration_and_completion_and_allows_safe_retry() {
-    use std::os::unix::process::ExitStatusExt;
     for mode in ["migration", "completion", "import", "future"] {
         let f = Fixture::new();
         let conn = Connection::open(f.path("pinefetch.sqlite3")).unwrap();
@@ -1398,8 +1715,8 @@ fn abrupt_process_kill_rolls_back_migration_and_completion_and_allows_safe_retry
             assert_eq!(count(&conn, "transcriptions"), 1); // only the original legacy transcript
             let state = app_state(conn);
             let job = job("crash-job", &f.0, true);
-            completion::complete(&state, &job, output.to_str(), None, &[], Some("de")).unwrap();
-            completion::complete(&state, &job, output.to_str(), None, &[], Some("de")).unwrap();
+            completion::complete(&state.db, &job, output.to_str(), None, &[], Some("de")).unwrap();
+            completion::complete(&state.db, &job, output.to_str(), None, &[], Some("de")).unwrap();
             assert_eq!(count(&state.db.lock().unwrap(), "history_entries"), 3);
         } else if mode == "import" {
             assert_eq!(count(&conn, "legacy_imports"), 0);

@@ -1,3 +1,13 @@
+import {
+    createAppState,
+    updateJobState,
+    applyQueueStatus,
+    applyDownloadState,
+    isCancellable,
+    isQueueBusy,
+    isRemovable,
+} from './app-state.js';
+import { api } from './tauri-client.js';
 import { createBrowserImportView } from './browser-import-view.js';
 import { createSettingsView } from './settings-view.js';
 import { createHistoryView } from './history-view.js';
@@ -10,25 +20,7 @@ import {
     resolveYouTubeThumbnail,
 } from './url-utils.js';
 
-const tauriGlobal = window.__TAURI__;
-const invoke = tauriGlobal?.core?.invoke;
-const listen = tauriGlobal?.event?.listen;
-const state = Object.seal({
-    jobs: new Map(),
-    queueIds: [],
-    queueAutoStartEnabled: true,
-    queueWorkerRunning: false,
-    queuePaused: false,
-    queueCollapsed: false,
-    suppressedJobIds: new Set(),
-    pendingClearAfterTerminal: new Set(),
-    selectedId: null,
-    contextMenuJobId: null,
-    logs: [],
-    info: null,
-    infoUrl: null,
-    activeView: 'download',
-});
+const state = createAppState();
 const els = Object.seal({
     magicImportTrigger: document.getElementById('magicImportTrigger'),
     magicImportEnabled: document.getElementById('magicImportEnabled'),
@@ -200,7 +192,7 @@ const findPresetForDownloadJob = job =>
     ) || null;
 
 const loadDownloadPresets = async () => {
-    const definitions = await invoke('get_download_presets');
+    const definitions = await api.getDownloadPresets();
     if (!Array.isArray(definitions)) throw new Error('Backend did not return download formats.');
     const byKey = new Map(definitions.map(definition => [definition.key, definition]));
     presetOptions = presetLabels.map(label => {
@@ -224,9 +216,6 @@ const loadDownloadPresets = async () => {
     updateDownloadOptionHints();
 };
 const maxLogLines = 500;
-const cancellableJobStates = new Set(['downloading', 'transcribing']);
-const queueBusyJobStates = new Set(['downloading', 'transcribing', 'cancelling']);
-const removableJobStates = new Set(['queued', 'success', 'error', 'cancelled']);
 let urlShakeTimer = null;
 let magicImportInFlight = false;
 let queueRenderFrame = null;
@@ -395,17 +384,14 @@ const shakeUrlInput = () => {
 };
 
 const readClipboardText = async () => {
-    if (invoke) {
-        const text = await invoke('read_clipboard_text');
+    if (api.available) {
+        const text = await api.readClipboardText();
         if (typeof text === 'string') return text;
     }
     if (navigator.clipboard?.readText) {
         return navigator.clipboard.readText();
     }
-    if (typeof tauriGlobal?.clipboard?.readText === 'function') {
-        return tauriGlobal.clipboard.readText();
-    }
-    return '';
+    return api.readClipboardPlugin();
 };
 
 const tryMagicImport = async () => {
@@ -576,9 +562,9 @@ const getContextMenuJob = () => {
 const syncQueueContextMenuState = () => {
     const job = getContextMenuJob();
     const isCancelling = job?.state === 'cancelling';
-    const canCancel = Boolean(job && cancellableJobStates.has(job.state));
+    const canCancel = Boolean(job && isCancellable(job.state));
     const showCancel = Boolean(job && (canCancel || isCancelling));
-    const canRemove = Boolean(job && removableJobStates.has(job.state));
+    const canRemove = Boolean(job && isRemovable(job.state));
 
     els.queueContextCancelBtn.hidden = !showCancel;
     els.queueContextCancelBtn.disabled = !canCancel;
@@ -664,8 +650,7 @@ const updateDownloadOptionHints = () => {
 
 const renderQueueControls = () => {
     const queuedCount = state.queueIds.length;
-    const isBusy =
-        state.queueWorkerRunning || Array.from(state.jobs.values()).some(job => queueBusyJobStates.has(job.state));
+    const isBusy = state.queueWorkerRunning || Array.from(state.jobs.values()).some(job => isQueueBusy(job.state));
     const setQueueModeHint = text => {
         if (els.queueModeHint) {
             els.queueModeHint.textContent = text;
@@ -749,9 +734,9 @@ const renderQueue = () => {
             hideQueueContextMenu();
             state.selectedId = job.id;
             scheduleQueueRender();
-            if ((job.state === 'success' || job.state === 'transcribing') && job.outputPath && invoke) {
+            if ((job.state === 'success' || job.state === 'transcribing') && job.outputPath && api.available) {
                 try {
-                    await invoke('open_folder', { path: job.outputPath });
+                    await api.openFolder({ path: job.outputPath });
                 } catch (err) {
                     appendLog(`[open] ${err}`, true);
                 }
@@ -870,7 +855,7 @@ const renderQueue = () => {
         hideQueueContextMenu();
     }
     syncQueueContextMenuState();
-    const activeCount = items.filter(job => queueBusyJobStates.has(job.state)).length;
+    const activeCount = items.filter(job => isQueueBusy(job.state)).length;
     els.queueBadge.textContent = `${state.queueIds.length} waiting · ${activeCount} active`;
     els.queueEmptyHint.hidden = items.length > 0;
     els.queueList.hidden = items.length === 0;
@@ -971,15 +956,9 @@ const clearLogs = () => {
 };
 
 const updateJob = (id, patch) => {
-    const previous = state.jobs.get(id);
-    const existing = previous || { id, createdAt: Date.now() };
-    state.jobs.set(id, { ...existing, ...patch });
-    const changedKeys = Object.keys(patch);
-    if (previous && changedKeys.length === 1 && changedKeys[0] === 'previewLoading') return;
-    const progressOnly =
-        previous &&
-        changedKeys.length > 0 &&
-        changedKeys.every(key => key === 'percent' || key === 'speed' || key === 'eta');
+    const mode = updateJobState(state, id, patch, state.jobs.has(id) ? undefined : Date.now());
+    if (mode === 'skip') return;
+    const progressOnly = mode === 'progress';
     if (progressOnly) queueProgressDirtyIds.add(id);
     scheduleQueueRender({ progressOnly });
 };
@@ -996,7 +975,7 @@ const drainThumbnailHydrationQueue = () => {
         activeThumbnailHydrations += 1;
         void (async () => {
             try {
-                const info = await invoke('load_info', { url: job.url });
+                const info = await api.loadInfo({ url: job.url });
                 const current = state.jobs.get(id);
                 if (!current) return;
 
@@ -1022,7 +1001,7 @@ const drainThumbnailHydrationQueue = () => {
 };
 
 const maybeHydrateQueueThumbnail = id => {
-    if (!invoke) return;
+    if (!api.available) return;
     const job = state.jobs.get(id);
     if (!job?.url || job.thumbnail || job.previewResolved || job.previewLoading) return;
     updateJob(id, { previewLoading: true });
@@ -1031,12 +1010,10 @@ const maybeHydrateQueueThumbnail = id => {
 };
 
 const syncQueueStatus = async () => {
-    if (!invoke) return;
+    if (!api.available) return;
     try {
-        const status = await invoke('get_queue_status');
-        state.queueAutoStartEnabled = status?.auto_start ?? true;
-        state.queueWorkerRunning = Boolean(status?.worker_running);
-        state.queuePaused = Boolean(status?.paused);
+        const status = await api.getQueueStatus();
+        applyQueueStatus(state, status, true);
         renderQueueControls();
         return status;
     } catch (err) {
@@ -1044,7 +1021,7 @@ const syncQueueStatus = async () => {
     }
 };
 
-const browserImport = createBrowserImportView({ els, invoke, appendLog, appendTextSpans });
+const browserImport = createBrowserImportView({ els, api, appendLog, appendTextSpans });
 const { applyLinkDumpServerStatus, syncLinkDumpOverview } = browserImport;
 
 let loadInfoInFlight = false;
@@ -1072,7 +1049,7 @@ const loadInfo = async () => {
     els.loadInfoBtn.disabled = true;
     setInfoBadge('Loading...');
     try {
-        const info = await invoke('load_info', { url: requestUrl });
+        const info = await api.loadInfo({ url: requestUrl });
         if (requestId !== loadInfoRequestId || els.urlInput.value.trim() !== requestUrl) {
             loadInfoPending = true;
             return;
@@ -1116,7 +1093,7 @@ const loadInfo = async () => {
 
 const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     if (!url) return null;
-    if (!invoke) return null;
+    if (!api.available) return null;
     if (!isValidHttpUrl(url)) {
         shakeUrlInput();
         return null;
@@ -1154,7 +1131,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
 
     try {
         await settings.waitForPendingSave();
-        const id = await invoke('enqueue_download', {
+        const id = await api.enqueueDownload({
             request: {
                 url,
                 format: preset.format,
@@ -1228,7 +1205,7 @@ const removeJobFromQueue = async job => {
     if (job.state !== 'queued') return;
 
     try {
-        await invoke('cancel_download', { id: job.id });
+        await api.cancelDownload({ id: job.id });
     } catch (err) {
         if (!wasSuppressed) state.suppressedJobIds.delete(job.id);
         state.jobs.set(job.id, existingJob);
@@ -1246,14 +1223,12 @@ const enqueueDownload = async () => {
 };
 
 const toggleQueueAutoStart = async () => {
-    if (!invoke) return;
+    if (!api.available) return;
     try {
-        const status = await invoke('set_queue_auto_start', {
+        const status = await api.setQueueAutoStart({
             enabled: !state.queueAutoStartEnabled,
         });
-        state.queueAutoStartEnabled = status?.auto_start ?? !state.queueAutoStartEnabled;
-        state.queueWorkerRunning = Boolean(status?.worker_running);
-        state.queuePaused = Boolean(status?.paused);
+        applyQueueStatus(state, status, !state.queueAutoStartEnabled);
         renderQueueControls();
     } catch (err) {
         appendLog(`[queue] ${err}`, true);
@@ -1261,12 +1236,10 @@ const toggleQueueAutoStart = async () => {
 };
 
 const startQueueProcessing = async () => {
-    if (!invoke) return;
+    if (!api.available) return;
     try {
-        const status = await invoke('start_queue');
-        state.queueAutoStartEnabled = status?.auto_start ?? state.queueAutoStartEnabled;
-        state.queueWorkerRunning = Boolean(status?.worker_running);
-        state.queuePaused = Boolean(status?.paused);
+        const status = await api.startQueue();
+        applyQueueStatus(state, status, state.queueAutoStartEnabled);
         renderQueueControls();
     } catch (err) {
         appendLog(`[queue] ${err}`, true);
@@ -1274,12 +1247,10 @@ const startQueueProcessing = async () => {
 };
 
 const toggleQueuePause = async () => {
-    if (!invoke) return;
+    if (!api.available) return;
     try {
-        const status = await invoke(state.queuePaused ? 'resume_queue' : 'pause_queue');
-        state.queueAutoStartEnabled = status?.auto_start ?? state.queueAutoStartEnabled;
-        state.queueWorkerRunning = Boolean(status?.worker_running);
-        state.queuePaused = Boolean(status?.paused);
+        const status = await (state.queuePaused ? api.resumeQueue() : api.pauseQueue());
+        applyQueueStatus(state, status, state.queueAutoStartEnabled);
         renderQueueControls();
     } catch (err) {
         appendLog(`[queue] ${err}`, true);
@@ -1312,7 +1283,7 @@ const setTxtImportBusy = isBusy => {
 };
 
 const importTxtLinks = async () => {
-    if (!invoke) {
+    if (!api.available) {
         setTxtImportStatus('TXT import is only available in the Tauri app.', true);
         return;
     }
@@ -1320,7 +1291,7 @@ const importTxtLinks = async () => {
     setTxtImportStatus('');
     setTxtImportBusy(true);
     try {
-        const file = await invoke('pick_txt_file');
+        const file = await api.pickTxtFile();
         if (!file) return;
 
         const parsed = parseTxtImportLinks(file.content);
@@ -1402,8 +1373,8 @@ const clearQueue = async () => {
 
     try {
         const ids = Array.from(idsToCancel);
-        const results = invoke
-            ? await Promise.allSettled(ids.map(id => invoke('cancel_download', { id })))
+        const results = api.available
+            ? await Promise.allSettled(ids.map(id => api.cancelDownload({ id })))
             : ids.map(() => ({ status: 'rejected', reason: 'Backend unavailable' }));
         const confirmed = new Set();
         let cancelFailed = false;
@@ -1438,9 +1409,9 @@ const clearQueue = async () => {
         state.queueIds = state.queueIds.filter(id => !confirmed.has(id));
         if (state.selectedId && !state.jobs.has(state.selectedId)) state.selectedId = null;
 
-        if (cancelFailed && invoke) {
+        if (cancelFailed && api.available) {
             try {
-                const queue = await invoke('get_queue');
+                const queue = await api.getQueue();
                 applyQueueSnapshot(queue);
                 const status = await syncQueueStatus();
                 if (status && !status.worker_running) {
@@ -1463,7 +1434,7 @@ const clearQueue = async () => {
 
 const settings = createSettingsView({
     els,
-    invoke,
+    api,
     appendLog,
     normalizePresetKey,
     getSelectedPresetKey,
@@ -1473,7 +1444,7 @@ const settings = createSettingsView({
 
 const historyView = createHistoryView({
     els,
-    invoke,
+    api,
     appendLog,
     formatFileSize,
     formatDuration,
@@ -1606,7 +1577,7 @@ const bindEvents = () => {
 
         if (button.dataset.action === 'cancel') {
             try {
-                await invoke('cancel_download', { id: job.id });
+                await api.cancelDownload({ id: job.id });
             } catch (err) {
                 appendLog(`[cancel] ${err}`, true);
             }
@@ -1679,47 +1650,34 @@ const applyQueueSnapshot = jobs => {
 };
 
 const bindBackendEvents = async () => {
-    await listen('link-dump:server-status', event => {
+    await api.onLinkDumpServerStatus(event => {
         applyLinkDumpServerStatus(event.payload);
     });
 
-    await listen('history:changed', historyView.onChanged);
+    await api.onHistoryChanged(historyView.onChanged);
 
-    await listen('queue:status', event => {
-        state.queueAutoStartEnabled = event.payload?.auto_start ?? true;
-        state.queueWorkerRunning = Boolean(event.payload?.worker_running);
-        state.queuePaused = Boolean(event.payload?.paused);
+    await api.onQueueStatus(event => {
+        applyQueueStatus(state, event.payload);
         renderQueueControls();
     });
 
-    await listen('queue:update', event => {
+    await api.onQueueUpdate(event => {
         applyQueueSnapshot(event.payload);
     });
 
-    await listen('download:state', event => {
-        const { id, state: status, output_path, exit_code, error } = event.payload;
-        if (state.suppressedJobIds.has(id)) return;
-        if (state.pendingClearAfterTerminal.has(id) && ['success', 'error', 'cancelled'].includes(status)) {
-            state.pendingClearAfterTerminal.delete(id);
-            state.suppressedJobIds.add(id);
-            state.jobs.delete(id);
-            state.queueIds = state.queueIds.filter(queuedId => queuedId !== id);
+    await api.onDownloadState(event => {
+        const { id, exit_code, error } = event.payload;
+        const result = applyDownloadState(state, event.payload);
+        if (result.kind === 'ignored') return;
+        if (result.kind === 'removed') {
             scheduleQueueRender();
             return;
         }
-        const patch = { state: status };
-        if (error) patch.error = error;
-        if (output_path) patch.outputPath = output_path;
-        if (status === 'success') {
-            patch.percent = 100;
-            patch.speed = 'done';
-            patch.eta = '-';
-        }
-        updateJob(id, patch);
+        updateJob(id, result.patch);
         if (error) appendLog(`[${id}] ${error} (${exit_code ?? '?'})`, true);
     });
 
-    await listen('download:progress', event => {
+    await api.onDownloadProgress(event => {
         const { id, percent, speed, eta } = event.payload;
         if (state.suppressedJobIds.has(id)) return;
         updateJob(id, {
@@ -1729,7 +1687,7 @@ const bindBackendEvents = async () => {
         });
     });
 
-    await listen('download:log', event => {
+    await api.onDownloadLog(event => {
         const { id, line, is_error } = event.payload;
         if (state.suppressedJobIds.has(id)) return;
         appendLog(`[${id}] ${line}`, is_error);
@@ -1750,7 +1708,7 @@ const init = async () => {
     requestAnimationFrame(() => {
         els.urlInput.focus();
     });
-    if (!invoke || !listen) {
+    if (!api.available || !api.eventsAvailable) {
         appendLog('[tauri] API not available. Start the app with `npm run dev` (Tauri), not in a browser.', true);
         return;
     }
@@ -1768,7 +1726,7 @@ const init = async () => {
     await syncQueueStatus();
     await bindBackendEvents();
     try {
-        await invoke('initialize_cli');
+        await api.initializeCli();
     } catch (err) {
         appendLog(`[cli] ${err}`, true);
     }

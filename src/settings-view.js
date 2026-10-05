@@ -1,6 +1,6 @@
 export const createSettingsView = ({
     els,
-    invoke,
+    api,
     appendLog,
     normalizePresetKey,
     getSelectedPresetKey,
@@ -37,8 +37,8 @@ export const createSettingsView = ({
         };
         configLocalRevision += 1;
 
-        if (!invoke) return;
-        const queuedCache = configSaveQueue.then(() => invoke('cache_last_download_url', { url: nextUrl }));
+        if (!api.available) return;
+        const queuedCache = configSaveQueue.then(() => api.cacheLastDownloadUrl({ url: nextUrl }));
         configSaveQueue = queuedCache.catch(() => {});
         try {
             await queuedCache;
@@ -72,7 +72,7 @@ export const createSettingsView = ({
     };
 
     const performYtDlpVersionCheck = async () => {
-        if (!invoke) return;
+        if (!api.available) return;
         const requestId = ++ytDlpVersionRequestId;
         const path = els.ytDlpPath.value.trim() || null;
         els.ytDlpInstalledVersion.textContent = 'Installed: checking...';
@@ -80,7 +80,7 @@ export const createSettingsView = ({
         els.ytDlpLatestVersion.textContent = 'Latest: checking...';
 
         const [installedResult, latestResult] = await Promise.allSettled([
-            invoke('get_yt_dlp_installed_version', { path }),
+            api.getYtDlpInstalledVersion({ path }),
             fetchLatestYtDlpVersion(),
         ]);
         if (requestId !== ytDlpVersionRequestId) return;
@@ -103,7 +103,7 @@ export const createSettingsView = ({
     };
 
     const refreshYtDlpVersions = () => {
-        if (!invoke) return Promise.resolve();
+        if (!api.available) return Promise.resolve();
         ytDlpVersionsChecked = true;
         const pending = performYtDlpVersionCheck().finally(() => {
             if (ytDlpVersionsPromise === pending) ytDlpVersionsPromise = null;
@@ -117,7 +117,7 @@ export const createSettingsView = ({
 
     const syncConfig = async () => {
         try {
-            config = await invoke('get_config');
+            config = await api.getConfig();
             els.notificationsEnabled.checked = config.notifications_enabled ?? false;
             els.saveCaptions.checked = config.save_captions ?? false;
             els.saveThumbnails.checked = config.save_thumbnails ?? false;
@@ -153,10 +153,10 @@ export const createSettingsView = ({
     };
 
     const saveSettings = async changes => {
-        if (!invoke) return false;
+        if (!api.available) return false;
         if (!config) {
             try {
-                config = await invoke('get_config');
+                config = await api.getConfig();
             } catch (err) {
                 els.settingsSaveStatus.textContent = `Could not load settings: ${err}`;
                 els.settingsSaveStatus.classList.add('pf-status-error');
@@ -171,7 +171,7 @@ export const createSettingsView = ({
         els.settingsSaveStatus.textContent = 'Saving changes…';
         els.settingsSaveStatus.classList.remove('pf-status-error');
 
-        const queuedSave = configSaveQueue.then(() => invoke('patch_config', { changes: patch }));
+        const queuedSave = configSaveQueue.then(() => api.patchConfig({ changes: patch }));
         configSaveQueue = queuedSave.catch(() => {});
 
         try {
@@ -197,7 +197,7 @@ export const createSettingsView = ({
 
     const pickDir = async () => {
         try {
-            const result = await invoke('pick_output_dir');
+            const result = await api.pickOutputDir();
             if (result) {
                 els.outputDir.value = result;
                 await saveSettings({ default_output_dir: result });
@@ -211,7 +211,7 @@ export const createSettingsView = ({
         const path = els.outputDir.value.trim();
         if (!path) return;
         try {
-            await invoke('open_folder', { path });
+            await api.openFolder({ path });
         } catch (err) {
             appendLog(`[open] ${err}`, true);
         }

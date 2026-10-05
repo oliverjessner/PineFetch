@@ -1,50 +1,55 @@
-use super::*;
-
-#[derive(Debug)]
-pub(super) struct OwnedTemporaryFile {
-    pub(super) path: PathBuf,
-    file: fs::File,
-}
-
-impl OwnedTemporaryFile {
-    pub(super) fn create_at(path: PathBuf) -> Result<Self, String> {
-        let mut options = fs::OpenOptions::new();
-        options.write(true).read(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = options
-            .open(&path)
-            .map_err(|e| format!("Could not reserve job temporary file: {e}"))?;
-        Ok(Self { path, file })
-    }
-
-    fn sync(&self) -> Result<(), String> {
-        self.file
-            .sync_all()
-            .map_err(|e| format!("Could not flush produced temporary file: {e}"))
-    }
-}
-
-impl Drop for OwnedTemporaryFile {
-    fn drop(&mut self) {
-        // A path can have been replaced by another process. Delete only the
-        // inode reserved by this job; preserve ambiguous paths elsewhere.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if let (Ok(owned), Ok(current)) =
-                (self.file.metadata(), fs::symlink_metadata(&self.path))
-            {
-                if owned.dev() == current.dev() && owned.ino() == current.ino() {
-                    let _ = fs::remove_file(&self.path);
-                }
-            }
-        }
-    }
-}
+use crate::completion;
+use crate::config_rules::normalize_faster_whisper_model;
+use crate::download_rules::build_output_template;
+use crate::download_rules::effective_download_job;
+use crate::download_rules::format_timestamp_filename_suffix;
+use crate::download_rules::format_yt_dlp_timestamp;
+use crate::events::emit_log;
+use crate::events::emit_progress;
+use crate::files::publish_unique_output;
+use crate::files::OwnedTemporaryFile;
+use crate::files::TemporaryTranscriptionAudio;
+use crate::metadata::INFO_TIMEOUT;
+use crate::models::DownloadJob;
+use crate::models::DownloadProgress;
+use crate::models::DownloadRunResult;
+use crate::models::InfoResponse;
+use crate::models::LogEvent;
+use crate::models::SavedCaption;
+use crate::models::TranscriptionRunResult;
+use crate::platform::caption_platform;
+use crate::platform::site_format_sort;
+use crate::process::clear_current_child;
+use crate::process::configure_child_process_group;
+use crate::process::register_current_child;
+use crate::process::run_command_output;
+use crate::process::terminate_child_process_tree;
+use crate::runtime::ffmpeg_tool_name;
+use crate::runtime::resolve_deno_executable;
+use crate::runtime::resolve_ffmpeg_location;
+use crate::runtime::resolve_python_executable;
+use crate::runtime::resolve_yt_dlp;
+use crate::state::AppState;
+use crate::yt_dlp::build_download_args;
+use crate::yt_dlp::parse_caption_line;
+use crate::yt_dlp::parse_download_metadata_line;
+use crate::yt_dlp::parse_progress_line;
+use crate::yt_dlp::parse_yt_dlp_filepath;
+use regex::Regex;
+use std::fs;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
+use tauri::AppHandle;
+use uuid::Uuid;
 
 pub(super) fn run_download_job(
     app: &AppHandle,
@@ -53,7 +58,7 @@ pub(super) fn run_download_job(
 ) -> Result<DownloadRunResult, String> {
     let effective_job = effective_download_job(job);
     let job = &effective_job;
-    let yt_dlp = resolve_yt_dlp(app, state)?;
+    let yt_dlp = resolve_yt_dlp(app, &state.config)?;
     let ffmpeg_location = resolve_ffmpeg_location(app, &yt_dlp);
     let deno_path = resolve_deno_executable(app);
     let output_template = build_output_template(&job.output_dir, job.filename_suffix.as_deref());
@@ -61,61 +66,12 @@ pub(super) fn run_download_job(
     let caption_platform = caption_platform(&job.url, job.save_captions);
     let save_captions = caption_platform.is_some();
 
-    let mut args = vec![
-        "--no-playlist".to_string(),
-        "--newline".to_string(),
-        "--progress".to_string(),
-        "--no-color".to_string(),
-        "--print".to_string(),
-        "after_move:filepath".to_string(),
-        "--print".to_string(),
-        "after_video:filepath".to_string(),
-        "--print".to_string(),
-        "after_move:pinefetch_metadata:%(.{filepath,title,uploader,thumbnail,upload_date,timestamp,duration})j".to_string(),
-        "-f".to_string(),
-        job.format.clone(),
-        "-o".to_string(),
+    let args = build_download_args(
+        job,
         output_template,
-    ];
-
-    if save_captions {
-        args.push("--print".to_string());
-        args.push(
-            "after_move:pinefetch_caption:%(.{filepath,description,alt_title,title})j".to_string(),
-        );
-    }
-
-    if job.save_thumbnails {
-        args.push("--write-thumbnail".to_string());
-    }
-
-    let needs_ffmpeg = job.extract_audio
-        || job.transcribe_text
-        || job.format.contains('+')
-        || job.cut_start_time.is_some();
-    if let Some(location) = ffmpeg_location.as_ref() {
-        args.push("--ffmpeg-location".to_string());
-        args.push(location.clone());
-    } else if needs_ffmpeg {
-        return Err(
-            "ffmpeg and ffprobe not found. Install ffmpeg (or make sure it is in the same directory as yt-dlp) and try again."
-                .to_string(),
-        );
-    }
-
-    if let Some(deno) = deno_path.as_ref() {
-        args.push("--js-runtimes".to_string());
-        args.push(format!("deno:{deno}"));
-    }
-
-    if job.extract_audio {
-        args.push("--extract-audio".to_string());
-        if let Some(fmt) = job.audio_format.as_ref() {
-            args.push("--audio-format".to_string());
-            args.push(fmt.to_string());
-        }
-    }
-
+        ffmpeg_location.as_deref(),
+        deno_path.as_deref(),
+    )?;
     if let Some(cut_start_time) = job.cut_start_time {
         let cut_timestamp = format_yt_dlp_timestamp(cut_start_time);
         emit_log(
@@ -128,13 +84,6 @@ pub(super) fn run_download_job(
         );
     }
 
-    if let Some(format_sort) = site_format_sort(&job.url) {
-        args.push("--format-sort".to_string());
-        args.push(format_sort.to_string());
-    }
-
-    args.push(job.url.clone());
-
     let mut command = Command::new(&yt_dlp);
     command.args(args);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -143,7 +92,7 @@ pub(super) fn run_download_job(
     let child = command.spawn().map_err(|e| format!("Spawn failed: {e}"))?;
     let child = Arc::new(Mutex::new(child));
 
-    if let Err(err) = register_current_child(state, &child) {
+    if let Err(err) = register_current_child(&state.processes, &child) {
         if let Ok(mut process) = child.lock() {
             let _ = terminate_child_process_tree(&mut process);
             let _ = process.wait();
@@ -156,8 +105,8 @@ pub(super) fn run_download_job(
         (guard.stdout.take(), guard.stderr.take())
     };
 
-    let progress_re = Regex::new(r"\[download\]\s+([\d\.]+)%.*?at\s+([^\s]+).*?ETA\s+([^\s]+)")
-        .map_err(|e| format!("Regex error: {e}"))?;
+    let progress_re =
+        Regex::new(crate::yt_dlp::PROGRESS_PATTERN).map_err(|e| format!("Regex error: {e}"))?;
     let output_path_capture: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let caption_capture: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
     let metadata_capture: Arc<Mutex<Vec<(String, InfoResponse)>>> =
@@ -187,19 +136,8 @@ pub(super) fn run_download_job(
                     );
                 }
 
-                if let Some(caps) = progress_re.captures(&line) {
-                    let percent = caps.get(1).and_then(|m| m.as_str().parse::<f32>().ok());
-                    let speed = caps.get(2).map(|m| m.as_str().to_string());
-                    let eta = caps.get(3).map(|m| m.as_str().to_string());
-                    emit_progress(
-                        &app_stdout,
-                        DownloadProgress {
-                            id: id_stdout.clone(),
-                            percent,
-                            speed,
-                            eta,
-                        },
-                    );
+                if let Some(progress) = parse_progress_line(&line, &progress_re, &id_stdout) {
+                    emit_progress(&app_stdout, progress);
                 }
 
                 if let Some(path_line) = parse_yt_dlp_filepath(&line) {
@@ -260,7 +198,7 @@ pub(super) fn run_download_job(
 
         thread::sleep(Duration::from_millis(100));
     };
-    clear_current_child(state, &child);
+    clear_current_child(&state.processes, &child);
     let _ = handle_out.join();
     let _ = handle_err.join();
 
@@ -290,7 +228,7 @@ pub(super) fn run_download_job(
                 .map(|(_, info)| info.clone())
         });
 
-        completion::output_ready(state, job, output_path.as_deref()).map_err(|e| {
+        completion::output_ready(&state.db, job, output_path.as_deref()).map_err(|e| {
             format!("Downloaded output receipt failed: {e}; any produced file preserved")
         })?;
 
@@ -357,69 +295,6 @@ pub(super) fn run_download_job(
     })
 }
 
-pub(super) fn parse_download_metadata_line(line: &str) -> Option<(String, InfoResponse)> {
-    let json = line.strip_prefix("pinefetch_metadata:")?;
-    let value: serde_json::Value = serde_json::from_str(json).ok()?;
-    let path = value.get("filepath")?.as_str()?.trim().to_string();
-    if path.is_empty() {
-        return None;
-    }
-    let string = |key: &str| {
-        value
-            .get(key)
-            .and_then(|item| item.as_str())
-            .map(str::to_string)
-    };
-    Some((
-        path,
-        InfoResponse {
-            title: string("title"),
-            uploader: string("uploader"),
-            duration: value.get("duration").and_then(json_value_to_i64),
-            thumbnail: string("thumbnail"),
-            upload_date: string("upload_date"),
-            timestamp: value.get("timestamp").and_then(json_value_to_i64),
-            formats: None,
-            description: None,
-            id: None,
-        },
-    ))
-}
-
-pub(super) fn parse_caption_line(line: &str, reddit: bool) -> Option<(String, String)> {
-    let json = line.strip_prefix("pinefetch_caption:")?;
-    let value: serde_json::Value = serde_json::from_str(json).ok()?;
-    let path = value.get("filepath")?.as_str()?.trim();
-    if path.is_empty() {
-        return None;
-    }
-    let description = value
-        .get("description")
-        .and_then(|item| item.as_str())
-        .unwrap_or("");
-    if reddit {
-        let title = value
-            .get("alt_title")
-            .and_then(|item| item.as_str())
-            .filter(|title| !title.trim().is_empty())
-            .or_else(|| value.get("title").and_then(|item| item.as_str()))
-            .unwrap_or("")
-            .trim();
-        let body = description.trim();
-        let caption = match (title.is_empty(), body.is_empty()) {
-            (false, false) => format!("{title}\n\n{body}"),
-            (false, true) => title.to_string(),
-            (true, false) => body.to_string(),
-            (true, true) => return None,
-        };
-        return Some((path.to_string(), caption));
-    }
-    if description.trim().is_empty() {
-        return None;
-    }
-    Some((path.to_string(), description.to_string()))
-}
-
 pub(super) fn write_caption_sidecar(media_path: &Path, caption: &str) -> Result<PathBuf, String> {
     if !media_path.is_file() {
         return Err(format!(
@@ -430,23 +305,10 @@ pub(super) fn write_caption_sidecar(media_path: &Path, caption: &str) -> Result<
     let mut temporary =
         OwnedTemporaryFile::create_at(build_cut_sidecar_path(media_path, "caption")?)?;
     temporary
-        .file
         .write_all(caption.as_bytes())
         .map_err(|e| format!("Caption write failed: {e}; media preserved"))?;
     temporary.sync()?;
     publish_unique_output(&temporary.path, &media_path.with_extension("caption.txt"))
-}
-
-pub(super) fn effective_download_job(job: &DownloadJob) -> DownloadJob {
-    let mut download_job = job.clone();
-    if job.transcribe_text && job.download_video_with_transcript {
-        download_job.format = download_preset_for_key(Some(DEFAULT_DOWNLOAD_PRESET_KEY))
-            .format
-            .to_string();
-        download_job.extract_audio = false;
-        download_job.audio_format = None;
-    }
-    download_job
 }
 
 pub(super) fn trim_downloaded_file(
@@ -521,7 +383,7 @@ pub(super) fn trim_downloaded_file(
         "make_zero",
         temp_path_str.as_str(),
     ]);
-    let output = run_command_output(command, Some(state), None, None)
+    let output = run_command_output(command, Some(&state.processes), None, None)
         .map_err(|e| format!("Failed to run ffmpeg timestamp cut: {e}"))?;
 
     for line in String::from_utf8_lossy(&output.stdout).lines() {
@@ -620,92 +482,6 @@ pub(super) fn preserve_unique_cut_output(
     publish_unique_output(temp_path, &base)
 }
 
-pub(super) fn publish_unique_output(temp_path: &Path, base: &Path) -> Result<PathBuf, String> {
-    for index in 1..=1000 {
-        let candidate = if index == 1 {
-            base.to_path_buf()
-        } else {
-            let stem = base
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .ok_or_else(|| "Cut file has no usable file name".to_string())?;
-            let extension = base.extension().and_then(|value| value.to_str());
-            let mut name = format!("{stem}__{index}");
-            if let Some(extension) = extension {
-                name.push('.');
-                name.push_str(extension);
-            }
-            base.with_file_name(name)
-        };
-
-        match fs::hard_link(temp_path, &candidate) {
-            Ok(()) => {
-                sync_output(&candidate)?;
-                return Ok(candidate);
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(_) => {
-                // Some removable and network filesystems do not support hard links.
-                let mut source = fs::File::open(temp_path)
-                    .map_err(|err| format!("Could not read cut file: {err}"))?;
-                let mut options = fs::OpenOptions::new();
-                options.write(true).create_new(true);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::OpenOptionsExt;
-                    options.mode(0o600);
-                }
-                let mut destination = match options.open(&candidate) {
-                    Ok(file) => file,
-                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                    Err(err) => {
-                        return Err(format!(
-                            "Could not save output file: {err}; previous files preserved"
-                        ))
-                    }
-                };
-                if let Err(err) = std::io::copy(&mut source, &mut destination)
-                    .and_then(|_| destination.sync_all())
-                {
-                    // The partially copied candidate is ambiguous after an I/O
-                    // failure. Preserve it and the source; never remove a path
-                    // another process may now own.
-                    return Err(format!("Could not copy cut file: {err}"));
-                }
-                sync_output(&candidate)?;
-                return Ok(candidate);
-            }
-        }
-    }
-    Err("Could not find a free output file name; previous files preserved".to_string())
-}
-
-pub(super) fn sync_output(path: &Path) -> Result<(), String> {
-    fs::File::open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| format!("Output file flush failed: {e}; file preserved"))?;
-    #[cfg(unix)]
-    fs::File::open(path.parent().ok_or("Output parent unavailable")?)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| format!("Output directory flush failed: {e}; file preserved"))?;
-    Ok(())
-}
-
-pub(super) fn format_timestamp_filename_suffix(seconds: f64) -> String {
-    let mut timestamp = format_yt_dlp_timestamp(seconds);
-    timestamp = timestamp
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    format!("_t{timestamp}")
-}
-
 pub(super) fn select_existing_output_path(candidates: &[String]) -> Option<String> {
     let existing = candidates
         .iter()
@@ -736,60 +512,6 @@ pub(super) fn is_format_part_path(path: &Path) -> bool {
         .and_then(|stem| stem.rsplit_once(".f"))
         .map(|(_, suffix)| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
         .unwrap_or(false)
-}
-
-pub(super) fn parse_yt_dlp_filepath(line: &str) -> Option<String> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with("pinefetch_caption:") {
-        return None;
-    }
-
-    for prefix in [
-        "[download] Destination:",
-        "[ExtractAudio] Destination:",
-        "[Metadata] Writing metadata to:",
-    ] {
-        if let Some(candidate) = trimmed.strip_prefix(prefix) {
-            return normalize_filepath_candidate(candidate);
-        }
-    }
-
-    if let Some(candidate) = trimmed.strip_prefix("[Merger] Merging formats into ") {
-        return normalize_filepath_candidate(candidate);
-    }
-
-    if let Some(candidate) = trimmed
-        .strip_prefix("[download] ")
-        .and_then(|value| value.strip_suffix(" has already been downloaded"))
-    {
-        return normalize_filepath_candidate(candidate);
-    }
-
-    if trimmed.starts_with('[') {
-        return None;
-    }
-
-    normalize_filepath_candidate(trimmed)
-}
-
-pub(super) fn normalize_filepath_candidate(raw: &str) -> Option<String> {
-    let mut candidate = raw.trim();
-    if candidate.len() >= 2 {
-        let bytes = candidate.as_bytes();
-        if (bytes[0] == b'"' && bytes[candidate.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[candidate.len() - 1] == b'\'')
-        {
-            candidate = &candidate[1..candidate.len() - 1];
-        }
-    }
-    let candidate = candidate.trim();
-    if matches!(candidate, "" | "NA" | "N/A" | "None" | "null") {
-        return None;
-    }
-    if candidate.starts_with("http://") || candidate.starts_with("https://") {
-        return None;
-    }
-    Some(candidate.to_string())
 }
 
 pub(super) fn resolve_existing_output_path_fallback(
@@ -845,7 +567,7 @@ pub(super) fn probe_expected_output_filename(
 
     command.arg(&job.url);
 
-    let output = run_command_output(command, Some(state), None, Some(INFO_TIMEOUT))
+    let output = run_command_output(command, Some(&state.processes), None, Some(INFO_TIMEOUT))
         .map_err(|e| format!("Failed to probe output filename with yt-dlp: {e}"))?;
 
     if !output.status.success() {
@@ -918,220 +640,6 @@ pub(super) fn related_existing_output_paths(expected: &Path) -> Vec<String> {
             }
         })
         .collect()
-}
-
-pub(super) fn ffmpeg_tool_name() -> &'static str {
-    if cfg!(windows) {
-        "ffmpeg.exe"
-    } else {
-        "ffmpeg"
-    }
-}
-
-pub(super) fn ffprobe_tool_name() -> &'static str {
-    if cfg!(windows) {
-        "ffprobe.exe"
-    } else {
-        "ffprobe"
-    }
-}
-
-pub(super) fn ffmpeg_tool_is_usable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-
-    Command::new(path)
-        .arg("-version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
-pub(super) fn has_usable_ffmpeg_tools_in_dir(dir: &Path) -> bool {
-    ffmpeg_tool_is_usable(&dir.join(ffmpeg_tool_name()))
-        && ffmpeg_tool_is_usable(&dir.join(ffprobe_tool_name()))
-}
-
-pub(super) fn normalize_ffmpeg_location(path: &Path) -> Option<String> {
-    if path.is_dir() {
-        if has_usable_ffmpeg_tools_in_dir(path) {
-            return Some(path.to_string_lossy().to_string());
-        }
-        return None;
-    }
-
-    if path.is_file() {
-        if let Some(parent) = path.parent() {
-            if has_usable_ffmpeg_tools_in_dir(parent) {
-                return Some(parent.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    None
-}
-
-pub(super) fn resolve_bundled_ffmpeg_location(app: &AppHandle) -> Option<String> {
-    for relative in [
-        "ffmpeg-runtime/bin",
-        "ffmpeg-runtime",
-        "resources/ffmpeg-runtime/bin",
-        "resources/ffmpeg-runtime",
-    ] {
-        if let Ok(path) = app
-            .path()
-            .resolve(relative, tauri::path::BaseDirectory::Resource)
-        {
-            if let Some(location) = normalize_ffmpeg_location(&path) {
-                return Some(location);
-            }
-        }
-    }
-    None
-}
-
-pub(super) fn resolve_ffmpeg_location(app: &AppHandle, yt_dlp_path: &str) -> Option<String> {
-    if let Ok(raw) = std::env::var("PINEFETCH_FFMPEG_LOCATION") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            if let Some(location) = normalize_ffmpeg_location(Path::new(trimmed)) {
-                return Some(location);
-            }
-        }
-    }
-
-    if let Some(location) = resolve_bundled_ffmpeg_location(app) {
-        return Some(location);
-    }
-
-    if let Some(location) = normalize_ffmpeg_location(Path::new(yt_dlp_path)) {
-        return Some(location);
-    }
-
-    for candidate in ["/opt/homebrew/bin", "/usr/local/bin"] {
-        if let Some(location) = normalize_ffmpeg_location(Path::new(candidate)) {
-            return Some(location);
-        }
-    }
-
-    if let Some(ffmpeg_path) = find_in_path("ffmpeg") {
-        if let Some(location) = normalize_ffmpeg_location(Path::new(&ffmpeg_path)) {
-            return Some(location);
-        }
-    }
-
-    if let Some(ffprobe_path) = find_in_path("ffprobe") {
-        if let Some(location) = normalize_ffmpeg_location(Path::new(&ffprobe_path)) {
-            return Some(location);
-        }
-    }
-
-    None
-}
-
-pub(super) fn resolve_bundled_python(app: &AppHandle) -> Option<String> {
-    #[cfg(target_os = "windows")]
-    let candidates = vec![
-        "whisper-runtime/Scripts/python.exe",
-        "resources/whisper-runtime/Scripts/python.exe",
-    ];
-
-    #[cfg(not(target_os = "windows"))]
-    let candidates = vec![
-        "whisper-runtime/bin/python3.12",
-        "whisper-runtime/bin/python3.11",
-        "whisper-runtime/bin/python3.10",
-        "whisper-runtime/bin/python3",
-        "whisper-runtime/bin/python",
-        "resources/whisper-runtime/bin/python3.12",
-        "resources/whisper-runtime/bin/python3.11",
-        "resources/whisper-runtime/bin/python3.10",
-        "resources/whisper-runtime/bin/python3",
-        "resources/whisper-runtime/bin/python",
-    ];
-
-    for relative in candidates {
-        if let Ok(path) = app
-            .path()
-            .resolve(relative, tauri::path::BaseDirectory::Resource)
-        {
-            if path.exists() {
-                return Some(path.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    None
-}
-
-pub(super) fn resolve_bundled_deno(app: &AppHandle) -> Option<String> {
-    #[cfg(target_os = "windows")]
-    let candidates = vec![
-        "deno-runtime/bin/deno.exe",
-        "resources/deno-runtime/bin/deno.exe",
-    ];
-
-    #[cfg(not(target_os = "windows"))]
-    let candidates = vec!["deno-runtime/bin/deno", "resources/deno-runtime/bin/deno"];
-
-    for relative in candidates {
-        if let Ok(path) = app
-            .path()
-            .resolve(relative, tauri::path::BaseDirectory::Resource)
-        {
-            if path.exists() {
-                return Some(path.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    None
-}
-
-pub(super) fn resolve_deno_executable(app: &AppHandle) -> Option<String> {
-    if let Ok(raw) = std::env::var("PINEFETCH_DENO_PATH") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() && Path::new(trimmed).exists() {
-            return Some(trimmed.to_string());
-        }
-    }
-
-    if let Some(path) = resolve_bundled_deno(app) {
-        return Some(path);
-    }
-
-    find_in_path("deno")
-}
-
-pub(super) fn resolve_python_executable(app: &AppHandle) -> Option<String> {
-    if let Ok(raw) = std::env::var("PINEFETCH_FASTER_WHISPER_PYTHON") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() && Path::new(trimmed).exists() {
-            return Some(trimmed.to_string());
-        }
-    }
-
-    if let Some(path) = resolve_bundled_python(app) {
-        return Some(path);
-    }
-
-    for candidate in [
-        "python3.12",
-        "python3.11",
-        "python3.10",
-        "python3",
-        "python",
-    ] {
-        if let Some(path) = find_in_path(candidate) {
-            return Some(path);
-        }
-    }
-
-    None
 }
 
 pub(super) fn run_faster_whisper_transcription(
@@ -1208,7 +716,7 @@ pub(super) fn run_faster_whisper_transcription(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let child = Arc::new(Mutex::new(child));
-    if let Err(err) = register_current_child(state, &child) {
+    if let Err(err) = register_current_child(&state.processes, &child) {
         if let Ok(mut process) = child.lock() {
             let _ = terminate_child_process_tree(&mut process);
             let _ = process.wait();
@@ -1271,7 +779,7 @@ pub(super) fn run_faster_whisper_transcription(
         }
         thread::sleep(Duration::from_millis(100));
     };
-    clear_current_child(state, &child);
+    clear_current_child(&state.processes, &child);
     let _ = handle_out.join();
     let _ = handle_err.join();
 
@@ -1315,7 +823,7 @@ pub(super) fn extract_temporary_transcription_audio(
     job: &DownloadJob,
     video_path: &str,
 ) -> Result<TemporaryTranscriptionAudio, String> {
-    let yt_dlp = resolve_yt_dlp(app, state)?;
+    let yt_dlp = resolve_yt_dlp(app, &state.config)?;
     let ffmpeg_location = resolve_ffmpeg_location(app, &yt_dlp)
         .ok_or_else(|| "ffmpeg not available for transcription audio extraction".to_string())?;
     let ffmpeg_path = Path::new(&ffmpeg_location).join(ffmpeg_tool_name());
@@ -1365,7 +873,7 @@ pub(super) fn extract_temporary_transcription_audio(
         "pcm_s16le",
         audio_path_str.as_str(),
     ]);
-    let output = run_command_output(command, Some(state), None, None)
+    let output = run_command_output(command, Some(&state.processes), None, None)
         .map_err(|e| format!("Failed to prepare audio for transcription: {e}"))?;
 
     if !output.status.success() {
@@ -1387,27 +895,44 @@ pub(super) fn extract_temporary_transcription_audio(
     Ok(temporary)
 }
 
-pub(super) fn build_output_template(output_dir: &str, filename_suffix: Option<&str>) -> String {
-    let mut path = PathBuf::from(output_dir);
-    // Use title, but fallback to uploader and id for platforms where title might be missing or duplicate
-    // %(title)s - video title
-    // %(uploader)s - uploader name
-    // %(id)s - unique video ID (ensures uniqueness for Instagram posts from same creator)
-    let suffix = filename_suffix.unwrap_or("");
-    path.push(format!("%(title)s - %(uploader)s - %(id)s{suffix}.%(ext)s"));
-    path.to_string_lossy().to_string()
-}
+const FASTER_WHISPER_TRANSCRIBE_SNIPPET: &str = r#"
+import sys
+from pathlib import Path
 
-pub(super) fn normalize_filename_suffix(raw: Option<&str>) -> Option<String> {
-    let suffix = raw?.trim();
-    if suffix.is_empty()
-        || suffix.len() > 32
-        || !suffix.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '_' || character == '-'
-        })
-    {
-        return None;
-    }
+try:
+    from faster_whisper import WhisperModel
+except Exception as exc:
+    print(f"Failed to import faster_whisper: {exc}", file=sys.stderr)
+    raise
 
-    Some(suffix.to_string())
-}
+audio_path = sys.argv[1]
+output_path = Path(sys.argv[2])
+model_name = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else "base"
+include_timestamps = len(sys.argv) > 4 and sys.argv[4] == "1"
+
+def format_timestamp(seconds):
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+model = WhisperModel(model_name, compute_type="int8")
+segments, info = model.transcribe(audio_path, beam_size=5)
+print(f"pinefetch_language:{info.language}", flush=True)
+lines = []
+for segment in segments:
+    text = segment.text.strip()
+    if text:
+        if include_timestamps:
+            start = format_timestamp(segment.start)
+            end = format_timestamp(segment.end)
+            lines.append(f"[{start} → {end}] {text}")
+        else:
+            lines.append(text)
+
+content = "\n".join(lines).strip()
+if content:
+    content += "\n"
+output_path.write_text(content, encoding="utf-8")
+print(str(output_path))
+"#;

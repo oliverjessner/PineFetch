@@ -1,11 +1,40 @@
-use super::*;
-use rusqlite::{
-    backup::{Backup, StepResult},
-    OpenFlags, Transaction, TransactionBehavior,
-};
+use crate::history_rules::source_from_url;
+use rusqlite::backup::Backup;
+use rusqlite::backup::StepResult;
+use rusqlite::params;
+use rusqlite::Connection;
+use rusqlite::OpenFlags;
+use rusqlite::OptionalExtension;
+use rusqlite::Transaction;
+use rusqlite::TransactionBehavior;
+use std::collections::BTreeMap;
+use std::collections::HashSet;
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use std::time::Duration;
+use std::time::Instant;
+use uuid::Uuid;
 
 pub(super) const SCHEMA_VERSION: i64 = 2;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(3);
+// The reported upgraded layout retains this stronger, compatible constraint.
+const LEGACY_HISTORY_VERSION: &str = "2.1.0";
+const LEGACY_HISTORY_VERSION_SQL: &str = "'2.1.0'";
+
+pub(super) fn legacy_history_version_default(
+    conn: &Connection,
+) -> rusqlite::Result<Option<&'static str>> {
+    let retained: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('history_entries')
+         WHERE name='pinefetch_version' AND UPPER(type)='TEXT' AND \"notnull\"=1
+           AND pk=0 AND dflt_value=?1)",
+        [LEGACY_HISTORY_VERSION_SQL],
+        |row| row.get(0),
+    )?;
+    Ok(retained.then_some(LEGACY_HISTORY_VERSION))
+}
 
 // Version 1 adopts the known pre-versioning schemas; version 2 adds only
 // import receipts and the minimal processing/output/commit receipt.
@@ -220,7 +249,6 @@ fn migration_backup(conn: &Connection, version: i64) -> Result<(), String> {
         options.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
         let file = options.open(&partial).map_err(|e| e.to_string())?;
@@ -390,9 +418,14 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
         let actual = columns(conn, &table).map_err(|e| e.to_string())?;
         let mut actual_names = HashSet::new();
         for column in &actual {
+            // Existing code already prefers save_captions when both names
+            // exist. Validate the inactive alias, but retain it and its value.
+            let retained_caption_alias = table == "app_config"
+                && column.name == "save_instagram_captions"
+                && actual.iter().any(|c| c.name == "save_captions");
             let legacy_caption =
                 version == 0 && table == "app_config" && column.name == "save_instagram_captions";
-            let compare_name = if legacy_caption {
+            let compare_name = if legacy_caption || retained_caption_alias {
                 "save_captions"
             } else {
                 &column.name
@@ -400,14 +433,20 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             let Some(wanted) = expected.iter().find(|c| c.name == compare_name) else {
                 return Err(fail());
             };
+            let retained_history_version = table == "history_entries"
+                && column.name == "pinefetch_version"
+                && column.required
+                && column.default.as_deref() == Some(LEGACY_HISTORY_VERSION_SQL)
+                && !wanted.required
+                && wanted.default.is_none();
             if column.kind != wanted.kind
-                || column.required != wanted.required
-                || column.default != wanted.default
                 || column.pk != wanted.pk
+                || (!retained_history_version
+                    && (column.required != wanted.required || column.default != wanted.default))
             {
                 return Err(format!("{} (column {})", fail(), column.name));
             }
-            if !actual_names.insert(compare_name.to_string()) {
+            if !retained_caption_alias && !actual_names.insert(compare_name.to_string()) {
                 return Err(fail());
             }
         }
@@ -883,4 +922,20 @@ fn ensure_history_entries_column(
         [],
     )?;
     Ok(())
+}
+
+pub(crate) const LEGACY_CONFIG_MIGRATION_KEY: &str = "legacy_config_json_migrated";
+
+pub(crate) struct Database {
+    connection: std::sync::Mutex<Connection>,
+}
+impl Database {
+    pub(crate) fn new(connection: Connection) -> Self {
+        Self {
+            connection: std::sync::Mutex::new(connection),
+        }
+    }
+    pub(crate) fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Connection>> {
+        self.connection.lock()
+    }
 }

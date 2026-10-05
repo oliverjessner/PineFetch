@@ -63,6 +63,12 @@ lock, updating defaults, backfilling history, scanning all user rows or creating
 snapshots. `quick_check`, `foreign_key_check`, null-identity checks and the
 historical source backfill run only during an actual upgrade.
 
+Database/config/history initialization runs before Tauri's native event loop.
+Initialization failures print `PineFetch could not start: ...` and exit with code
+1, rather than returning an error from the setup callback (which Tauri turns into
+a panic and macOS can terminate with `SIGABRT`). CLI help/version still return
+before database initialization; ordinary CLI requests retain their desktop IPC path.
+
 ## Ordered migrations and legacy adoption
 
 The entire required upgrade section uses one `BEGIN IMMEDIATE` transaction:
@@ -89,6 +95,19 @@ history-only and config-only regression fixtures remain supported, including
 recognizable interrupted historical subsets. The minimum history layout needs
 `id`, `url`, `created_at` and `completed_at`; other known nullable history fields
 can be added. Caption/transcript tables without a history parent are refused.
+
+The validator also recognizes the narrowly reproduced upgraded layout reported
+in a startup crash: both `save_instagram_captions` and `save_captions` with their
+original integer/default constraints, and `pinefetch_version TEXT NOT NULL
+DEFAULT '2.1.0'`. Both caption columns and their values are retained; the existing
+`save_captions` setting remains authoritative. The version constraint/default is
+retained on upgrade and reopen. History entries without a version use that
+database's `2.1.0` default only when this exact constraint exists; nullable layouts
+continue to store NULL. Other column types/defaults, unknown objects and future
+versions still fail validation. Migration SQL and schema version 2 are unchanged.
+Tests reproduce these schema variants with synthetic rows, including rollback,
+snapshot preservation, retry and reopening; they do not claim Git-release
+provenance for this additional upgrade combination.
 
 No user table is rebuilt or dropped. Old `app_meta` is retained. Unexpected old
 objects such as an obsolete request-log table are preserved and cause a clear

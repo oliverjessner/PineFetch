@@ -1,14 +1,5 @@
 use super::*;
 
-pub(super) fn legacy_history_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "Data directory unavailable")?;
-    fs::create_dir_all(&dir).map_err(|e| format!("Data dir create failed: {e}"))?;
-    Ok(dir.join("history.json"))
-}
-
 pub(super) fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
     entry.title = trim_optional_string(entry.title);
     entry.uploader = trim_optional_string(entry.uploader);
@@ -423,6 +414,12 @@ pub(super) fn insert_history_entry_in_conn(
     conn: &Connection,
     entry: &HistoryEntry,
 ) -> Result<(), String> {
+    let legacy_version = if entry.pinefetch_version.is_none() {
+        database::legacy_history_version_default(conn)
+            .map_err(|e| format!("History version default read failed: {e}"))?
+    } else {
+        None
+    };
     conn.execute(
         "INSERT INTO history_entries (
             id,
@@ -478,7 +475,7 @@ pub(super) fn insert_history_entry_in_conn(
             entry.source,
             entry.platform,
             entry.output_path,
-            entry.pinefetch_version,
+            entry.pinefetch_version.as_deref().or(legacy_version),
             millis_to_i64(entry.created_at),
             entry.completed_at.map(millis_to_i64),
         ],
@@ -595,12 +592,6 @@ pub(super) fn clear_history_entries_in_db(state: &AppState) -> Result<(), String
         .map_err(|e| format!("History clear failed: {e}"))?;
     tx.commit()
         .map_err(|e| format!("History deletion commit failed: {e}"))
-}
-
-pub(super) fn migrate_legacy_history_json(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    let path = legacy_history_path(app)?;
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    import_legacy_history(&conn, &path)
 }
 
 pub(super) fn import_legacy_history(conn: &Connection, path: &Path) -> Result<(), String> {

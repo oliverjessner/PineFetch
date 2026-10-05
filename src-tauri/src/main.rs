@@ -10,6 +10,7 @@ mod integrity_tests;
 mod platform;
 mod presets;
 mod queue;
+mod startup;
 
 use browser_import::*;
 use config::*;
@@ -1512,20 +1513,6 @@ fn find_in_path(binary: &str) -> Option<String> {
     None
 }
 
-fn link_dump_db_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "Data directory unavailable")?;
-    fs::create_dir_all(&dir).map_err(|e| format!("Data dir create failed: {e}"))?;
-    Ok(dir.join("pinefetch.sqlite"))
-}
-
-fn open_link_dump_db(app: &AppHandle) -> Result<Connection, String> {
-    let path = link_dump_db_path(app)?;
-    database::open(&path)
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = match cli::parse(&args) {
@@ -1554,17 +1541,21 @@ fn main() {
         }
         return;
     }
-    tauri::Builder::default()
+    // Tauri panics when setup returns an error. On macOS that panic crosses
+    // an Objective-C callback and aborts instead of reporting a normal error.
+    let state = match startup::load_for_identifier(&context.config().identifier) {
+        Ok(state) => state,
+        Err(err) => {
+            eprintln!("PineFetch could not start: {err}");
+            std::process::exit(1);
+        }
+    };
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
-            let db = open_link_dump_db(app.handle())?;
-            migrate_legacy_config_json(app.handle(), &db)?;
-            let config = load_config_from_db(&db)?;
-            let state = AppState::new(config, db);
-            migrate_legacy_history_json(app.handle(), &state)?;
+        .setup(move |app| {
             app.manage(state);
             let state = app.state::<AppState>();
             let _ = start_link_dump_server_from_settings(app.handle(), state.inner());
@@ -1608,18 +1599,24 @@ fn main() {
             delete_link_dump_secret,
             restart_link_dump_server
         ])
-        .build(context)
-        .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                let state = app_handle.state::<AppState>();
-                stop_active_download_on_exit(state.inner());
-                stop_link_dump_server(state.inner());
-                if let Some(server) = app_handle.try_state::<cli::CliServer>() {
-                    server.stop();
-                }
+        .build(context);
+    let app = match app {
+        Ok(app) => app,
+        Err(err) => {
+            eprintln!("PineFetch could not start: {err}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            let state = app_handle.state::<AppState>();
+            stop_active_download_on_exit(state.inner());
+            stop_link_dump_server(state.inner());
+            if let Some(server) = app_handle.try_state::<cli::CliServer>() {
+                server.stop();
             }
-        });
+        }
+    });
 }
 
 #[cfg(test)]

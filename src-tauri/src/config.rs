@@ -141,15 +141,6 @@ pub(super) fn cache_last_download_url(state: State<AppState>, url: String) -> Re
     Ok(())
 }
 
-pub(super) fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|_| "Config directory unavailable")?;
-    fs::create_dir_all(&dir).map_err(|e| format!("Config dir create failed: {e}"))?;
-    Ok(dir.join("config.json"))
-}
-
 pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
     conn.query_row(
         "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions, save_thumbnails
@@ -251,10 +242,6 @@ pub(super) fn upsert_app_config_in_conn(
         ],
     )?;
     Ok(())
-}
-
-pub(super) fn migrate_legacy_config_json(app: &AppHandle, conn: &Connection) -> Result<(), String> {
-    import_legacy_config(conn, &config_path(app)?)
 }
 
 pub(super) fn read_legacy_json<T: serde::de::DeserializeOwned>(

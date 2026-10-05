@@ -1,100 +1,17 @@
-use super::*;
-
-pub(super) fn normalize_app_config(mut config: AppConfig) -> AppConfig {
-    config.selected_preset_key = Some(normalize_download_preset_key(
-        config.selected_preset_key.as_deref(),
-    ));
-    config.faster_whisper_model = normalize_faster_whisper_model(&config.faster_whisper_model);
-    config
-}
-
-pub(super) fn normalize_faster_whisper_model(model: &str) -> String {
-    let model = model.trim();
-    FASTER_WHISPER_MODELS
-        .iter()
-        .find(|candidate| **candidate == model)
-        .copied()
-        .unwrap_or(DEFAULT_FASTER_WHISPER_MODEL)
-        .to_string()
-}
-
-#[tauri::command]
-pub(super) fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
-    let cfg = state.config.lock().map_err(|_| "Config lock poisoned")?;
-    Ok(cfg.clone())
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub(super) struct ConfigPatch {
-    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
-    yt_dlp_path: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
-    default_output_dir: Option<Option<String>>,
-    selected_preset_key: Option<String>,
-    faster_whisper_model: Option<String>,
-    download_video_with_transcript: Option<bool>,
-    #[serde(alias = "save_instagram_captions")]
-    save_captions: Option<bool>,
-    save_thumbnails: Option<bool>,
-    magic_import_enabled: Option<bool>,
-    cut_at_timestamp_enabled: Option<bool>,
-    notifications_enabled: Option<bool>,
-}
-
-fn deserialize_nullable_patch<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<String>::deserialize(deserializer).map(Some)
-}
-
-fn apply_config_patch(config: &mut AppConfig, changes: ConfigPatch) {
-    if let Some(value) = changes.yt_dlp_path {
-        config.yt_dlp_path = value;
-    }
-    if let Some(value) = changes.default_output_dir {
-        config.default_output_dir = value;
-    }
-    if let Some(value) = changes.selected_preset_key {
-        config.selected_preset_key = Some(value);
-    }
-    if let Some(value) = changes.faster_whisper_model {
-        config.faster_whisper_model = value;
-    }
-    if let Some(value) = changes.download_video_with_transcript {
-        config.download_video_with_transcript = value;
-    }
-    if let Some(value) = changes.save_captions {
-        config.save_captions = value;
-    }
-    if let Some(value) = changes.save_thumbnails {
-        config.save_thumbnails = value;
-    }
-    if let Some(value) = changes.magic_import_enabled {
-        config.magic_import_enabled = value;
-    }
-    if let Some(value) = changes.cut_at_timestamp_enabled {
-        config.cut_at_timestamp_enabled = value;
-    }
-    if let Some(value) = changes.notifications_enabled {
-        config.notifications_enabled = value;
-    }
-}
-
-#[tauri::command]
-pub(super) fn patch_config(
-    state: State<AppState>,
-    changes: ConfigPatch,
-) -> Result<AppConfig, String> {
-    update_config(state.inner(), |config| apply_config_patch(config, changes))
-}
+use crate::config_rules::normalize_app_config;
+use crate::database;
+use crate::files::read_legacy_json;
+use crate::models::AppConfig;
+use rusqlite::params;
+use rusqlite::Connection;
+use std::path::Path;
 
 pub(super) fn update_config(
-    state: &AppState,
+    state: &ConfigState,
     change: impl FnOnce(&mut AppConfig),
 ) -> Result<AppConfig, String> {
-    let mut current = state.config.lock().map_err(|_| "Config lock poisoned")?;
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let mut current = state.lock().map_err(|_| "Config lock poisoned")?;
+    let conn = state.database.lock().map_err(|_| "SQLite lock poisoned")?;
     let tx = database::write_transaction(&conn)
         .map_err(|e| format!("Config transaction failed: {e}"))?;
     // Re-read under the SQLite writer lock: another app process may have
@@ -107,47 +24,6 @@ pub(super) fn update_config(
         .map_err(|e| format!("Config commit failed: {e}"))?;
     *current = next.clone();
     Ok(next)
-}
-
-#[tauri::command]
-pub(super) fn set_selected_preset_key(
-    state: State<AppState>,
-    preset_key: String,
-) -> Result<AppConfig, String> {
-    let selected_preset_key = normalize_download_preset_key(Some(&preset_key));
-    update_config(state.inner(), |cfg| {
-        cfg.selected_preset_key = Some(selected_preset_key)
-    })
-}
-
-#[tauri::command]
-pub(super) fn set_save_captions(
-    state: State<AppState>,
-    enabled: bool,
-) -> Result<AppConfig, String> {
-    update_config(state.inner(), |cfg| cfg.save_captions = enabled)
-}
-
-#[tauri::command]
-pub(super) fn cache_last_download_url(state: State<AppState>, url: String) -> Result<(), String> {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return Ok(());
-    }
-
-    update_config(state.inner(), |cfg| {
-        cfg.last_download_url = Some(trimmed.to_string())
-    })?;
-    Ok(())
-}
-
-pub(super) fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|_| "Config directory unavailable")?;
-    fs::create_dir_all(&dir).map_err(|e| format!("Config dir create failed: {e}"))?;
-    Ok(dir.join("config.json"))
 }
 
 pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
@@ -253,34 +129,6 @@ pub(super) fn upsert_app_config_in_conn(
     Ok(())
 }
 
-pub(super) fn migrate_legacy_config_json(app: &AppHandle, conn: &Connection) -> Result<(), String> {
-    import_legacy_config(conn, &config_path(app)?)
-}
-
-pub(super) fn read_legacy_json<T: serde::de::DeserializeOwned>(
-    path: &Path,
-) -> Result<Option<T>, String> {
-    let raw = match fs::read(path) {
-        Ok(raw) => raw,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => {
-            return Err(format!(
-                "Legacy JSON read failed for {}: {e}; original preserved",
-                path.display()
-            ))
-        }
-    };
-    serde_json::from_slice(&raw).map(Some).map_err(|e| {
-        format!(
-            "Legacy JSON is invalid for {} ({:?}, line {}, column {}); original preserved",
-            path.display(),
-            e.classify(),
-            e.line(),
-            e.column()
-        )
-    })
-}
-
 pub(super) fn import_legacy_config(conn: &Connection, path: &Path) -> Result<(), String> {
     let already_migrated: bool = conn
         .query_row(
@@ -351,9 +199,37 @@ pub(super) fn import_legacy_config(conn: &Connection, path: &Path) -> Result<(),
         .map_err(|e| format!("Config import commit failed: {e}"))
 }
 
+pub(crate) struct ConfigState {
+    current: std::sync::Mutex<AppConfig>,
+    database: std::sync::Arc<crate::database::Database>,
+}
+impl ConfigState {
+    pub(crate) fn new(
+        config: AppConfig,
+        database: std::sync::Arc<crate::database::Database>,
+    ) -> Self {
+        Self {
+            current: std::sync::Mutex::new(config),
+            database,
+        }
+    }
+    pub(crate) fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, AppConfig>> {
+        self.current.lock()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::load_config_from_db;
+    use super::update_config;
+    use super::upsert_app_config_in_conn;
+    use crate::config_rules::apply_config_patch;
+    use crate::config_rules::ConfigPatch;
+    use crate::database::initialize as run_link_dump_migrations;
+    use crate::models::AppConfig;
+    use crate::state::AppState;
+    use rusqlite::Connection;
+    use serde_json::json;
 
     #[test]
     fn settings_patch_preserves_newer_url_and_preset_and_clears_nullable_path() {
@@ -374,7 +250,8 @@ mod tests {
         }))
         .unwrap();
 
-        let updated = update_config(&state, |config| apply_config_patch(config, changes)).unwrap();
+        let updated =
+            update_config(&state.config, |config| apply_config_patch(config, changes)).unwrap();
         let persisted = load_config_from_db(&state.db.lock().unwrap()).unwrap();
 
         assert_eq!(updated.yt_dlp_path, None);
@@ -394,8 +271,10 @@ mod tests {
 
         let clear_output: ConfigPatch =
             serde_json::from_value(json!({ "default_output_dir": null })).unwrap();
-        let updated =
-            update_config(&state, |config| apply_config_patch(config, clear_output)).unwrap();
+        let updated = update_config(&state.config, |config| {
+            apply_config_patch(config, clear_output)
+        })
+        .unwrap();
         assert_eq!(updated.default_output_dir, None);
         assert_eq!(
             updated.last_download_url.as_deref(),

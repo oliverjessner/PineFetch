@@ -1,11 +1,4 @@
-export const createHistoryDetailsView = ({
-    els,
-    invoke,
-    appendLog,
-    formatFileSize,
-    formatDuration,
-    detectPlatform,
-}) => {
+export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, formatDuration, detectPlatform }) => {
     const state = {
         contextEntryId: null,
         contextReturnFocus: null,
@@ -203,7 +196,7 @@ export const createHistoryDetailsView = ({
         els.historyTranscriptText.hidden = true;
         els.historyTranscriptCopyBtn.disabled = true;
         try {
-            const content = await invoke('get_history_transcript', { id: entryId });
+            const content = await api.getHistoryTranscript({ id: entryId });
             if (!els.historyDetailsDialog.open || state.details?.entry?.id !== entryId) return;
             state.transcript = content || null;
             renderTranscript(state.transcript);
@@ -273,7 +266,7 @@ export const createHistoryDetailsView = ({
         els.historyCaptionText.hidden = true;
         els.historyCaptionCopyBtn.disabled = true;
         try {
-            const content = await invoke('get_history_caption', { id: entryId, mediaPath });
+            const content = await api.getHistoryCaption({ id: entryId, mediaPath });
             if (
                 !els.historyDetailsDialog.open ||
                 state.details?.entry?.id !== entryId ||
@@ -320,7 +313,7 @@ export const createHistoryDetailsView = ({
         els.historyDetailsCloseBtn.focus({ preventScroll: true });
 
         try {
-            const details = await invoke('get_history_details', { id: entryId });
+            const details = await api.getHistoryDetails({ id: entryId });
             if (requestId !== state.detailsRequestId || !els.historyDetailsDialog.open) return;
             if (!details) {
                 els.historyDetailsStatus.textContent = 'This history entry is no longer available.';

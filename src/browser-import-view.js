@@ -1,4 +1,4 @@
-export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpans }) => {
+export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }) => {
     const linkDumpExtensionRepoUrl = 'https://github.com/oliverjessner/PineFetch-Link-Dump';
     const state = { linkDump: null, generatedLinkDumpSecret: null };
     let linkDumpSyncPromise = null;
@@ -161,12 +161,12 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
     };
 
     const syncLinkDumpOverview = () => {
-        if (!invoke) return Promise.resolve();
+        if (!api.available) return Promise.resolve();
         if (linkDumpSyncPromise) return linkDumpSyncPromise;
 
         linkDumpSyncPromise = (async () => {
             try {
-                renderLinkDumpOverview(await invoke('get_link_dump_overview'));
+                renderLinkDumpOverview(await api.getLinkDumpOverview());
             } catch (err) {
                 setLinkDumpStatusText(`Link Dump settings unavailable: ${err}`, true);
                 appendLog(`[link-dump] ${err}`, true);
@@ -180,9 +180,9 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
     const openLinkDumpExtensionRepo = async event => {
         event.preventDefault();
         const url = els.linkDumpExtensionRepoLink?.href || linkDumpExtensionRepoUrl;
-        if (invoke) {
+        if (api.available) {
             try {
-                await invoke('open_external_url', { url });
+                await api.openExternalUrl({ url });
                 return;
             } catch (err) {
                 appendLog(`[link-dump] Could not open extension repository: ${err}`, true);
@@ -192,7 +192,7 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
     };
 
     const saveLinkDumpServer = async () => {
-        if (!invoke) return;
+        if (!api.available) return;
         const port = Number(els.linkDumpPort.value);
         if (!Number.isInteger(port) || port < 1 || port > 65535) {
             setLinkDumpStatusText('Port must be between 1 and 65535.', true);
@@ -200,7 +200,7 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
         }
 
         try {
-            const overview = await invoke('update_link_dump_settings', {
+            const overview = await api.updateLinkDumpSettings({
                 patch: {
                     server_enabled: Boolean(els.linkDumpServerEnabled.checked),
                     port,
@@ -215,9 +215,9 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
     };
 
     const restartLinkDumpServer = async () => {
-        if (!invoke) return;
+        if (!api.available) return;
         try {
-            applyLinkDumpServerStatus(await invoke('restart_link_dump_server'));
+            applyLinkDumpServerStatus(await api.restartLinkDumpServer());
             appendLog('[link-dump] server restarted', false);
         } catch (err) {
             setLinkDumpStatusText(`${err}`, true);
@@ -226,9 +226,9 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
     };
 
     const generateLinkDumpSecret = async () => {
-        if (!invoke) return;
+        if (!api.available) return;
         try {
-            const generated = await invoke('create_link_dump_secret', {
+            const generated = await api.createLinkDumpSecret({
                 name: els.linkDumpSecretName.value.trim() || null,
             });
             state.generatedLinkDumpSecret = generated.secret;
@@ -236,7 +236,7 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
             els.generatedLinkDumpSecretPanel.hidden = false;
             els.linkDumpSecretName.value = '';
             setLinkDumpSecretStatus('Secret generated.');
-            renderLinkDumpOverview(await invoke('get_link_dump_overview'));
+            renderLinkDumpOverview(await api.getLinkDumpOverview());
         } catch (err) {
             setLinkDumpSecretStatus(`${err}`, true);
             appendLog(`[link-dump] ${err}`, true);
@@ -258,9 +258,9 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
     };
 
     const revokeLinkDumpSecret = async id => {
-        if (!invoke) return;
+        if (!api.available) return;
         try {
-            const secrets = await invoke('revoke_link_dump_secret', { id });
+            const secrets = await api.revokeLinkDumpSecret({ id });
             renderLinkDumpSecrets(secrets);
             setLinkDumpSecretStatus('Connection revoked.');
         } catch (err) {
@@ -270,9 +270,9 @@ export const createBrowserImportView = ({ els, invoke, appendLog, appendTextSpan
     };
 
     const deleteLinkDumpSecret = async id => {
-        if (!invoke) return;
+        if (!api.available) return;
         try {
-            const secrets = await invoke('delete_link_dump_secret', { id });
+            const secrets = await api.deleteLinkDumpSecret({ id });
             renderLinkDumpSecrets(secrets);
             setLinkDumpSecretStatus('Connection deleted.');
         } catch (err) {

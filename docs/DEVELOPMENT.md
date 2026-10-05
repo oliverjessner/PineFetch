@@ -1,5 +1,8 @@
 # Development and quality checks
 
+Component responsibilities and dependency boundaries are documented in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 Database migrations, legacy imports, SQLite snapshots and file completion rules
 are documented in [DATA-INTEGRITY.md](DATA-INTEGRITY.md). Their offline regression
 tests run in the same Rust suite and `npm run check` gate described here.

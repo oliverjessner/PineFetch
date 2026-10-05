@@ -1,41 +1,27 @@
-use super::*;
-
-pub(super) fn legacy_history_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "Data directory unavailable")?;
-    fs::create_dir_all(&dir).map_err(|e| format!("Data dir create failed: {e}"))?;
-    Ok(dir.join("history.json"))
-}
-
-pub(super) fn normalize_history_entry(mut entry: HistoryEntry) -> HistoryEntry {
-    entry.title = trim_optional_string(entry.title);
-    entry.uploader = trim_optional_string(entry.uploader);
-    entry.filename = trim_optional_string(entry.filename)
-        .or_else(|| filename_from_path(entry.output_path.as_deref()));
-    entry.thumbnail = trim_optional_string(entry.thumbnail);
-    entry.upload_date = trim_optional_string(entry.upload_date);
-    entry.timestamp = entry.timestamp.filter(|timestamp| *timestamp >= 0);
-    entry.duration_seconds = entry.duration_seconds.filter(|duration| *duration >= 0);
-    entry.file_size_bytes = entry.file_size_bytes.filter(|size| *size >= 0);
-    entry.sha256 = trim_optional_string(entry.sha256)
-        .map(|hash| hash.to_ascii_lowercase())
-        .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    entry.medium = trim_optional_string(entry.medium)
-        .map(|medium| medium.to_ascii_lowercase())
-        .filter(|medium| matches!(medium.as_str(), "video" | "audio" | "transcript"));
-    entry.source = trim_optional_string(entry.source)
-        .map(|source| source.to_ascii_lowercase())
-        .or_else(|| source_from_url(&entry.url));
-    entry.platform = trim_optional_string(entry.platform).or_else(|| detect_platform(&entry.url));
-    entry.output_path = trim_optional_string(entry.output_path);
-    entry.pinefetch_version = trim_optional_string(entry.pinefetch_version);
-    if entry.title.is_none() {
-        entry.title = title_from_filename(entry.filename.as_deref());
-    }
-    entry
-}
+use crate::database;
+use crate::files::current_timestamp_millis;
+use crate::files::read_legacy_json;
+use crate::hashing::sha256_hex;
+use crate::history_rules::normalize_history_entry;
+use crate::history_rules::source_from_url;
+use crate::history_rules::trim_optional_string;
+use crate::models::HistoryCaptionContent;
+use crate::models::HistoryCaptionSummary;
+use crate::models::HistoryDetails;
+use crate::models::HistoryEntry;
+use crate::models::HistoryPage;
+use crate::models::HistorySourceCount;
+use crate::models::HistoryStats;
+use crate::models::HistoryTranscriptContent;
+use crate::models::HistoryTranscriptSummary;
+use crate::models::SavedCaption;
+use rusqlite::params;
+use rusqlite::Connection;
+use rusqlite::OptionalExtension;
+use std::collections::BTreeMap;
+use std::collections::HashSet;
+use std::path::Path;
+use uuid::Uuid;
 
 pub(super) fn millis_to_i64(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
@@ -54,8 +40,10 @@ pub(super) fn optional_i64_to_millis(value: Option<i64>) -> Option<u64> {
 }
 
 #[cfg(test)]
-pub(super) fn count_history_entries_in_db(state: &AppState) -> Result<u64, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+pub(super) fn count_history_entries_in_db(
+    state: &crate::database::Database,
+) -> Result<u64, String> {
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM history_entries", [], |row| row.get(0))
         .map_err(|e| format!("History read failed: {e}"))?;
@@ -63,7 +51,7 @@ pub(super) fn count_history_entries_in_db(state: &AppState) -> Result<u64, Strin
 }
 
 pub(super) fn list_history_page_from_db(
-    state: &AppState,
+    state: &crate::database::Database,
     limit: u32,
     offset: u32,
 ) -> Result<HistoryPage, String> {
@@ -71,7 +59,7 @@ pub(super) fn list_history_page_from_db(
 }
 
 pub(super) fn search_history_page_from_db(
-    state: &AppState,
+    state: &crate::database::Database,
     limit: u32,
     offset: u32,
     query: Option<&str>,
@@ -92,7 +80,7 @@ pub(super) fn search_history_page_from_db(
         .map(str::trim)
         .filter(|source| !source.is_empty())
         .map(str::to_ascii_lowercase);
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     let total: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM history_entries AS history
@@ -196,10 +184,10 @@ fn path_extension(path: &str) -> Option<String> {
 }
 
 pub(super) fn get_history_details_from_db(
-    state: &AppState,
+    state: &crate::database::Database,
     id: &str,
 ) -> Result<Option<HistoryDetails>, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     let entry = conn
         .query_row(
             "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, sha256, medium, source, platform, output_path, pinefetch_version, created_at, completed_at
@@ -294,10 +282,10 @@ pub(super) fn get_history_details_from_db(
 }
 
 pub(super) fn get_history_transcript_from_db(
-    state: &AppState,
+    state: &crate::database::Database,
     id: &str,
 ) -> Result<Option<HistoryTranscriptContent>, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     conn.query_row(
         "SELECT transcription.text, transcription.\"type\", transcription.language, history.output_path
          FROM transcriptions AS transcription
@@ -321,11 +309,11 @@ pub(super) fn get_history_transcript_from_db(
 }
 
 pub(super) fn get_history_caption_from_db(
-    state: &AppState,
+    state: &crate::database::Database,
     id: &str,
     media_path: &str,
 ) -> Result<Option<HistoryCaptionContent>, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     conn.query_row(
         "SELECT media_path, caption_path, text, sha256, created_at
          FROM captions WHERE history_entry_id = ?1 AND media_path = ?2",
@@ -349,12 +337,16 @@ pub(super) fn get_history_caption_from_db(
 }
 
 #[cfg(test)]
-pub(super) fn list_history_entries_from_db(state: &AppState) -> Result<Vec<HistoryEntry>, String> {
+pub(super) fn list_history_entries_from_db(
+    state: &crate::database::Database,
+) -> Result<Vec<HistoryEntry>, String> {
     Ok(list_history_page_from_db(state, u32::MAX, 0)?.entries)
 }
 
-pub(super) fn get_history_stats_from_db(state: &AppState) -> Result<HistoryStats, String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+pub(super) fn get_history_stats_from_db(
+    state: &crate::database::Database,
+) -> Result<HistoryStats, String> {
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     let mut stats = conn
         .query_row(
             "SELECT
@@ -411,11 +403,11 @@ pub(super) fn get_history_stats_from_db(state: &AppState) -> Result<HistoryStats
 
 #[cfg(test)]
 pub(super) fn insert_history_entry_in_db(
-    state: &AppState,
+    state: &crate::database::Database,
     entry: &HistoryEntry,
 ) -> Result<(), String> {
     let entry = normalize_history_entry(entry.clone());
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     insert_history_entry_in_conn(&conn, &entry)
 }
 
@@ -489,7 +481,7 @@ pub(super) fn insert_history_entry_in_conn(
 
 #[cfg(test)]
 pub(super) fn insert_captions_in_db(
-    state: &AppState,
+    state: &crate::database::Database,
     history_entry_id: &str,
     captions: &[SavedCaption],
 ) -> Result<(), String> {
@@ -497,7 +489,7 @@ pub(super) fn insert_captions_in_db(
         return Ok(());
     }
 
-    let mut conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let mut conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     let transaction = conn
         .transaction()
         .map_err(|e| format!("Caption transaction failed: {e}"))?;
@@ -543,13 +535,13 @@ pub(super) fn insert_captions_in_conn(
 
 #[cfg(test)]
 pub(super) fn insert_transcription_in_db(
-    state: &AppState,
+    state: &crate::database::Database,
     history_entry_id: &str,
     text: &str,
     transcription_type: &str,
     language: &str,
 ) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     insert_transcription_in_conn(&conn, history_entry_id, text, transcription_type, language)
 }
 
@@ -579,8 +571,11 @@ pub(super) fn insert_transcription_in_conn(
     Ok(())
 }
 
-pub(super) fn delete_history_entry_from_db(state: &AppState, id: &str) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+pub(super) fn delete_history_entry_from_db(
+    state: &crate::database::Database,
+    id: &str,
+) -> Result<(), String> {
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     let tx = database::write_transaction(&conn)?;
     tx.execute("DELETE FROM history_entries WHERE id = ?1", params![id])
         .map_err(|e| format!("History delete failed: {e}"))?;
@@ -588,19 +583,13 @@ pub(super) fn delete_history_entry_from_db(state: &AppState, id: &str) -> Result
         .map_err(|e| format!("History deletion commit failed: {e}"))
 }
 
-pub(super) fn clear_history_entries_in_db(state: &AppState) -> Result<(), String> {
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+pub(super) fn clear_history_entries_in_db(state: &crate::database::Database) -> Result<(), String> {
+    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     let tx = database::write_transaction(&conn)?;
     tx.execute("DELETE FROM history_entries", [])
         .map_err(|e| format!("History clear failed: {e}"))?;
     tx.commit()
         .map_err(|e| format!("History deletion commit failed: {e}"))
-}
-
-pub(super) fn migrate_legacy_history_json(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    let path = legacy_history_path(app)?;
-    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
-    import_legacy_history(&conn, &path)
 }
 
 pub(super) fn import_legacy_history(conn: &Connection, path: &Path) -> Result<(), String> {

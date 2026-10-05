@@ -1,10 +1,49 @@
 //! Terminal commands and a private local connection to the desktop process.
 //! History is deliberately exposed only through read operations.
-use super::*;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use crate::events::emit_queue;
+use crate::events::emit_state;
+use crate::history::get_history_stats_from_db;
+use crate::history::list_history_page_from_db;
+use crate::models::DownloadJob;
+use crate::models::DownloadRequest;
+use crate::models::DownloadState;
+use crate::models::DownloadStateEvent;
+use crate::models::HistoryStats;
+use crate::presets::download_preset_for_key;
+use crate::state::AppState;
+use crate::video_urls::parse_http_url;
+use crate::worker::enqueue_download_request;
+use serde::Deserialize;
+use serde::Serialize;
+use std::fs;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Read;
+use std::io::Write;
+use std::net::Ipv4Addr;
+use std::net::SocketAddr;
+use std::net::SocketAddrV4;
+use std::net::TcpListener;
+use std::net::TcpStream;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+use std::thread::JoinHandle;
+use std::time::Duration;
+use tauri::AppHandle;
+use tauri::Manager;
+use uuid::Uuid;
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const HELP: &str = concat!(
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const HELP: &str = concat!(
     "PineFetch CLI ",
     env!("CARGO_PKG_VERSION"),
     "
@@ -31,7 +70,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CliCommand {
+pub(crate) enum CliCommand {
     Help,
     Version,
     QueueAdd { link: String, preset: String },
@@ -41,7 +80,7 @@ pub enum CliCommand {
     Stats,
 }
 
-pub fn parse(args: &[String]) -> Result<Option<CliCommand>, String> {
+pub(crate) fn parse(args: &[String]) -> Result<Option<CliCommand>, String> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
         [] => Ok(None),
@@ -131,7 +170,11 @@ fn build_request(state: &AppState, link: &str, preset: &str) -> Result<DownloadR
 // Remove under the same lock used by the worker: never cancel an active job
 // because a queue index changed between resolving it and removing it.
 fn remove_waiting_job(state: &AppState, number: usize) -> Result<DownloadJob, String> {
-    let mut queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
+    let mut queue = state
+        .queue
+        .pending
+        .lock()
+        .map_err(|_| "Queue lock poisoned")?;
     number
         .checked_sub(1)
         .and_then(|index| queue.remove(index))
@@ -160,7 +203,11 @@ fn job_preset(job: &DownloadJob) -> &str {
 }
 
 fn list_queue(state: &AppState) -> Result<String, String> {
-    let queue = state.queue.lock().map_err(|_| "Queue lock poisoned")?;
+    let queue = state
+        .queue
+        .pending
+        .lock()
+        .map_err(|_| "Queue lock poisoned")?;
     if queue.is_empty() {
         return Ok("No waiting downloads.".into());
     }
@@ -177,7 +224,7 @@ fn list_queue(state: &AppState) -> Result<String, String> {
 }
 
 fn list_history(state: &AppState) -> Result<String, String> {
-    let page = list_history_page_from_db(state, 25, 0)?;
+    let page = list_history_page_from_db(&state.db, 25, 0)?;
     if page.entries.is_empty() {
         return Ok("History is empty.".into());
     }
@@ -247,12 +294,12 @@ fn execute(app: &AppHandle, command: CliCommand) -> Result<String, String> {
         CliCommand::QueueList => list_queue(&state),
         CliCommand::QueueRemove { number } => {
             let job = remove_waiting_job(&state, number)?;
-            emit_queue(app, &state)?;
+            emit_queue(app, &state.queue)?;
             emit_state(
                 app,
                 DownloadStateEvent {
                     id: job.id,
-                    state: "cancelled".into(),
+                    state: DownloadState::Cancelled,
                     exit_code: None,
                     error: None,
                     output_path: None,
@@ -264,7 +311,7 @@ fn execute(app: &AppHandle, command: CliCommand) -> Result<String, String> {
             ))
         }
         CliCommand::HistoryList => list_history(&state),
-        CliCommand::Stats => Ok(format_stats(&get_history_stats_from_db(&state)?)),
+        CliCommand::Stats => Ok(format_stats(&get_history_stats_from_db(&state.db)?)),
     }
 }
 
@@ -326,7 +373,7 @@ fn authorize(request: Request, token: &str) -> Result<CliCommand, String> {
     Ok(request.command)
 }
 
-pub struct CliServer {
+pub(crate) struct CliServer {
     stop: Arc<AtomicBool>,
     thread: Mutex<Option<JoinHandle<()>>>,
     path: PathBuf,
@@ -351,7 +398,7 @@ impl CliServer {
 // Publish the endpoint only after the frontend subscribes to queue events, so
 // the first command that launches the app cannot lose its UI updates.
 #[tauri::command]
-pub fn initialize_cli(app: AppHandle) -> Result<(), String> {
+pub(crate) fn initialize_cli(app: AppHandle) -> Result<(), String> {
     if app.try_state::<CliServer>().is_none() {
         app.manage(start_server(&app)?);
     }
@@ -373,7 +420,6 @@ fn start_server(app: &AppHandle) -> Result<CliServer, String> {
     options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
     let write_result = (|| -> Result<(), String> {
@@ -556,13 +602,48 @@ fn send_command(
     read_message::<Result<String, String>>(&mut stream)?
 }
 
-pub fn run(command: CliCommand, config: &tauri::Config) -> Result<String, String> {
+pub(crate) fn run(command: CliCommand, config: &tauri::Config) -> Result<String, String> {
     send_command(&endpoint_path(config)?, command, launch_desktop)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::authorize;
+    use super::build_request;
+    use super::configure_stream;
+    use super::format_stats;
+    use super::job_preset;
+    use super::list_history;
+    use super::list_queue;
+    use super::parse;
+    use super::read_message;
+    use super::remove_waiting_job;
+    use super::send_command;
+    use super::terminal_text;
+    use super::write_message;
+    use super::CliCommand;
+    use super::Endpoint;
+    use super::Request;
+    use super::HELP;
+    use super::VERSION;
+    use crate::database::initialize as run_link_dump_migrations;
+    use crate::history::count_history_entries_in_db;
+    use crate::history::get_history_stats_from_db;
+    use crate::models::AppConfig;
+    use crate::models::HistoryStats;
+    use crate::presets::download_preset_for_key;
+    use crate::state::AppState;
+    use crate::worker::build_download_job;
+    use rusqlite::params;
+    use rusqlite::Connection;
+    use serde_json::json;
+    use std::fs;
+    use std::net::Ipv4Addr;
+    use std::net::TcpListener;
+    use std::path::Path;
+    use std::thread;
+    use std::thread::JoinHandle;
+    use uuid::Uuid;
 
     fn args(words: &[&str]) -> Vec<String> {
         words.iter().map(|s| s.to_string()).collect()
@@ -719,7 +800,7 @@ mod tests {
         ] {
             let expected = download_preset_for_key(Some(key));
             let job = build_download_job(
-                &state,
+                &state.config,
                 build_request(&state, "https://example.com/video?t=60", name).unwrap(),
             )
             .unwrap();
@@ -741,13 +822,13 @@ mod tests {
         let state = state();
         for index in 1..=3 {
             let job = build_download_job(
-                &state,
+                &state.config,
                 build_request(&state, &format!("https://example.com/{index}"), "best").unwrap(),
             )
             .unwrap();
-            state.queue.lock().unwrap().push_back(job);
+            state.queue.pending.lock().unwrap().push_back(job);
         }
-        *state.current_job_id.lock().unwrap() = Some("active".into());
+        *state.processes.current_job_id.lock().unwrap() = Some("active".into());
         assert!(list_queue(&state)
             .unwrap()
             .contains("1\tbest\thttps://example.com/1"));
@@ -759,11 +840,14 @@ mod tests {
             remove_waiting_job(&state, 2).unwrap().url,
             "https://example.com/3"
         );
-        assert_eq!(state.queue.lock().unwrap()[0].url, "https://example.com/2");
+        assert_eq!(
+            state.queue.pending.lock().unwrap()[0].url,
+            "https://example.com/2"
+        );
         assert!(remove_waiting_job(&state, 0).is_err());
         assert!(remove_waiting_job(&state, 2).is_err());
         assert_eq!(
-            state.current_job_id.lock().unwrap().as_deref(),
+            state.processes.current_job_id.lock().unwrap().as_deref(),
             Some("active")
         );
     }
@@ -790,10 +874,10 @@ mod tests {
             "25\tVideo 5\thttps://example.com/5"
         );
         assert_eq!(
-            format_stats(&get_history_stats_from_db(&state).unwrap()),
+            format_stats(&get_history_stats_from_db(&state.db).unwrap()),
             "Downloaded videos: 30\nTotal data: 30.0 KB\nTotal runtime: 30m 00s"
         );
-        assert_eq!(count_history_entries_in_db(&state).unwrap(), 30);
+        assert_eq!(count_history_entries_in_db(&state.db).unwrap(), 30);
     }
 
     #[test]
@@ -802,7 +886,7 @@ mod tests {
         assert_eq!(list_queue(&state).unwrap(), "No waiting downloads.");
         assert_eq!(list_history(&state).unwrap(), "History is empty.");
         assert_eq!(
-            format_stats(&get_history_stats_from_db(&state).unwrap()),
+            format_stats(&get_history_stats_from_db(&state.db).unwrap()),
             "Downloaded videos: 0\nTotal data: 0 B\nTotal runtime: 0m 00s"
         );
         assert_eq!(

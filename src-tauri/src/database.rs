@@ -1,8 +1,21 @@
-use super::*;
-use rusqlite::{
-    backup::{Backup, StepResult},
-    OpenFlags, Transaction, TransactionBehavior,
-};
+use crate::history_rules::source_from_url;
+use rusqlite::backup::Backup;
+use rusqlite::backup::StepResult;
+use rusqlite::params;
+use rusqlite::Connection;
+use rusqlite::OpenFlags;
+use rusqlite::OptionalExtension;
+use rusqlite::Transaction;
+use rusqlite::TransactionBehavior;
+use std::collections::BTreeMap;
+use std::collections::HashSet;
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use std::time::Duration;
+use std::time::Instant;
+use uuid::Uuid;
 
 pub(super) const SCHEMA_VERSION: i64 = 2;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(3);
@@ -220,7 +233,6 @@ fn migration_backup(conn: &Connection, version: i64) -> Result<(), String> {
         options.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
         let file = options.open(&partial).map_err(|e| e.to_string())?;
@@ -883,4 +895,20 @@ fn ensure_history_entries_column(
         [],
     )?;
     Ok(())
+}
+
+pub(crate) const LEGACY_CONFIG_MIGRATION_KEY: &str = "legacy_config_json_migrated";
+
+pub(crate) struct Database {
+    connection: std::sync::Mutex<Connection>,
+}
+impl Database {
+    pub(crate) fn new(connection: Connection) -> Self {
+        Self {
+            connection: std::sync::Mutex::new(connection),
+        }
+    }
+    pub(crate) fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Connection>> {
+        self.connection.lock()
+    }
 }

@@ -28,6 +28,19 @@ export default defineConfig([
         languageOptions: { globals: globals.browser },
     },
     {
+        files: ['src/**/*.js'],
+        ignores: ['src/tauri-client.js'],
+        rules: {
+            'no-restricted-properties': [
+                'error',
+                {
+                    property: '__TAURI__',
+                    message: 'Use the injected API client from tauri-client.js.',
+                },
+            ],
+        },
+    },
+    {
         files: ['scripts/**/*.mjs', '*.config.mjs'],
         languageOptions: { globals: globals.nodeBuiltin },
     },

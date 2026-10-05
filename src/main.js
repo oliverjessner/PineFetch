@@ -1,3 +1,4 @@
+import { formatDuration, formatFileSize } from './formatters.js';
 import {
     createAppState,
     updateJobState,
@@ -226,28 +227,6 @@ let logDomDirty = false;
 let settingsLogRenderReady = false;
 let viewActivationId = 0;
 let clearQueueInFlight = false;
-
-const formatDuration = seconds => {
-    if (!seconds && seconds !== 0) return '-';
-
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    const hrs = Math.floor(mins / 60);
-
-    if (hrs > 0) return `${hrs}h ${String(mins % 60).padStart(2, '0')}m`;
-    return `${mins}m ${String(secs).padStart(2, '0')}s`;
-};
-
-const formatFileSize = bytes => {
-    const size = Number(bytes);
-    if (!Number.isFinite(size) || size <= 0) return '0 B';
-
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const unitIndex = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1);
-    const value = size / 1024 ** unitIndex;
-    const precision = unitIndex === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 2;
-    return `${value.toFixed(precision)} ${units[unitIndex]}`;
-};
 
 const formatCutStartLabel = seconds => {
     if (!Number.isFinite(Number(seconds)) || Number(seconds) <= 0) return null;

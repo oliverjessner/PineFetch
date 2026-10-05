@@ -1,3 +1,4 @@
+import { formatLocalDateTime } from './formatters.js';
 export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }) => {
     const linkDumpExtensionRepoUrl = 'https://github.com/oliverjessner/PineFetch-Link-Dump';
     const state = { linkDump: null, generatedLinkDumpSecret: null };
@@ -7,13 +8,7 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
         if (!value) return '-';
         const date = new Date(`${value.replace(' ', 'T')}Z`);
         if (Number.isNaN(date.getTime())) return value;
-        return date.toLocaleString([], {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        });
+        return formatLocalDateTime(date);
     };
 
     const statusLabel = value => {

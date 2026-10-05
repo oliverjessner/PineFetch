@@ -124,38 +124,13 @@ pub(super) fn search_history_page_from_db(
                 i64::from(limit),
                 i64::from(offset)
             ],
-            |row| {
-                let created_at: i64 = row.get(16)?;
-                let completed_at: Option<i64> = row.get(17)?;
-                Ok(HistoryEntry {
-                    id: row.get(0)?,
-                    url: row.get(1)?,
-                    title: row.get(2)?,
-                    uploader: row.get(3)?,
-                    filename: row.get(4)?,
-                    thumbnail: row.get(5)?,
-                    upload_date: row.get(6)?,
-                    timestamp: row.get(7)?,
-                    duration_seconds: row.get(8)?,
-                    file_size_bytes: row.get(9)?,
-                    sha256: row.get(10)?,
-                    medium: row.get(11)?,
-                    source: row.get(12)?,
-                    platform: row.get(13)?,
-                    output_path: row.get(14)?,
-                    pinefetch_version: row.get(15)?,
-                    created_at: i64_to_millis(created_at),
-                    completed_at: optional_i64_to_millis(completed_at),
-                })
-            },
+            map_history_entry,
         )
         .map_err(|e| format!("History read failed: {e}"))?;
 
     let mut entries = Vec::new();
     for row in rows {
-        entries.push(normalize_history_entry(
-            row.map_err(|e| format!("History read failed: {e}"))?,
-        ));
+        entries.push(row.map_err(|e| format!("History read failed: {e}"))?);
     }
 
     let loaded_count = u64::from(offset).saturating_add(entries.len() as u64);
@@ -193,34 +168,11 @@ pub(super) fn get_history_details_from_db(
             "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, sha256, medium, source, platform, output_path, pinefetch_version, created_at, completed_at
              FROM history_entries WHERE id = ?1",
             params![id],
-            |row| {
-                let created_at: i64 = row.get(16)?;
-                let completed_at: Option<i64> = row.get(17)?;
-                Ok(HistoryEntry {
-                    id: row.get(0)?,
-                    url: row.get(1)?,
-                    title: row.get(2)?,
-                    uploader: row.get(3)?,
-                    filename: row.get(4)?,
-                    thumbnail: row.get(5)?,
-                    upload_date: row.get(6)?,
-                    timestamp: row.get(7)?,
-                    duration_seconds: row.get(8)?,
-                    file_size_bytes: row.get(9)?,
-                    sha256: row.get(10)?,
-                    medium: row.get(11)?,
-                    source: row.get(12)?,
-                    platform: row.get(13)?,
-                    output_path: row.get(14)?,
-                    pinefetch_version: row.get(15)?,
-                    created_at: i64_to_millis(created_at),
-                    completed_at: optional_i64_to_millis(completed_at),
-                })
-            },
+            map_history_entry,
         )
         .optional()
         .map_err(|e| format!("History details read failed: {e}"))?;
-    let Some(entry) = entry.map(normalize_history_entry) else {
+    let Some(entry) = entry else {
         return Ok(None);
     };
 
@@ -663,4 +615,29 @@ pub(super) fn import_legacy_history_with_hook(
     .map_err(|e| format!("History import marker failed: {e}"))?;
     tx.commit()
         .map_err(|e| format!("History import commit failed: {e}"))
+}
+
+fn map_history_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
+    let created_at: i64 = row.get(16)?;
+    let completed_at: Option<i64> = row.get(17)?;
+    Ok(normalize_history_entry(HistoryEntry {
+        id: row.get(0)?,
+        url: row.get(1)?,
+        title: row.get(2)?,
+        uploader: row.get(3)?,
+        filename: row.get(4)?,
+        thumbnail: row.get(5)?,
+        upload_date: row.get(6)?,
+        timestamp: row.get(7)?,
+        duration_seconds: row.get(8)?,
+        file_size_bytes: row.get(9)?,
+        sha256: row.get(10)?,
+        medium: row.get(11)?,
+        source: row.get(12)?,
+        platform: row.get(13)?,
+        output_path: row.get(14)?,
+        pinefetch_version: row.get(15)?,
+        created_at: i64_to_millis(created_at),
+        completed_at: optional_i64_to_millis(completed_at),
+    }))
 }

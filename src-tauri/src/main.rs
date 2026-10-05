@@ -24,18 +24,22 @@ mod history_rules;
 #[cfg(test)]
 mod integrity_tests;
 mod link_dump_store;
+mod media_tools;
 mod metadata;
 mod models;
 mod platform;
 mod presets;
 mod process;
 mod queue;
+#[cfg(test)]
+mod reuse_tests;
 mod runtime;
 mod startup;
 mod state;
 #[cfg(test)]
 #[path = "regression_tests.rs"]
 mod tests;
+mod url_rules;
 mod video_urls;
 mod worker;
 mod yt_dlp;

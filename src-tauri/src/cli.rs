@@ -1,5 +1,6 @@
 //! Terminal commands and a private local connection to the desktop process.
 //! History is deliberately exposed only through read operations.
+use crate::download_rules::request_from_preset;
 use crate::events::emit_queue;
 use crate::events::emit_state;
 use crate::history::get_history_stats_from_db;
@@ -11,7 +12,7 @@ use crate::models::DownloadStateEvent;
 use crate::models::HistoryStats;
 use crate::presets::download_preset_for_key;
 use crate::state::AppState;
-use crate::video_urls::parse_http_url;
+use crate::url_rules::validate_download_url;
 use crate::worker::enqueue_download_request;
 use serde::Deserialize;
 use serde::Serialize;
@@ -123,10 +124,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<CliCommand>, String> {
 }
 
 fn validate_link(link: &str) -> Result<(), String> {
-    match parse_http_url(link) {
-        Some(url) if url.host_str().is_some() && !link.chars().any(char::is_control) => Ok(()),
-        _ => Err("Link must be a valid http:// or https:// URL".into()),
-    }
+    validate_download_url(link).map_err(|_| "Link must be a valid http:// or https:// URL".into())
 }
 
 fn preset_key(preset: &str) -> Result<&'static str, String> {
@@ -147,24 +145,11 @@ fn build_request(state: &AppState, link: &str, preset: &str) -> Result<DownloadR
     validate_link(link)?;
     let preset = download_preset_for_key(Some(preset_key(preset)?));
     let config = state.config.lock().map_err(|_| "Config lock poisoned")?;
-    Ok(DownloadRequest {
-        url: link.trim().to_string(),
-        format: preset.format.into(),
-        output_dir: None,
-        extract_audio: preset.extract_audio,
-        audio_format: preset.audio_format.map(str::to_string),
-        transcribe_text: preset.transcribe_text,
-        transcribe_timestamps: preset.transcribe_timestamps,
-        cut_at_timestamp_enabled: config.cut_at_timestamp_enabled,
-        cut_start_time: None,
-        filename_suffix: preset.filename_suffix.map(str::to_string),
-        title: None,
-        uploader: None,
-        thumbnail: None,
-        upload_date: None,
-        timestamp: None,
-        duration_seconds: None,
-    })
+    Ok(request_from_preset(
+        preset,
+        link.trim().to_string(),
+        config.cut_at_timestamp_enabled,
+    ))
 }
 
 // Remove under the same lock used by the worker: never cancel an active job
@@ -659,6 +644,85 @@ mod tests {
             },
             db,
         )
+    }
+
+    #[test]
+    fn cli_link_dump_and_gui_requests_share_preset_jobs_and_configuration_defaults() {
+        use crate::browser_import::build_link_dump_download_request;
+        use crate::download_rules::prepare_download_job;
+        use crate::download_rules::DownloadOptions;
+        use crate::models::DownloadRequest;
+        use crate::video_urls::normalize_video_url;
+
+        let state = state();
+        let url = "https://www.youtube.com/watch?v=abc123";
+        let normalized = normalize_video_url(url).unwrap();
+        for (name, key) in [
+            ("best", "best"),
+            ("max", "1080"),
+            ("mp3", "audio_mp3"),
+            ("opus", "audio_opus"),
+            ("text", "text"),
+            ("text with timestamps", "text_timestamps"),
+        ] {
+            for enabled in [false, true] {
+                {
+                    let mut config = state.config.lock().unwrap();
+                    config.selected_preset_key = Some(key.into());
+                    config.cut_at_timestamp_enabled = enabled;
+                    config.faster_whisper_model = " medium ".into();
+                    config.download_video_with_transcript = true;
+                    config.save_captions = true;
+                    config.save_thumbnails = true;
+                }
+                // GUI receives this exact preset DTO from get_download_presets.
+                let mut gui_input =
+                    serde_json::to_value(download_preset_for_key(Some(key))).unwrap();
+                let fields = gui_input.as_object_mut().unwrap();
+                fields.remove("key");
+                fields.insert("url".into(), json!(url));
+                fields.insert("cut_at_timestamp_enabled".into(), json!(enabled));
+                let gui: DownloadRequest = serde_json::from_value(gui_input).unwrap();
+                let cli = build_request(&state, url, name).unwrap();
+                let imported =
+                    build_link_dump_download_request(&state.config, &normalized).unwrap();
+                assert_eq!(gui.cut_at_timestamp_enabled, enabled);
+                assert_eq!(cli.cut_at_timestamp_enabled, enabled);
+                assert_eq!(imported.cut_at_timestamp_enabled, enabled);
+                assert_eq!(imported.thumbnail, normalized.thumbnail);
+                let prepare = |request| {
+                    let options = DownloadOptions::from(&*state.config.lock().unwrap());
+                    prepare_download_job(
+                        request,
+                        options,
+                        "/synthetic/Output files".into(),
+                        "stable-id".into(),
+                    )
+                };
+                let gui = serde_json::to_value(prepare(gui)).unwrap();
+                let cli = serde_json::to_value(prepare(cli)).unwrap();
+                let mut imported = serde_json::to_value(prepare(imported)).unwrap();
+                // Link Dump alone supplies its known thumbnail; job rules are shared.
+                imported["thumbnail"] = serde_json::Value::Null;
+                assert_eq!(gui, cli, "CLI preset {name}");
+                assert_eq!(gui, imported, "Link Dump preset {key}");
+                assert_eq!(gui["faster_whisper_model"], "medium");
+                assert_eq!(gui["download_video_with_transcript"], true);
+                assert_eq!(gui["save_captions"], true);
+                assert_eq!(gui["save_thumbnails"], true);
+            }
+        }
+        state.config.lock().unwrap().selected_preset_key = Some("audio_mp3".into());
+        assert_eq!(
+            build_request(&state, url, "best").unwrap().format,
+            download_preset_for_key(Some("best")).format
+        );
+        assert_eq!(
+            build_link_dump_download_request(&state.config, &normalized)
+                .unwrap()
+                .format,
+            download_preset_for_key(Some("audio_mp3")).format
+        );
     }
 
     #[test]

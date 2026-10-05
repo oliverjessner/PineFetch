@@ -2,12 +2,9 @@ use crate::config_rules::normalize_faster_whisper_model;
 use crate::models::DownloadJob;
 use crate::models::DownloadRequest;
 use crate::presets::download_preset_for_key;
+use crate::presets::DownloadPreset;
 use crate::presets::DEFAULT_DOWNLOAD_PRESET_KEY;
 use std::path::PathBuf;
-
-pub(crate) fn is_valid_url(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://")
-}
 
 pub(crate) fn resolve_cut_start_time(
     cut_at_timestamp_enabled: bool,
@@ -249,5 +246,30 @@ pub(crate) fn prepare_download_job(
         duration_seconds: request.duration_seconds,
         cut_start_time,
         filename_suffix: normalize_filename_suffix(request.filename_suffix.as_deref()),
+    }
+}
+
+pub(crate) fn request_from_preset(
+    preset: &DownloadPreset,
+    url: String,
+    cut_at_timestamp_enabled: bool,
+) -> DownloadRequest {
+    DownloadRequest {
+        url,
+        format: preset.format.into(),
+        output_dir: None,
+        extract_audio: preset.extract_audio,
+        audio_format: preset.audio_format.map(str::to_string),
+        transcribe_text: preset.transcribe_text,
+        transcribe_timestamps: preset.transcribe_timestamps,
+        cut_at_timestamp_enabled,
+        cut_start_time: None,
+        filename_suffix: preset.filename_suffix.map(str::to_string),
+        title: None,
+        uploader: None,
+        thumbnail: None,
+        upload_date: None,
+        timestamp: None,
+        duration_seconds: None,
     }
 }

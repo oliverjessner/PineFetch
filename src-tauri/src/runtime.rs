@@ -242,13 +242,22 @@ pub(crate) fn resolve_yt_dlp(
     state: &crate::config::ConfigState,
 ) -> Result<String, String> {
     let cfg = state.lock().map_err(|_| "Config lock poisoned")?;
-    if let Some(path) = cfg.yt_dlp_path.as_ref() {
+    resolve_yt_dlp_in_paths(
+        cfg.yt_dlp_path.as_deref(),
+        std::env::var_os("PATH").as_deref(),
+    )
+}
+
+pub(crate) fn resolve_yt_dlp_in_paths(
+    configured: Option<&str>,
+    search_path: Option<&std::ffi::OsStr>,
+) -> Result<String, String> {
+    if let Some(path) = configured {
         if Path::new(path).exists() {
-            return Ok(path.clone());
+            return Ok(path.to_string());
         }
     }
-
-    if let Some(path) = find_in_path("yt-dlp") {
+    if let Some(path) = search_path.and_then(|paths| find_in_search_path("yt-dlp", paths)) {
         return Ok(path);
     }
 
@@ -274,6 +283,10 @@ pub(crate) fn resolve_yt_dlp_for_version(
 
 pub(crate) fn find_in_path(binary: &str) -> Option<String> {
     let paths = std::env::var_os("PATH")?;
+    find_in_search_path(binary, &paths)
+}
+
+fn find_in_search_path(binary: &str, paths: &std::ffi::OsStr) -> Option<String> {
     let splitter = if cfg!(windows) { ';' } else { ':' };
     for path in paths.to_string_lossy().split(splitter) {
         let candidate = Path::new(path).join(if cfg!(windows) {

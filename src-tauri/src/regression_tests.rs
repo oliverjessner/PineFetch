@@ -55,7 +55,6 @@ use crate::platform::site_format_sort;
 use crate::platform::TIKTOK_FORMAT_SORT;
 use crate::presets::download_preset_for_key;
 use crate::presets::DEFAULT_DOWNLOAD_PRESET_KEY;
-use crate::process::configure_child_process_group;
 use crate::process::run_command_output;
 use crate::process::terminate_child_process_tree;
 use crate::process::ProcessError;
@@ -68,6 +67,8 @@ use crate::runtime::ffmpeg_tool_name;
 use crate::runtime::ffprobe_tool_name;
 use crate::runtime::normalize_ffmpeg_location;
 use crate::state::AppState;
+#[cfg(unix)]
+use crate::test_support::{DescendantCleanup, FakeProcess, TEST_TIMEOUT};
 use crate::video_urls::normalize_video_url;
 use crate::video_urls::normalize_youtube_url;
 use crate::worker::build_download_job;
@@ -83,7 +84,8 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
+#[cfg(unix)]
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -634,74 +636,117 @@ fn download_metadata_parser_keeps_fields_from_first_yt_dlp_run() {
 #[cfg(unix)]
 #[test]
 fn timed_out_child_is_stopped_promptly() {
-    let mut command = Command::new("sleep");
-    command.arg("5");
+    let fake = FakeProcess::new("hang");
     let started = Instant::now();
-
-    let result = run_command_output(command, None, None, Some(Duration::from_millis(100)));
-
+    let result = run_command_output(fake.command(), None, None, Some(Duration::from_secs(1)));
     let error = result.unwrap_err();
     assert!(matches!(error, ProcessError::TimedOut));
     assert_eq!(error.to_string(), "process timed out");
-    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(started.elapsed() < TEST_TIMEOUT);
 }
 
 #[cfg(unix)]
 #[test]
 fn inherited_output_pipe_cannot_block_after_parent_exits() {
-    let mut command = Command::new("sh");
-    command.args(["-c", "sleep 4 & exit 0"]);
+    let fake = FakeProcess::new("spawn-child");
+    let (mut command, control) = fake.controlled_command();
+    command.arg("--parent-exits");
+    let (sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let _ = sender.send(run_command_output(command, None, None, Some(TEST_TIMEOUT)));
+    });
+    let ready = control.wait_ready();
+    let _cleanup = DescendantCleanup::new(&ready);
     let started = Instant::now();
-
-    let result = run_command_output(command, None, None, Some(Duration::from_secs(10)));
-
+    ready.release();
+    let result = receiver.recv_timeout(TEST_TIMEOUT).unwrap();
+    handle.join().unwrap();
     let error = result.unwrap_err();
     assert!(matches!(error, ProcessError::OutputDrain));
     assert_eq!(error.to_string(), "Process output did not close after exit");
-    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(started.elapsed() < TEST_TIMEOUT);
 }
 
 #[cfg(unix)]
 #[test]
 fn cancellation_stops_a_child_and_its_process_group() {
-    let marker = std::env::temp_dir().join(format!("pinefetch-process-{}.txt", Uuid::new_v4()));
-    let mut command = Command::new("sh");
-    command
-        .args(["-c", "(sleep 1; printf alive > \"$1\") & wait", "sh"])
-        .arg(&marker);
-    configure_child_process_group(&mut command);
-    let mut child = command.spawn().unwrap();
-    let pid = i32::try_from(child.id()).unwrap();
+    let fake = FakeProcess::new("spawn-child");
+    let (command, control) = fake.controlled_command();
+    let state = Arc::new(crate::process::ProcessState::default());
+    let worker_state = state.clone();
+    let (sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let _ = sender.send(run_command_output(
+            command,
+            Some(&worker_state),
+            None,
+            Some(TEST_TIMEOUT),
+        ));
+    });
+    let ready = control.wait_ready();
+    let _cleanup = DescendantCleanup::new(&ready);
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    let child = loop {
+        if let Some(child) = state.current_child.lock().unwrap().clone() {
+            break child;
+        }
+        assert!(Instant::now() < deadline, "child was not registered");
+        thread::yield_now();
+    };
+    let pid = i32::try_from(ready.pid).unwrap();
+    let descendant = i32::try_from(ready.child_pid).unwrap();
+    assert_eq!(ready.pid, child.lock().unwrap().id());
     assert_eq!(unsafe { libc::getpgid(pid) }, pid);
-
-    thread::sleep(Duration::from_millis(100));
-    terminate_child_process_tree(&mut child).unwrap();
-    let status = child.wait().unwrap();
-    assert!(!status.success());
-    thread::sleep(Duration::from_millis(1100));
-    assert!(!marker.exists());
+    assert_eq!(unsafe { libc::getpgid(descendant) }, pid);
+    terminate_child_process_tree(&mut child.lock().unwrap()).unwrap();
+    let output = receiver.recv_timeout(TEST_TIMEOUT).unwrap().unwrap();
+    handle.join().unwrap();
+    assert!(!output.status.success());
+    assert!(child.lock().unwrap().try_wait().unwrap().is_some());
+    crate::test_support::assert_process_stopped(ready.child_pid);
 }
 
 #[cfg(unix)]
 #[test]
 fn app_exit_stops_registered_utility_child() {
+    let fake = FakeProcess::new("hang");
+    let (command, control) = fake.controlled_command();
     let state = Arc::new(link_dump_test_state());
     let worker_state = state.clone();
+    let (sender, receiver) = mpsc::channel();
     let handle = thread::spawn(move || {
-        let mut command = Command::new("sleep");
-        command.arg("5");
-        run_command_output(command, None, Some(&worker_state.processes), None)
+        let _ = sender.send(run_command_output(
+            command,
+            None,
+            Some(&worker_state.processes),
+            Some(TEST_TIMEOUT),
+        ));
     });
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while state.processes.utility_children.lock().unwrap().is_empty() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert_eq!(state.processes.utility_children.lock().unwrap().len(), 1);
-
+    let ready = control.wait_ready();
+    let deadline = Instant::now() + TEST_TIMEOUT;
+    let child = loop {
+        if let Some(child) = state
+            .processes
+            .utility_children
+            .lock()
+            .unwrap()
+            .first()
+            .cloned()
+        {
+            break child;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "utility child was not registered"
+        );
+        thread::yield_now();
+    };
+    assert_eq!(child.lock().unwrap().id(), ready.pid);
     stop_active_download_on_exit(&state);
-
-    let output = handle.join().unwrap().unwrap();
+    let output = receiver.recv_timeout(TEST_TIMEOUT).unwrap().unwrap();
+    handle.join().unwrap();
     assert!(!output.status.success());
+    assert!(child.lock().unwrap().try_wait().unwrap().is_some());
     assert!(state.processes.utility_children.lock().unwrap().is_empty());
 }
 

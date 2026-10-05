@@ -59,10 +59,12 @@ ignored build output.
 | `npm run lint:rust`                         | `cargo clippy --locked --all-targets -- -D warnings`                    |
 | `npm run format:check`                      | Prettier and rustfmt, without modifications                             |
 | `npm run format:check:js`                   | Check owned frontend, configuration, scripts, and documentation         |
-| `npm run format:check:rust`                 | `cargo fmt --all -- --check`                                            |
+| `npm run format:check:rust`                 | Check Cargo sources and the standalone fake-process fixture             |
 | `npm test`                                  | Both test suites, once                                                  |
 | `npm run test:js`                           | Native Node.js test runner; each file has a 30-second timeout           |
-| `npm run test:rust`                         | `cargo test --locked --all-targets`                                     |
+| `npm run test:rust`                         | All Cargo test targets through the bounded test runner                  |
+| `npm run check:fast`                        | Quality checks plus pure/component Rust and JavaScript tests            |
+| `npm run test:integration`                  | SQLite, filesystem, fake processes, TCP and built CLI tests             |
 | `npm run format`                            | Explicit automatic formatting with Prettier and rustfmt                 |
 | `npm run format:js` / `npm run format:rust` | Format only one language                                                |
 | `npm run build:check`                       | Release compilation and linking, including embedded frontend assets     |
@@ -86,6 +88,8 @@ uniquely named temporary paths, local mock endpoints, and local fake processes.
 They do not open PineFetch's real database, use personal download directories, or
 require a running desktop app. JavaScript tests exercise URL domain boundaries,
 timestamps, normalization, TXT import counts, and existing deduplication rules.
+Behavior-based test levels, failure cases, fixtures, platform limits and regression
+instructions are documented in [TESTING.md](TESTING.md).
 Release-gate tests execute an isolated copy of `publish.sh` with mocked npm,
 repository, signing, network, and publishing commands. They never publish.
 
@@ -126,23 +130,24 @@ CI neither runs that packaging path nor publishes artifacts or updates Homebrew.
 ## CI and required merge gates
 
 `.github/workflows/quality.yml` runs on every pull request into `main`, every
-push to `main`, and manual dispatch. Both jobs use the shared setup action,
+push to `main`, and manual dispatch. All three jobs use the shared setup action,
 `npm ci`, and the exact local npm commands. There are no path filters, optional
 required jobs, or separate copies of the check rules. Runs have time limits and
 superseded runs for the same pull request are canceled. External actions are
 pinned to verified full commit SHAs with version comments. Workflow permissions
 are `contents: read`; ordinary pull requests need no secrets.
 
-Make these **two exact status check names** required for `main`:
+Make these **three exact status check names** required for `main`:
 
 - `Quality checks (macOS)`
+- `Local integration tests (macOS)`
 - `Build (macOS)`
 
 In **Settings → Rules → Rulesets**, create an active branch ruleset targeting
 `main` (or use **Settings → Branches → Branch protection rules**):
 
 1. Require a pull request before merging.
-2. Require both status checks above to pass, selecting GitHub Actions as their
+2. Require all three status checks above to pass, selecting GitHub Actions as their
    source. Enable **Require branches to be up to date before merging**.
 3. Apply the rules to administrators too and leave the bypass list empty; with
    classic protection, enable **Do not allow bypassing the above settings**.
@@ -151,7 +156,7 @@ In **Settings → Rules → Rulesets**, create an active branch ruleset targetin
 
 The checks must run once before their names appear in the GitHub selector. A
 workflow file alone does not enforce merge protection. This change does not
-activate branch protection or modify any repository settings. Both individual
+activate branch protection or modify any repository settings. All three individual
 jobs are required, so failure or cancellation cannot be hidden by a successful
 summary job. No merge queue is configured by this change; enabling one later
 requires adding the corresponding workflow trigger before relying on it.
@@ -159,8 +164,9 @@ requires adding the corresponding workflow trigger before relying on it.
 ## Before publishing
 
 Prepare the version and changelog in a pull request, then merge it through the
-required checks. Publish from the resulting clean `main` checkout after both
-`Quality checks (macOS)` and `Build (macOS)` have passed for that commit. Run
+required checks. Publish from the resulting clean `main` checkout after
+`Quality checks (macOS)`, `Local integration tests (macOS)` and `Build (macOS)`
+have passed for that commit. Run
 `npm run check` and `npm run build:check` locally before packaging as well.
 
 `npm run publish` explicitly prepares versions, then runs those same two gates

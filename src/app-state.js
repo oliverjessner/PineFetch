@@ -18,6 +18,8 @@ export const createAppState = () =>
 const cancellableJobStates = new Set(['downloading', 'transcribing']);
 const queueBusyJobStates = new Set(['downloading', 'transcribing', 'cancelling']);
 const removableJobStates = new Set(['queued', 'success', 'error', 'cancelled']);
+const terminalJobStates = new Set(['success', 'error', 'cancelled']);
+const knownJobStates = new Set([...removableJobStates, ...queueBusyJobStates]);
 
 export const isCancellable = status => cancellableJobStates.has(status);
 export const isQueueBusy = status => queueBusyJobStates.has(status);
@@ -44,8 +46,14 @@ export const applyQueueStatus = (state, status, autoStartFallback = true) => {
 };
 
 export const applyDownloadState = (state, payload) => {
+    if (typeof payload?.id !== 'string' || !payload.id || !knownJobStates.has(payload.state)) {
+        return { kind: 'ignored', id: payload?.id };
+    }
     const { id, state: status, output_path, error } = payload;
     if (state.suppressedJobIds.has(id)) return { kind: 'ignored', id };
+    if (terminalJobStates.has(state.jobs.get(id)?.state) && !terminalJobStates.has(status)) {
+        return { kind: 'ignored', id };
+    }
     if (state.pendingClearAfterTerminal.has(id) && ['success', 'error', 'cancelled'].includes(status)) {
         state.pendingClearAfterTerminal.delete(id);
         state.suppressedJobIds.add(id);
@@ -62,4 +70,13 @@ export const applyDownloadState = (state, payload) => {
         patch.eta = '-';
     }
     return { kind: 'updated', id, patch };
+};
+
+export const applyDownloadProgress = (state, payload) => {
+    if (typeof payload?.id !== 'string' || !payload.id) return { kind: 'ignored', id: payload?.id };
+    const { id, percent, speed, eta } = payload;
+    if (state.suppressedJobIds.has(id) || terminalJobStates.has(state.jobs.get(id)?.state)) {
+        return { kind: 'ignored', id };
+    }
+    return { kind: 'updated', id, patch: { percent: percent ?? 0, speed: speed || '-', eta: eta || '-' } };
 };

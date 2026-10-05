@@ -25,8 +25,22 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - name: Run the local quality gate
-        run: npm run check
+      - name: Run the fast quality gate
+        run: npm run check:fast
+
+  integration-macos:
+    name: Local integration tests (macOS)
+    needs: checks-macos
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Exercise local processes, SQLite, filesystem, TCP and CLI
+        run: npm run test:integration
 
   build-macos:
     name: Build (macOS)

@@ -5,6 +5,8 @@ use crate::worker::stop_active_download_on_exit;
 use tauri::Manager;
 
 #[cfg(test)]
+mod application_failure_tests;
+#[cfg(test)]
 mod architecture_tests;
 mod browser_import;
 mod cli;
@@ -22,20 +24,32 @@ mod hashing;
 mod history;
 mod history_rules;
 #[cfg(test)]
+mod http_failure_tests;
+#[cfg(test)]
 mod integrity_tests;
 mod link_dump_store;
 mod media_tools;
 mod metadata;
 mod models;
+#[cfg(test)]
+mod persistence_failure_tests;
 mod platform;
 mod presets;
 mod process;
+#[cfg(test)]
+mod process_failure_tests;
 mod queue;
+#[cfg(test)]
+mod queue_failure_tests;
 #[cfg(test)]
 mod reuse_tests;
 mod runtime;
+#[cfg(test)]
+mod runtime_failure_tests;
 mod startup;
 mod state;
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 #[path = "regression_tests.rs"]
 mod tests;

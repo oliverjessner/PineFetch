@@ -106,3 +106,25 @@ test('backend failures reach callers and missing bridges keep browser fallback a
     const clipboard = createTauriClient({ clipboard: { readText: async () => 'synthetic clipboard' } });
     assert.equal(await clipboard.readClipboardPlugin(), 'synthetic clipboard');
 });
+
+test('out-of-order command replies remain attached to their originating request', async () => {
+    const pending = [];
+    const client = createTauriClient({
+        core: {
+            invoke: (command, args) =>
+                new Promise((resolve, reject) => pending.push({ command, args, resolve, reject })),
+        },
+    });
+    const earlier = client.loadInfo({ url: 'https://example.com/earlier' });
+    const later = client.loadInfo({ url: 'https://example.com/later' });
+    pending[1].resolve({ title: 'later' });
+    assert.deepEqual(await later, { title: 'later' });
+    pending[0].resolve({ title: 'earlier' });
+    assert.deepEqual(await earlier, { title: 'earlier' });
+    assert.equal(pending[0].args.url, 'https://example.com/earlier');
+    assert.equal(pending[1].args.url, 'https://example.com/later');
+    const failure = client.getHistory({ offset: 25 });
+    const rejected = assert.rejects(failure, /controlled query failure/);
+    pending[2].reject(new Error('controlled query failure'));
+    await rejected;
+});

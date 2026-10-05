@@ -4,6 +4,7 @@ import {
     updateJobState,
     applyQueueStatus,
     applyDownloadState,
+    applyDownloadProgress,
     isCancellable,
     isQueueBusy,
     isRemovable,
@@ -1645,9 +1646,9 @@ const bindBackendEvents = async () => {
     });
 
     await api.onDownloadState(event => {
-        const { id, exit_code, error } = event.payload;
         const result = applyDownloadState(state, event.payload);
         if (result.kind === 'ignored') return;
+        const { id, exit_code, error } = event.payload;
         if (result.kind === 'removed') {
             scheduleQueueRender();
             return;
@@ -1657,13 +1658,8 @@ const bindBackendEvents = async () => {
     });
 
     await api.onDownloadProgress(event => {
-        const { id, percent, speed, eta } = event.payload;
-        if (state.suppressedJobIds.has(id)) return;
-        updateJob(id, {
-            percent: percent ?? 0,
-            speed: speed || '-',
-            eta: eta || '-',
-        });
+        const result = applyDownloadProgress(state, event.payload);
+        if (result.kind === 'updated') updateJob(result.id, result.patch);
     });
 
     await api.onDownloadLog(event => {

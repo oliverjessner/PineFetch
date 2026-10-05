@@ -44,6 +44,27 @@ pub(super) fn is_queue_auto_start_enabled(state: &QueueState) -> Result<bool, St
     Ok(*auto_start)
 }
 
+// Claim under the same locks used by pause and idle publication. A concurrent
+// enqueue/resume may request a worker, but only one caller can actually start it.
+pub(crate) fn claim_worker_start(state: &QueueState) -> Result<bool, String> {
+    let paused = state
+        .paused
+        .lock()
+        .map_err(|_| "Queue pause lock poisoned")?;
+    if *paused {
+        return Ok(false);
+    }
+    let mut running = state
+        .worker_running
+        .lock()
+        .map_err(|_| "Worker lock poisoned")?;
+    if *running {
+        return Ok(false);
+    }
+    *running = true;
+    Ok(true)
+}
+
 pub(super) fn next_worker_job(
     state: &QueueState,
     current_job_id: &std::sync::Mutex<Option<String>>,

@@ -343,6 +343,7 @@ fn write_message<T: Serialize>(stream: &mut TcpStream, message: &T) -> Result<()
 }
 
 fn configure_stream(stream: &TcpStream) -> Result<(), String> {
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(IO_TIMEOUT))
         .map_err(|e| e.to_string())?;
@@ -983,6 +984,74 @@ mod tests {
             assert_eq!(authorize(request, "test-token").unwrap(), expected);
             write_message(&mut stream, &result).unwrap();
         })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn integration_accepted_cli_stream_reads_fragmented_messages_in_blocking_mode() {
+        use std::io::Write;
+        use std::net::TcpStream;
+        use std::os::fd::AsRawFd;
+        use std::sync::mpsc;
+        use std::time::Instant;
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let deadline = Instant::now() + crate::test_support::TEST_TIMEOUT;
+        let mut accepted = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "CLI fixture connection did not arrive"
+                    );
+                    thread::yield_now();
+                }
+                Err(error) => panic!("CLI fixture accept failed: {error}"),
+            }
+        };
+        // macOS can inherit the nonblocking listener flag; explicitly reproduce
+        // that accepted-stream state on every Unix platform.
+        accepted.set_nonblocking(true).unwrap();
+        configure_stream(&accepted).unwrap();
+        let flags = unsafe { libc::fcntl(accepted.as_raw_fd(), libc::F_GETFL) };
+        assert!(flags >= 0);
+        assert_eq!(
+            flags & libc::O_NONBLOCK,
+            0,
+            "accepted CLI messages must wait for data so the I/O timeout applies"
+        );
+        assert_eq!(accepted.read_timeout().unwrap(), Some(super::IO_TIMEOUT));
+        assert_eq!(accepted.write_timeout().unwrap(), Some(super::IO_TIMEOUT));
+        configure_stream(&client).unwrap();
+
+        let request = serde_json::to_vec(&Request {
+            token: "synthetic-token".into(),
+            command: CliCommand::Stats,
+        })
+        .unwrap();
+        let (fragment_seen, wait_for_fragment) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let mut first = [0];
+            assert_eq!(accepted.peek(&mut first).unwrap(), 1);
+            assert_eq!(first, [b'{']);
+            fragment_seen.send(()).unwrap();
+            let command = read_message::<Request>(&mut accepted)
+                .and_then(|request| super::authorize(request, "synthetic-token"));
+            write_message(&mut accepted, &command).unwrap();
+            command
+        });
+        client.write_all(&request[..1]).unwrap();
+        wait_for_fragment
+            .recv_timeout(crate::test_support::TEST_TIMEOUT)
+            .expect("server did not observe the first request fragment");
+        client.write_all(&request[1..]).unwrap();
+        client.write_all(b"\n").unwrap();
+        let response: Result<CliCommand, String> = read_message(&mut client).unwrap();
+        assert_eq!(response.unwrap(), CliCommand::Stats);
+        assert_eq!(server.join().unwrap().unwrap(), CliCommand::Stats);
     }
 
     #[test]

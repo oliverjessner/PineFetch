@@ -3,6 +3,7 @@
 - security fixes that are coming from dependabot
 - adding a ci
 - chore: strengthen data integrity and migration quality
+- automatic screenshots
 
 # 2.2.0
 

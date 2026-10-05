@@ -151,21 +151,14 @@ pub(super) fn start_link_dump_server_from_settings(
         while !shutdown_thread.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    if active_connections.fetch_add(1, Ordering::SeqCst)
-                        >= LINK_DUMP_MAX_CONNECTIONS
-                    {
-                        active_connections.fetch_sub(1, Ordering::SeqCst);
-                        let _ = write_json_response(
-                            &mut stream,
-                            503,
-                            &json!({ "ok": false, "error": "Server busy; try again shortly" }),
-                        );
+                    let Some(permit) =
+                        reserve_link_dump_connection(&mut stream, &active_connections)
+                    else {
                         continue;
-                    }
+                    };
                     let request_app = app_handle.clone();
-                    let active_connections = active_connections.clone();
                     thread::spawn(move || {
-                        let _permit = ActiveConnectionPermit(active_connections);
+                        let _permit = permit;
                         if let Err(err) = handle_link_dump_stream(stream, request_app) {
                             eprintln!("Link Dump request rejected: {err}");
                         }
@@ -206,7 +199,18 @@ pub(super) fn start_link_dump_server_from_settings(
     Ok(status)
 }
 
-pub(super) fn handle_link_dump_stream(mut stream: TcpStream, app: AppHandle) -> Result<(), String> {
+pub(super) fn handle_link_dump_stream(stream: TcpStream, app: AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    serve_link_dump_request(stream, state.inner(), |urls, summary| {
+        add_normalized_video_urls_to_queue(&app, state.inner(), urls, summary)
+    })
+}
+
+pub(super) fn serve_link_dump_request(
+    mut stream: TcpStream,
+    state: &AppState,
+    enqueue: impl Fn(&[NormalizedVideoUrl], &mut LinkDumpQueueSummary) -> Result<(), String>,
+) -> Result<(), String> {
     let request = match read_http_request(&mut stream) {
         Ok(request) => request,
         Err(err) => {
@@ -239,13 +243,12 @@ pub(super) fn handle_link_dump_stream(mut stream: TcpStream, app: AppHandle) -> 
         );
     }
 
-    let state = app.state::<AppState>();
     match path.as_str() {
         "/addVideoLinkToQueue/" | "/addVideoLinkToQueue" => {
-            handle_add_video_link(&app, state.inner(), &mut stream, &request.body)
+            handle_add_video_link(state, &mut stream, &request.body, &enqueue)
         }
         "/addVideoLinksToQueue/" | "/addVideoLinksToQueue" => {
-            handle_add_video_links(&app, state.inner(), &mut stream, &request.body)
+            handle_add_video_links(state, &mut stream, &request.body, &enqueue)
         }
         _ => write_json_response(
             &mut stream,
@@ -266,27 +269,53 @@ pub(super) fn is_link_dump_endpoint(path: &str) -> bool {
 }
 
 pub(super) fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, String> {
+    read_http_request_with_timeout(stream, Duration::from_secs(5))
+}
+
+pub(super) fn read_http_request_with_timeout(
+    stream: &mut TcpStream,
+    timeout: Duration,
+) -> Result<HttpRequest, String> {
+    configure_http_stream(stream, timeout)?;
+    read_http_request_from(stream)
+}
+
+pub(super) fn configure_http_stream(
+    stream: &mut TcpStream,
+    timeout: Duration,
+) -> Result<(), String> {
+    // On macOS accept() inherits the listener's nonblocking mode. A socket
+    // deadline only bounds blocking reads, so reset the request socket first.
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| format!("Read timeout setup failed: {e}"))?;
+        .set_nonblocking(false)
+        .map_err(|e| format!("HTTP socket mode setup failed: {e}"))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|e| format!("Read timeout setup failed: {e}"))
+}
+
+pub(super) fn read_http_request_from(reader: &mut impl Read) -> Result<HttpRequest, String> {
     let mut buffer = Vec::new();
     let mut temp = [0_u8; 4096];
     let header_end;
 
     loop {
-        let read = stream
+        let read = reader
             .read(&mut temp)
             .map_err(|e| format!("HTTP request read failed: {e}"))?;
         if read == 0 {
             return Err("HTTP request closed before headers".to_string());
         }
         buffer.extend_from_slice(&temp[..read]);
-        if buffer.len() > LINK_DUMP_MAX_BODY_BYTES {
-            return Err("HTTP request too large".to_string());
-        }
         if let Some(index) = find_header_end(&buffer) {
+            if index > LINK_DUMP_MAX_HEADER_BYTES {
+                return Err("HTTP headers too large".to_string());
+            }
             header_end = index;
             break;
+        }
+        if buffer.len() > LINK_DUMP_MAX_HEADER_BYTES {
+            return Err("HTTP headers too large".to_string());
         }
     }
 
@@ -305,18 +334,38 @@ pub(super) fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, S
         .next()
         .ok_or_else(|| "Missing HTTP path".to_string())?
         .to_string();
+    let version = request_parts
+        .next()
+        .ok_or_else(|| "Missing HTTP version".to_string())?;
+    if !matches!(version, "HTTP/1.0" | "HTTP/1.1")
+        || request_parts.next().is_some()
+        || !path.starts_with('/')
+    {
+        return Err("Invalid HTTP request line".to_string());
+    }
 
-    let mut content_length = 0_usize;
+    let mut content_length = None;
     for line in lines {
         if let Some((name, value)) = line.split_once(':') {
             if name.trim().eq_ignore_ascii_case("content-length") {
-                content_length = value
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| "Invalid Content-Length".to_string())?;
+                if content_length.is_some() {
+                    return Err("Duplicate Content-Length".to_string());
+                }
+                let value = value.trim();
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err("Invalid Content-Length".to_string());
+                }
+                content_length = Some(
+                    value
+                        .parse::<usize>()
+                        .map_err(|_| "Invalid Content-Length".to_string())?,
+                );
+            } else if name.trim().eq_ignore_ascii_case("transfer-encoding") {
+                return Err("Transfer-Encoding is not supported".to_string());
             }
         }
     }
+    let content_length = content_length.unwrap_or(0);
 
     if content_length > LINK_DUMP_MAX_BODY_BYTES {
         return Err("HTTP body too large".to_string());
@@ -325,11 +374,11 @@ pub(super) fn read_http_request(stream: &mut TcpStream) -> Result<HttpRequest, S
     let body_start = header_end + 4;
     let mut body = buffer.get(body_start..).unwrap_or_default().to_vec();
     while body.len() < content_length {
-        let read = stream
+        let read = reader
             .read(&mut temp)
             .map_err(|e| format!("HTTP body read failed: {e}"))?;
         if read == 0 {
-            break;
+            return Err("HTTP body closed before Content-Length".to_string());
         }
         body.extend_from_slice(&temp[..read]);
     }
@@ -398,11 +447,11 @@ pub(super) fn write_json_response(
         .map_err(|e| format!("HTTP response write failed: {e}"))
 }
 
-pub(super) fn handle_add_video_link(
-    app: &AppHandle,
+fn handle_add_video_link(
     state: &AppState,
     stream: &mut TcpStream,
     body: &[u8],
+    enqueue: &impl Fn(&[NormalizedVideoUrl], &mut LinkDumpQueueSummary) -> Result<(), String>,
 ) -> Result<(), String> {
     let parsed = serde_json::from_slice::<AddVideoLinkRequestBody>(body);
     let parsed = match parsed {
@@ -416,8 +465,17 @@ pub(super) fn handle_add_video_link(
         }
     };
 
-    let Some(_valid_secret) = validate_link_dump_secret(&state.db, parsed.secret.as_deref())?
-    else {
+    let authorized = match validate_link_dump_secret(&state.db, parsed.secret.as_deref()) {
+        Ok(secret) => secret.is_some(),
+        Err(_) => {
+            return write_json_response(
+                stream,
+                500,
+                &json!({ "ok": false, "error": "Internal server error" }),
+            );
+        }
+    };
+    if !authorized {
         println!("Link Dump request rejected");
         return write_json_response(
             stream,
@@ -440,7 +498,7 @@ pub(super) fn handle_add_video_link(
         skipped: 0,
         invalid: 0,
     };
-    if add_normalized_video_urls_to_queue(app, state, &[url], &mut summary).is_err() {
+    if enqueue(&[url], &mut summary).is_err() {
         return write_json_response(
             stream,
             500,
@@ -461,11 +519,11 @@ pub(super) fn handle_add_video_link(
     )
 }
 
-pub(super) fn handle_add_video_links(
-    app: &AppHandle,
+fn handle_add_video_links(
     state: &AppState,
     stream: &mut TcpStream,
     body: &[u8],
+    enqueue: &impl Fn(&[NormalizedVideoUrl], &mut LinkDumpQueueSummary) -> Result<(), String>,
 ) -> Result<(), String> {
     let parsed = serde_json::from_slice::<AddVideoLinksRequestBody>(body);
     let parsed = match parsed {
@@ -479,8 +537,17 @@ pub(super) fn handle_add_video_links(
         }
     };
 
-    let Some(_valid_secret) = validate_link_dump_secret(&state.db, parsed.secret.as_deref())?
-    else {
+    let authorized = match validate_link_dump_secret(&state.db, parsed.secret.as_deref()) {
+        Ok(secret) => secret.is_some(),
+        Err(_) => {
+            return write_json_response(
+                stream,
+                500,
+                &json!({ "ok": false, "error": "Internal server error" }),
+            );
+        }
+    };
+    if !authorized {
         println!("Link Dump request rejected");
         return write_json_response(
             stream,
@@ -531,7 +598,7 @@ pub(super) fn handle_add_video_links(
         );
     }
 
-    if add_normalized_video_urls_to_queue(app, state, &normalized_urls, &mut summary).is_err() {
+    if enqueue(&normalized_urls, &mut summary).is_err() {
         return write_json_response(
             stream,
             500,
@@ -611,10 +678,28 @@ pub(super) fn build_link_dump_download_request(
 }
 
 const LINK_DUMP_MAX_BATCH_SIZE: usize = 500;
-const LINK_DUMP_MAX_BODY_BYTES: usize = 1024 * 1024;
-const LINK_DUMP_MAX_CONNECTIONS: usize = 8;
+pub(super) const LINK_DUMP_MAX_BODY_BYTES: usize = 1024 * 1024;
+pub(super) const LINK_DUMP_MAX_HEADER_BYTES: usize = LINK_DUMP_MAX_BODY_BYTES;
+pub(super) const LINK_DUMP_MAX_CONNECTIONS: usize = 8;
 
-pub(crate) struct ActiveConnectionPermit(pub(crate) Arc<AtomicUsize>);
+pub(super) fn reserve_link_dump_connection(
+    stream: &mut TcpStream,
+    active_connections: &Arc<AtomicUsize>,
+) -> Option<ActiveConnectionPermit> {
+    if active_connections.fetch_add(1, Ordering::SeqCst) >= LINK_DUMP_MAX_CONNECTIONS {
+        active_connections.fetch_sub(1, Ordering::SeqCst);
+        let _ = write_json_response(
+            stream,
+            503,
+            &json!({ "ok": false, "error": "Server busy; try again shortly" }),
+        );
+        None
+    } else {
+        Some(ActiveConnectionPermit(Arc::clone(active_connections)))
+    }
+}
+
+pub(super) struct ActiveConnectionPermit(Arc<AtomicUsize>);
 
 impl Drop for ActiveConnectionPermit {
     fn drop(&mut self) {

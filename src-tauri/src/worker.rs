@@ -275,25 +275,9 @@ pub(super) fn show_queue_notification(app: &AppHandle, body: &str) -> Result<(),
 }
 
 pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    let paused = state
-        .queue
-        .paused
-        .lock()
-        .map_err(|_| "Queue pause lock poisoned")?;
-    if *paused {
+    if !crate::queue::claim_worker_start(&state.queue)? {
         return Ok(());
     }
-    let mut running = state
-        .queue
-        .worker_running
-        .lock()
-        .map_err(|_| "Worker lock poisoned")?;
-    if *running {
-        return Ok(());
-    }
-    *running = true;
-    drop(running);
-    drop(paused);
     emit_queue_status(app, &state.queue);
 
     let app_handle = app.clone();
@@ -555,26 +539,42 @@ pub(crate) fn cancel_download_job(
         return Ok(());
     }
 
+    request_active_job_cancellation(&state.processes, &id)?;
+
+    emit_state(
+        &app,
+        DownloadStateEvent {
+            id,
+            state: DownloadState::Cancelling,
+            exit_code: None,
+            error: None,
+            output_path: None,
+        },
+    );
+    Ok(())
+}
+
+pub(crate) fn request_active_job_cancellation(
+    processes: &crate::process::ProcessState,
+    id: &str,
+) -> Result<(), String> {
     {
-        let current = state
-            .processes
+        let current = processes
             .current_job_id
             .lock()
             .map_err(|_| "Current job lock poisoned")?;
-        if current.as_deref() != Some(&id) {
+        if current.as_deref() != Some(id) {
             return Err("Job not found in queue".to_string());
         }
-        let mut cancel = state
-            .processes
+        let mut cancel = processes
             .cancel_requested
             .lock()
             .map_err(|_| "Cancel lock poisoned")?;
-        *cancel = Some(id.clone());
+        *cancel = Some(id.to_string());
     }
 
     let child = {
-        let child_guard = state
-            .processes
+        let child_guard = processes
             .current_child
             .lock()
             .map_err(|_| "Child lock poisoned")?;
@@ -589,8 +589,8 @@ pub(crate) fn cancel_download_job(
                 terminate_child_process_tree(&mut process).map_err(|err| err.to_string())
             });
         if let Err(err) = kill_result {
-            if let Ok(mut cancel) = state.processes.cancel_requested.lock() {
-                if cancel.as_deref() == Some(&id) {
+            if let Ok(mut cancel) = processes.cancel_requested.lock() {
+                if cancel.as_deref() == Some(id) {
                     *cancel = None;
                 }
             }
@@ -598,15 +598,5 @@ pub(crate) fn cancel_download_job(
         }
     }
 
-    emit_state(
-        &app,
-        DownloadStateEvent {
-            id,
-            state: DownloadState::Cancelling,
-            exit_code: None,
-            error: None,
-            output_path: None,
-        },
-    );
     Ok(())
 }

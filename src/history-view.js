@@ -1,3 +1,4 @@
+import { formatHistorySource, formatLocalDateTime, formatUploadDate } from './formatters.js';
 import { createHistoryDetailsView } from './history-details-view.js';
 
 export const createHistoryView = ({
@@ -52,20 +53,6 @@ export const createHistoryView = ({
         }
     };
 
-    const formatUploadDate = uploadDate => {
-        const raw = `${uploadDate || ''}`.trim();
-        if (!raw) return null;
-
-        if (/^\d{8}$/.test(raw)) {
-            const year = raw.slice(0, 4);
-            const month = raw.slice(4, 6);
-            const day = raw.slice(6, 8);
-            return `${year}-${month}-${day}`;
-        }
-
-        return raw;
-    };
-
     const formatUploadTimestamp = timestamp => {
         const seconds = Number(timestamp);
         if (!Number.isFinite(seconds) || seconds <= 0) return null;
@@ -73,13 +60,7 @@ export const createHistoryView = ({
         const date = new Date(seconds * 1000);
         if (Number.isNaN(date.getTime())) return null;
 
-        return date.toLocaleString([], {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        });
+        return formatLocalDateTime(date);
     };
 
     const setHistoryLoading = isLoading => {
@@ -98,20 +79,6 @@ export const createHistoryView = ({
         els.historyActionStatus.hidden = !message;
         els.historyActionStatus.classList.toggle('pf-status-error', isError);
         els.historyActionStatus.classList.toggle('pf-status-success', Boolean(message && !isError));
-    };
-
-    const formatHistorySource = source => {
-        const name = `${source || 'unknown'}`.trim().toLowerCase();
-        const known = {
-            youtube: 'YouTube',
-            tiktok: 'TikTok',
-            instagram: 'Instagram',
-            facebook: 'Facebook',
-            twitch: 'Twitch',
-            linkedin: 'LinkedIn',
-            x: 'X',
-        };
-        return known[name] || (name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Unknown');
     };
 
     const renderHistorySources = sourceCounts => {

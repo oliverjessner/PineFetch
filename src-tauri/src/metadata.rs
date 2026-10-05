@@ -1,5 +1,6 @@
 use crate::models::InfoResponse;
 use crate::process::run_command_output;
+use crate::yt_dlp::build_info_args;
 use crate::yt_dlp::parse_info_json;
 use std::process::Command;
 use std::time::Duration;
@@ -13,13 +14,7 @@ pub(crate) fn load_info_with_yt_dlp(
     state: &crate::process::ProcessState,
 ) -> Result<InfoResponse, String> {
     let mut command = Command::new(&yt_dlp);
-    command.args(["--dump-json", "--no-playlist", "--no-warnings"]);
-    if let Some(deno) = deno {
-        command.arg("--js-runtimes");
-        command.arg(format!("deno:{deno}"));
-    }
-
-    command.arg(&url);
+    command.args(build_info_args(&url, deno.as_deref()));
     let output = run_command_output(command, None, Some(state), Some(INFO_TIMEOUT))
         .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
 

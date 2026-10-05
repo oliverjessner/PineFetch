@@ -1,0 +1,359 @@
+{
+    "validation": [
+        {
+            "input": "https://example.com/video",
+            "valid": true
+        },
+        {
+            "input": "http://localhost:2255/",
+            "valid": true
+        },
+        {
+            "input": " HTTPS://example.com/video ",
+            "valid": true
+        },
+        {
+            "input": "https://example.com/Grüße 🌲",
+            "valid": true
+        },
+        {
+            "input": "https://example.com/?value=%0A",
+            "valid": true
+        },
+        {
+            "input": "ftp://example.com/video",
+            "valid": false
+        },
+        {
+            "input": "https://",
+            "valid": false
+        },
+        {
+            "input": "http://",
+            "valid": false
+        },
+        {
+            "input": "not a URL",
+            "valid": false
+        },
+        {
+            "input": "",
+            "valid": false
+        },
+        {
+            "input": "https://example.com/\nvideo",
+            "valid": false
+        },
+        {
+            "input": "https://example.com/\tvideo",
+            "valid": false
+        },
+        {
+            "input": "https://example.com/video",
+            "valid": false
+        },
+        {
+            "input": "https://example.com/video",
+            "valid": false
+        }
+    ],
+    "platforms": [
+        {
+            "input": "https://WWW.YOUTUBE.COM./watch?v=abc123",
+            "platform": "youtube"
+        },
+        {
+            "input": "https://m.youtube.com/watch?v=abc123",
+            "platform": "youtube"
+        },
+        {
+            "input": "https://youtu.be/abc123",
+            "platform": "youtube"
+        },
+        {
+            "input": "https://www.youtu.be/abc123",
+            "platform": "youtube"
+        },
+        {
+            "input": "https://nested.youtu.be/abc123",
+            "platform": null
+        },
+        {
+            "input": "https://m.facebook.com/watch?v=123456789",
+            "platform": "facebook"
+        },
+        {
+            "input": "https://fb.watch/ABC123/",
+            "platform": "facebook"
+        },
+        {
+            "input": "https://www.fb.watch/ABC123/",
+            "platform": "facebook"
+        },
+        {
+            "input": "https://nested.fb.watch/ABC123/",
+            "platform": null
+        },
+        {
+            "input": "https://twitch.tv/channel",
+            "platform": "twitch"
+        },
+        {
+            "input": "https://twitter.com/name/status/123456789",
+            "platform": "x"
+        },
+        {
+            "input": "https://x.com/name/status/123456789",
+            "platform": "x"
+        },
+        {
+            "input": "https://redd.it/abc123",
+            "platform": "reddit"
+        },
+        {
+            "input": "https://www.redditmedia.com/r/test/comments/abc123",
+            "platform": "reddit"
+        },
+        {
+            "input": "https://vm.tiktok.com/ABC123/",
+            "platform": "tiktok"
+        },
+        {
+            "input": "https://instagr.am/p/ABC123/",
+            "platform": "instagram"
+        },
+        {
+            "input": "https://m.instagr.am/p/ABC123/",
+            "platform": "instagram"
+        },
+        {
+            "input": "https://youtube.com.evil.example/watch?v=abc123",
+            "platform": null
+        },
+        {
+            "input": "https://notyoutube.com/watch?v=abc123",
+            "platform": null
+        },
+        {
+            "input": "https://example.com/youtube.com",
+            "platform": null
+        },
+        {
+            "input": "https://fakeinstagram.com/p/ABC123/",
+            "platform": null
+        },
+        {
+            "input": "not a URL",
+            "platform": null
+        },
+        {
+            "input": "",
+            "platform": null
+        },
+        {
+            "input": "https://constructor/video",
+            "platform": null
+        },
+        {
+            "input": "https://__proto__/video",
+            "platform": null
+        }
+    ],
+    "timestamps": [
+        {
+            "input": "https://example.com/video?t=90",
+            "seconds": 90
+        },
+        {
+            "input": "https://example.com/video?start=1.5",
+            "seconds": 1.5
+        },
+        {
+            "input": "https://example.com/video?start_time=1h2m3s",
+            "seconds": 3723
+        },
+        {
+            "input": "https://example.com/video?time_continue=1%3A30",
+            "seconds": 90
+        },
+        {
+            "input": "https://example.com/video?t=01%3A02%3A03",
+            "seconds": 3723
+        },
+        {
+            "input": "https://example.com/video#t=1m30s",
+            "seconds": 90
+        },
+        {
+            "input": "https://example.com/video#75",
+            "seconds": 75
+        },
+        {
+            "input": "https://example.com/video#1m",
+            "seconds": 60
+        },
+        {
+            "input": "https://example.com/video?t=invalid&start=30#t=60",
+            "seconds": 30
+        },
+        {
+            "input": "https://example.com/video?t=0#t=60",
+            "seconds": 60
+        },
+        {
+            "input": "https://example.com/video?t=0",
+            "seconds": null
+        },
+        {
+            "input": "https://example.com/video?t=-1",
+            "seconds": null
+        },
+        {
+            "input": "https://example.com/video?t=Infinity",
+            "seconds": null
+        },
+        {
+            "input": "https://example.com/video?t=1mgarbage",
+            "seconds": null
+        },
+        {
+            "input": "https://example.com/video?t=1::2",
+            "seconds": null
+        },
+        {
+            "input": "https://example.com/video?t=1:2:3:4",
+            "seconds": null
+        },
+        {
+            "input": "https://example.com/video?t=0x10",
+            "seconds": null
+        },
+        {
+            "input": "https://example.com/video?t=0b10",
+            "seconds": null
+        },
+        {
+            "input": "https://example.com/video?t=1:0x10",
+            "seconds": null
+        },
+        {
+            "input": "https://example.com/video?t=1e2",
+            "seconds": 100
+        },
+        {
+            "input": "https://example.com/video?t=.5",
+            "seconds": 0.5
+        },
+        {
+            "input": "https://example.com/video?t=.5s",
+            "seconds": 0.5
+        },
+        {
+            "input": "https://example.com/video?t=1.s",
+            "seconds": 1
+        },
+        {
+            "input": "https://example.com/video?t=.5:1",
+            "seconds": 31
+        },
+        {
+            "input": "https://example.com/video?t=1%3A%202",
+            "seconds": null
+        }
+    ],
+    "imports": [
+        {
+            "input": "  https://youtu.be/abc123?t=1m  ",
+            "backend": {
+                "url": "https://www.youtube.com/watch?v=abc123",
+                "key": "youtube:abc123"
+            },
+            "frontend": {
+                "url": "https://youtu.be/abc123?t=1m",
+                "key": "youtube:abc123:60"
+            }
+        },
+        {
+            "input": "http://www.tiktok.com/@creator/video/123456789?track=1#fragment",
+            "backend": {
+                "url": "https://www.tiktok.com/@creator/video/123456789",
+                "key": "tiktok:123456789"
+            },
+            "frontend": {
+                "url": "https://www.tiktok.com/@creator/video/123456789",
+                "key": "tiktok:123456789"
+            }
+        },
+        {
+            "input": "https://vm.tiktok.com/ABC123/?track=1",
+            "backend": {
+                "url": "https://vm.tiktok.com/ABC123/",
+                "key": "tiktok-short:ABC123"
+            },
+            "frontend": {
+                "url": "https://vm.tiktok.com/ABC123/",
+                "key": "tiktok-short:ABC123"
+            }
+        },
+        {
+            "input": "https://instagr.am/creator/reel/ABC_123/?track=1",
+            "backend": {
+                "url": "https://www.instagram.com/reel/ABC_123/",
+                "key": "instagram:ABC_123"
+            },
+            "frontend": {
+                "url": "https://www.instagram.com/reel/ABC_123/",
+                "key": "instagram:ABC_123"
+            }
+        },
+        {
+            "input": "https://x.com/creator/status/123456789?track=1",
+            "backend": {
+                "url": "https://x.com/creator/status/123456789",
+                "key": "x:123456789"
+            },
+            "frontend": null
+        },
+        {
+            "input": "https://redd.it/abc123",
+            "backend": {
+                "url": "https://www.reddit.com/comments/abc123/",
+                "key": "reddit:abc123"
+            },
+            "frontend": null
+        },
+        {
+            "input": "https://youtube.com.evil.example/watch?v=abc123",
+            "backend": null,
+            "frontend": null
+        },
+        {
+            "input": "ftp://youtube.com/watch?v=abc123",
+            "backend": null,
+            "frontend": null
+        },
+        {
+            "input": "https://twitch.tv/channel",
+            "backend": null,
+            "frontend": null
+        },
+        {
+            "input": "https://instagram.com/p/a/",
+            "backend": null,
+            "frontend": null
+        },
+        {
+            "input": "",
+            "backend": null,
+            "frontend": null
+        },
+        {
+            "input": "https://www.facebook.com/watch/?v=123456789&track=1",
+            "backend": {
+                "url": "https://www.facebook.com/watch/?v=123456789",
+                "key": "facebook:123456789"
+            },
+            "frontend": null
+        }
+    ]
+}

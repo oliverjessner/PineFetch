@@ -1,7 +1,6 @@
 use crate::completion;
 use crate::download::run_download_job;
 use crate::download::run_faster_whisper_transcription;
-use crate::download_rules::is_valid_url;
 use crate::download_rules::{prepare_download_job, DownloadOptions};
 use crate::events::{emit_log, emit_queue, emit_queue_status, emit_state};
 use crate::models::DownloadJob;
@@ -17,6 +16,7 @@ use crate::queue::next_worker_job;
 use crate::queue::QueueRunSummary;
 use crate::runtime::resolve_output_dir;
 use crate::state::AppState;
+use crate::url_rules::validate_download_url;
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
@@ -43,9 +43,7 @@ pub(super) fn build_download_job(
     state: &crate::config::ConfigState,
     request: DownloadRequest,
 ) -> Result<DownloadJob, String> {
-    if !is_valid_url(&request.url) {
-        return Err("URL must start with http:// or https://".to_string());
-    }
+    validate_download_url(&request.url).map_err(|error| error.to_string())?;
     let output_dir = resolve_output_dir(state, request.output_dir.clone())?;
     let options = {
         let config = state.lock().map_err(|_| "Config lock poisoned")?;

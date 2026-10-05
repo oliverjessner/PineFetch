@@ -9,6 +9,10 @@ use crate::events::emit_progress;
 use crate::files::publish_unique_output;
 use crate::files::OwnedTemporaryFile;
 use crate::files::TemporaryTranscriptionAudio;
+use crate::media_tools::{
+    build_cut_args, build_transcription_args, build_transcription_audio_args,
+    parse_transcription_line, TranscriptionLine,
+};
 use crate::metadata::INFO_TIMEOUT;
 use crate::models::DownloadJob;
 use crate::models::DownloadProgress;
@@ -18,7 +22,6 @@ use crate::models::LogEvent;
 use crate::models::SavedCaption;
 use crate::models::TranscriptionRunResult;
 use crate::platform::caption_platform;
-use crate::platform::site_format_sort;
 use crate::process::clear_current_child;
 use crate::process::configure_child_process_group;
 use crate::process::register_current_child;
@@ -31,6 +34,7 @@ use crate::runtime::resolve_python_executable;
 use crate::runtime::resolve_yt_dlp;
 use crate::state::AppState;
 use crate::yt_dlp::build_download_args;
+use crate::yt_dlp::build_filename_probe_args;
 use crate::yt_dlp::parse_caption_line;
 use crate::yt_dlp::parse_download_metadata_line;
 use crate::yt_dlp::parse_progress_line;
@@ -368,21 +372,11 @@ pub(super) fn trim_downloaded_file(
     let temp_path_str = temp_path.to_string_lossy().to_string();
 
     let mut command = Command::new(&ffmpeg_path);
-    command.args([
-        "-hide_banner",
-        "-y",
-        "-ss",
-        cut_timestamp.as_str(),
-        "-i",
-        input_path_str.as_str(),
-        "-map",
-        "0",
-        "-c",
-        "copy",
-        "-avoid_negative_ts",
-        "make_zero",
-        temp_path_str.as_str(),
-    ]);
+    command.args(build_cut_args(
+        &input_path_str,
+        &temp_path_str,
+        &cut_timestamp,
+    ));
     let output = run_command_output(command, Some(&state.processes), None, None)
         .map_err(|e| format!("Failed to run ffmpeg timestamp cut: {e}"))?;
 
@@ -535,37 +529,7 @@ pub(super) fn probe_expected_output_filename(
     output_template: &str,
 ) -> Result<Option<String>, String> {
     let mut command = Command::new(yt_dlp);
-    command.args([
-        "--simulate",
-        "--no-playlist",
-        "--no-warnings",
-        "--print",
-        "filename",
-        "-f",
-    ]);
-    command.arg(&job.format);
-    command.arg("-o");
-    command.arg(output_template);
-
-    if let Some(deno) = deno_path {
-        command.arg("--js-runtimes");
-        command.arg(format!("deno:{deno}"));
-    }
-
-    if job.extract_audio {
-        command.arg("--extract-audio");
-        if let Some(fmt) = job.audio_format.as_ref() {
-            command.arg("--audio-format");
-            command.arg(fmt);
-        }
-    }
-
-    if let Some(format_sort) = site_format_sort(&job.url) {
-        command.arg("--format-sort");
-        command.arg(format_sort);
-    }
-
-    command.arg(&job.url);
+    command.args(build_filename_probe_args(job, output_template, deno_path));
 
     let output = run_command_output(command, Some(&state.processes), None, Some(INFO_TIMEOUT))
         .map_err(|e| format!("Failed to probe output filename with yt-dlp: {e}"))?;
@@ -699,12 +663,12 @@ pub(super) fn run_faster_whisper_transcription(
 
     let mut command = Command::new(python);
     command
-        .arg("-c")
-        .arg(FASTER_WHISPER_TRANSCRIBE_SNIPPET)
-        .arg(transcription_input)
-        .arg(&transcript_path_str)
-        .arg(&model_name)
-        .arg(if job.transcribe_timestamps { "1" } else { "0" })
+        .args(build_transcription_args(
+            transcription_input,
+            &transcript_path_str,
+            &model_name,
+            job.transcribe_timestamps,
+        ))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     configure_child_process_group(&mut command);
@@ -730,21 +694,21 @@ pub(super) fn run_faster_whisper_transcription(
         if let Some(out) = stdout {
             let reader = BufReader::new(out);
             for line in reader.lines().map_while(Result::ok) {
-                if let Some(language) = line.strip_prefix("pinefetch_language:") {
-                    let language = language.trim().to_ascii_lowercase();
-                    if !language.is_empty() {
-                        let _ = language_sender.send(language);
+                match parse_transcription_line(&line) {
+                    TranscriptionLine::Language(language) => {
+                        if let Some(language) = language {
+                            let _ = language_sender.send(language);
+                        }
                     }
-                    continue;
+                    TranscriptionLine::Log(line) => emit_log(
+                        &app_stdout,
+                        LogEvent {
+                            id: job_id_stdout.clone(),
+                            line: format!("[faster-whisper] {line}"),
+                            is_error: false,
+                        },
+                    ),
                 }
-                emit_log(
-                    &app_stdout,
-                    LogEvent {
-                        id: job_id_stdout.clone(),
-                        line: format!("[faster-whisper] {line}"),
-                        is_error: false,
-                    },
-                );
             }
         }
     });
@@ -857,22 +821,10 @@ pub(super) fn extract_temporary_transcription_audio(
     );
 
     let mut command = Command::new(&ffmpeg_path);
-    command.args([
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        video_path_str.as_str(),
-        "-vn",
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        "-c:a",
-        "pcm_s16le",
-        audio_path_str.as_str(),
-    ]);
+    command.args(build_transcription_audio_args(
+        &video_path_str,
+        &audio_path_str,
+    ));
     let output = run_command_output(command, Some(&state.processes), None, None)
         .map_err(|e| format!("Failed to prepare audio for transcription: {e}"))?;
 
@@ -894,45 +846,3 @@ pub(super) fn extract_temporary_transcription_audio(
     temporary.sync()?;
     Ok(temporary)
 }
-
-const FASTER_WHISPER_TRANSCRIBE_SNIPPET: &str = r#"
-import sys
-from pathlib import Path
-
-try:
-    from faster_whisper import WhisperModel
-except Exception as exc:
-    print(f"Failed to import faster_whisper: {exc}", file=sys.stderr)
-    raise
-
-audio_path = sys.argv[1]
-output_path = Path(sys.argv[2])
-model_name = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else "base"
-include_timestamps = len(sys.argv) > 4 and sys.argv[4] == "1"
-
-def format_timestamp(seconds):
-    total_seconds = max(0, int(round(seconds)))
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-model = WhisperModel(model_name, compute_type="int8")
-segments, info = model.transcribe(audio_path, beam_size=5)
-print(f"pinefetch_language:{info.language}", flush=True)
-lines = []
-for segment in segments:
-    text = segment.text.strip()
-    if text:
-        if include_timestamps:
-            start = format_timestamp(segment.start)
-            end = format_timestamp(segment.end)
-            lines.append(f"[{start} → {end}] {text}")
-        else:
-            lines.append(text)
-
-content = "\n".join(lines).strip()
-if content:
-    content += "\n"
-output_path.write_text(content, encoding="utf-8")
-print(str(output_path))
-"#;

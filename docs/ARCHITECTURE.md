@@ -9,21 +9,21 @@ second implementation of an application workflow.
 
 All Rust modules live in `src-tauri/src`.
 
-| Modules                                                                                            | Responsibility                                                                                                                                 |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `main`, `startup`, `state`                                                                         | Compose the app, resolve desktop data paths, wire legacy imports, register commands and install startup/shutdown hooks.                        |
-| `models`                                                                                           | Shared serialized configuration, download, history and Link Dump models. `DownloadState` preserves the existing seven snake-case event values. |
-| `config_rules`, `download_rules`, `history_rules`, `video_urls`, existing `platform` and `presets` | Pure normalization, job preparation, timestamps, output names, metadata fallback, URL identity and platform/preset decisions.                  |
-| `queue`                                                                                            | FIFO storage, pause/status/next/removal, URL deduplication and final cancellation/success decisions, without Tauri or SQLite.                  |
-| `worker`                                                                                           | Coordinate job execution, cancellation, completion, worker lifecycle and existing notifications/events.                                        |
-| `download`, `metadata`, `runtime`                                                                  | Execute downloads/transcription/cuts, fetch metadata and locate/probe yt-dlp, FFmpeg/ffprobe, Python/Whisper and Deno.                         |
-| `yt_dlp`                                                                                           | Pure download argument construction and progress, filepath, caption and metadata parsing.                                                      |
-| `process`                                                                                          | Process groups, child registration, timeout/cancellation, output draining and structured process errors.                                       |
-| `files`, `hashing`                                                                                 | Owned temporary files, no-clobber publication, flushing, local path validation, legacy JSON reads and hashing.                                 |
-| `database`                                                                                         | Connection ownership, guarded writer transactions, schema compatibility, migrations and snapshots.                                             |
-| `config`, `history`, `link_dump_store`, `completion_store`                                         | SQL for each data area; completion writes related history/transcript/caption rows atomically.                                                  |
-| `completion`                                                                                       | Validate and flush produced files, prepare history metadata, then invoke the completion transaction.                                           |
-| `commands`, `cli`, `browser_import`, `events`                                                      | Tauri commands, CLI transport, Link Dump HTTP/server integration and the desktop event adapter.                                                |
+| Modules                                                                                             | Responsibility                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `main`, `startup`, `state`                                                                          | Compose the app, resolve desktop data paths, wire legacy imports, register commands and install startup/shutdown hooks.                        |
+| `models`                                                                                            | Shared serialized configuration, download, history and Link Dump models. `DownloadState` preserves the existing seven snake-case event values. |
+| `config_rules`, `download_rules`, `history_rules`, `url_rules`, `video_urls`, `platform`, `presets` | Pure normalization, job preparation, timestamps, output names, metadata fallback, URL identity and platform/preset decisions.                  |
+| `queue`                                                                                             | FIFO storage, pause/status/next/removal, URL deduplication and final cancellation/success decisions, without Tauri or SQLite.                  |
+| `worker`                                                                                            | Coordinate job execution, cancellation, completion, worker lifecycle and existing notifications/events.                                        |
+| `download`, `metadata`, `runtime`                                                                   | Execute downloads/transcription/cuts, fetch metadata and locate/probe yt-dlp, FFmpeg/ffprobe, Python/Whisper and Deno.                         |
+| `yt_dlp`, `media_tools`                                                                             | Pure yt-dlp/FFmpeg/Whisper arguments and progress, filepath, caption, metadata and transcription parsing.                                      |
+| `process`                                                                                           | Process groups, child registration, timeout/cancellation, output draining and structured process errors.                                       |
+| `files`, `hashing`                                                                                  | Owned temporary files, no-clobber publication, flushing, local path validation, legacy JSON reads and hashing.                                 |
+| `database`                                                                                          | Connection ownership, guarded writer transactions, schema compatibility, migrations and snapshots.                                             |
+| `config`, `history`, `link_dump_store`, `completion_store`                                          | SQL for each data area; completion writes related history/transcript/caption rows atomically.                                                  |
+| `completion`                                                                                        | Validate and flush produced files, prepare history metadata, then invoke the completion transaction.                                           |
+| `commands`, `cli`, `browser_import`, `events`                                                       | Tauri commands, CLI transport, Link Dump HTTP/server integration and the desktop event adapter.                                                |
 
 Imports name the owning module explicitly. Production modules do not import the
 root namespace through `use super::*`. Shared models and rules do not depend on
@@ -55,9 +55,11 @@ is no trait for each function or theoretical layer enforced through extra folder
 ## A download from input to completion
 
 1. A Tauri command, CLI request or Link Dump handler creates a `DownloadRequest`
-   and enters the shared worker/application path. Interface-specific validation,
+   and enters the shared worker/application path. CLI and Link Dump use
+   `download_rules::request_from_preset`; GUI uses the same preset definitions
+   returned by `get_download_presets`. Interface-specific input handling,
    HTTP authentication and CLI syntax remain at their existing boundaries.
-2. Job construction validates the URL, resolves the output directory and copies
+2. Job construction uses `url_rules::validate_download_url`, resolves the output directory and copies
    only the four required configuration options while holding the config lock.
    `prepare_download_job` receives those options, a directory and an ID explicitly.
 3. Queue insertion updates the FIFO and publishes the existing queue snapshot.
@@ -92,6 +94,71 @@ process group. Shutdown pauses the queue and stops registered processes.
 output failures. Its display/conversion preserves the current interface messages.
 Argument builders and output parsers require neither installed runtimes nor a
 desktop. Process regression tests use local synthetic child processes.
+
+## Where to change a shared rule
+
+| Rule                                                   | Canonical location and consumers                                                                                                                                                        |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP(S) syntax and rejection of raw control characters | `url_rules::validate_download_url`: job construction, GUI metadata requests and CLI input. Interface error text remains at its boundary.                                                |
+| Host normalization and domain boundaries               | `url_rules`; `platform::Platform` owns recognized domains, aliases, caption support and TikTok format sorting. Detection still returns the existing string values.                      |
+| Content import URL and identity                        | `video_urls::normalize_video_url`: Link Dump and queue deduplication. It parses once and dispatches to the platform-specific content rules.                                             |
+| Preset properties and default key                      | `presets::DOWNLOAD_PRESETS`; frontend labels stay in `main.js`, which loads the backend definitions. CLI aliases are CLI syntax, not a second preset definition.                        |
+| Preset-based request fields                            | `download_rules::request_from_preset`: CLI and Link Dump. Link Dump adds its known thumbnail; GUI retains explicit output-directory and metadata inputs.                                |
+| Job options, timestamps and filenames                  | `download_rules::prepare_download_job` and existing timestamp/template helpers: the shared worker path uses the config snapshot and supplies the job ID.                                |
+| yt-dlp arguments                                       | `yt_dlp::build_download_args`, `build_filename_probe_args` and `build_info_args`; private helpers share Deno, audio extraction and platform sorting flags without changing their order. |
+| FFmpeg/Whisper arguments and Whisper stdout            | `media_tools`; builders and `parse_transcription_line` require no process or desktop. Native Whisper input paths retain their `OsStr` representation.                                   |
+| Progress, output paths, captions and metadata          | Existing pure parsers in `yt_dlp`; process runners emit events only after parsing.                                                                                                      |
+| History row interpretation                             | Private `history::map_history_entry`: list/search and detail queries use the same column mapping and normalization, with no additional queries.                                         |
+| Frontend display formatting                            | `src/formatters.js`: duration, file size, history source, upload date and local date/time formatting. Views retain their input-specific date parsing and fallbacks.                     |
+
+The shared URL contract is in `test/fixtures/url-contracts.json`. Rust tests in
+`reuse_tests.rs` and Node tests in `url-contracts.test.mjs` load that same file.
+It covers validation, platform hosts/aliases, timestamps and content import
+normalization. Import cases contain separate backend and frontend expectations
+because TXT import and Link Dump intentionally have different URL policies.
+CLI tests compare jobs produced from GUI preset DTOs, CLI requests and Link Dump
+requests across all six presets and both timestamp-setting states, including
+the shared configuration defaults and the retained Link Dump thumbnail.
+
+The fixtures exposed existing differences: GUI metadata/job validation checked
+only a URL prefix, frontend validation accepted raw control characters, frontend
+platform detection accepted arbitrary subdomains of short-link aliases, and
+JavaScript numeric parsing accepted hexadecimal/binary timestamps that Rust
+rejected. Regression tests now enforce the backend HTTP(S)/control-character,
+alias and decimal timestamp rules at the corresponding entry points.
+
+## Deliberate differences and extraction limits
+
+- GUI accepts existing explicit format/metadata/output settings. CLI defaults to
+  `best` and uses its command aliases; Link Dump uses the saved preset. These
+  input semantics are preserved while preset fields and job preparation are shared.
+- GUI TXT import supports its existing three-platform subset and preserves
+  YouTube timestamps in both URLs and deduplication keys. Link Dump supports its
+  existing six-platform subset and canonicalizes content identity without those
+  timestamps. Content URL allowlists remain narrower than platform display detection.
+- History source naming handles arbitrary sites and additional short-domain
+  labels; it is not a supported-platform detector. Its rules remain separate.
+- Relative history dates, epoch-millisecond dates, upload timestamps and SQLite
+  date strings have different units, validity checks and fallbacks. Only their
+  identical local date/time presentation is shared.
+- FFmpeg cutting and transcription audio preparation require different flags;
+  their named builders stay separate. Missing tool-pair and missing path errors
+  retain their operation-specific context. Metadata aliases and caption composition
+  retain their existing missing/null-field and platform-specific behavior.
+- Queue removal by ID, CLI removal by position, active cancellation and Link Dump
+  deduplication have different semantics. Their existing core operations and lock
+  scopes remain intact. Clipboard best-effort reads and explicit copy actions
+  keep their different error handling and lifecycles.
+- Config has one existing row mapper. Link Dump secret creation presents an
+  initial active connection, while listing derives revocation/deletion status;
+  these lifecycle-specific views are not forced into one generic mapper.
+
+The API client, queue core, owned-file handling, config/history normalizers,
+process runner and secure secret generation were already shared and are reused.
+There is no new dependency, schema migration, public command, package or plugin
+layer. Pure URL/timestamp helpers and yt-dlp argument builders/parsers could be
+candidates for later use by another application, but no external library is
+extracted in this work. Their current contracts remain internal to PineFetch.
 
 ## Persistence boundary
 

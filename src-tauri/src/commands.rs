@@ -3,7 +3,6 @@ use crate::browser_import::snapshot_link_dump_server_status;
 use crate::config::update_config;
 use crate::config_rules::apply_config_patch;
 use crate::config_rules::ConfigPatch;
-use crate::download_rules::is_valid_url;
 use crate::events::emit_queue_status;
 use crate::files::canonical_existing_local_path;
 use crate::history::clear_history_entries_in_db;
@@ -45,6 +44,7 @@ use crate::queue::snapshot_queue_status;
 use crate::runtime::resolve_deno_executable;
 use crate::runtime::resolve_yt_dlp;
 use crate::state::AppState;
+use crate::url_rules::validate_download_url;
 use crate::worker::enqueue_download_request;
 use crate::worker::ensure_worker;
 use std::fs;
@@ -149,9 +149,7 @@ pub(crate) async fn load_info(
     state: State<'_, AppState>,
     url: String,
 ) -> Result<InfoResponse, String> {
-    if !is_valid_url(&url) {
-        return Err("URL must start with http:// or https://".to_string());
-    }
+    validate_download_url(&url).map_err(|error| error.to_string())?;
     let yt_dlp = resolve_yt_dlp(&app, &state.config)?;
     let deno = resolve_deno_executable(&app);
 

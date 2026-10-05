@@ -1,31 +1,33 @@
 use crate::models::LinkDumpSettings;
 use crate::models::NormalizedVideoUrl;
 use crate::models::LINK_DUMP_DEFAULT_HOST;
+use crate::platform::Platform;
+use crate::url_rules::domain_matches;
+use crate::url_rules::normalized_url_host;
+use crate::url_rules::parse_http_url;
 
 pub(crate) fn normalize_video_url(input: &str) -> Option<NormalizedVideoUrl> {
-    normalize_youtube_url(input)
-        .or_else(|| normalize_tiktok_url(input))
-        .or_else(|| normalize_instagram_url(input))
-        .or_else(|| normalize_facebook_url(input))
-        .or_else(|| normalize_x_url(input))
-        .or_else(|| normalize_reddit_url(input))
+    let parsed = parse_http_url(input)?;
+    let host = normalized_url_host(&parsed)?;
+    match Platform::from_host(&host)? {
+        Platform::YouTube => normalize_youtube_parsed(&parsed, &host),
+        Platform::TikTok => normalize_tiktok_parsed(&parsed, &host),
+        Platform::Instagram => normalize_instagram_parsed(&parsed),
+        Platform::Facebook => normalize_facebook_parsed(&parsed, &host),
+        Platform::X => normalize_x_parsed(&parsed, &host),
+        Platform::Reddit => normalize_reddit_parsed(&parsed, &host),
+        Platform::Twitch => None,
+    }
 }
 
-pub(crate) fn normalize_youtube_url(input: &str) -> Option<NormalizedVideoUrl> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let parsed = url::Url::parse(trimmed).ok()?;
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return None;
-    }
+#[cfg(test)]
+pub(super) fn normalize_youtube_url(input: &str) -> Option<NormalizedVideoUrl> {
+    let parsed = parse_http_url(input)?;
+    normalize_youtube_parsed(&parsed, &normalized_url_host(&parsed)?)
+}
 
-    let host = parsed
-        .host_str()?
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    let host_without_www = host.strip_prefix("www.").unwrap_or(&host);
+fn normalize_youtube_parsed(parsed: &url::Url, host: &str) -> Option<NormalizedVideoUrl> {
+    let host_without_www = host.strip_prefix("www.").unwrap_or(host);
     let path_parts = parsed
         .path_segments()
         .map(|segments| segments.collect::<Vec<_>>())
@@ -69,7 +71,7 @@ pub(crate) fn normalize_youtube_url(input: &str) -> Option<NormalizedVideoUrl> {
     })
 }
 
-pub(crate) fn is_plausible_youtube_video_id(video_id: &str) -> bool {
+fn is_plausible_youtube_video_id(video_id: &str) -> bool {
     let len = video_id.len();
     (6..=64).contains(&len)
         && video_id
@@ -77,13 +79,7 @@ pub(crate) fn is_plausible_youtube_video_id(video_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
-pub(crate) fn normalize_tiktok_url(input: &str) -> Option<NormalizedVideoUrl> {
-    let parsed = parse_http_url(input)?;
-    let host = normalized_url_host(&parsed)?;
-    if host != "tiktok.com" && !host.ends_with(".tiktok.com") {
-        return None;
-    }
-
+fn normalize_tiktok_parsed(parsed: &url::Url, host: &str) -> Option<NormalizedVideoUrl> {
     let path_parts = parsed
         .path_segments()
         .map(|segments| segments.filter(|part| !part.is_empty()).collect::<Vec<_>>())
@@ -104,7 +100,7 @@ pub(crate) fn normalize_tiktok_url(input: &str) -> Option<NormalizedVideoUrl> {
         }
     }
 
-    let short_code = if matches!(host.as_str(), "vm.tiktok.com" | "vt.tiktok.com") {
+    let short_code = if matches!(host, "vm.tiktok.com" | "vt.tiktok.com") {
         path_parts.first().copied()
     } else if path_parts
         .first()
@@ -119,7 +115,7 @@ pub(crate) fn normalize_tiktok_url(input: &str) -> Option<NormalizedVideoUrl> {
         return None;
     }
 
-    let url = if matches!(host.as_str(), "vm.tiktok.com" | "vt.tiktok.com") {
+    let url = if matches!(host, "vm.tiktok.com" | "vt.tiktok.com") {
         format!("https://{host}/{short_code}/")
     } else {
         format!("https://www.tiktok.com/t/{short_code}/")
@@ -131,17 +127,7 @@ pub(crate) fn normalize_tiktok_url(input: &str) -> Option<NormalizedVideoUrl> {
     })
 }
 
-pub(crate) fn normalize_instagram_url(input: &str) -> Option<NormalizedVideoUrl> {
-    let parsed = parse_http_url(input)?;
-    let host = normalized_url_host(&parsed)?;
-    let is_instagram_host = host == "instagram.com"
-        || host.ends_with(".instagram.com")
-        || host == "instagr.am"
-        || host.ends_with(".instagr.am");
-    if !is_instagram_host {
-        return None;
-    }
-
+fn normalize_instagram_parsed(parsed: &url::Url) -> Option<NormalizedVideoUrl> {
     let path_parts = parsed
         .path_segments()
         .map(|segments| segments.filter(|part| !part.is_empty()).collect::<Vec<_>>())
@@ -166,9 +152,7 @@ pub(crate) fn normalize_instagram_url(input: &str) -> Option<NormalizedVideoUrl>
     })
 }
 
-pub(crate) fn normalize_facebook_url(input: &str) -> Option<NormalizedVideoUrl> {
-    let parsed = parse_http_url(input)?;
-    let host = normalized_url_host(&parsed)?;
+fn normalize_facebook_parsed(parsed: &url::Url, host: &str) -> Option<NormalizedVideoUrl> {
     let parts = parsed
         .path_segments()?
         .filter(|part| !part.is_empty())
@@ -185,7 +169,7 @@ pub(crate) fn normalize_facebook_url(input: &str) -> Option<NormalizedVideoUrl> 
             thumbnail: None,
         });
     }
-    if host != "facebook.com" && !host.ends_with(".facebook.com") {
+    if !domain_matches(host, "facebook.com") {
         return None;
     }
 
@@ -249,11 +233,9 @@ pub(crate) fn normalize_facebook_url(input: &str) -> Option<NormalizedVideoUrl> 
     })
 }
 
-pub(crate) fn normalize_x_url(input: &str) -> Option<NormalizedVideoUrl> {
-    let parsed = parse_http_url(input)?;
-    let host = normalized_url_host(&parsed)?;
+fn normalize_x_parsed(parsed: &url::Url, host: &str) -> Option<NormalizedVideoUrl> {
     if !matches!(
-        host.as_str(),
+        host,
         "x.com"
             | "www.x.com"
             | "mobile.x.com"
@@ -290,19 +272,14 @@ pub(crate) fn normalize_x_url(input: &str) -> Option<NormalizedVideoUrl> {
     })
 }
 
-pub(crate) fn normalize_reddit_url(input: &str) -> Option<NormalizedVideoUrl> {
-    let parsed = parse_http_url(input)?;
-    let host = normalized_url_host(&parsed)?;
+fn normalize_reddit_parsed(parsed: &url::Url, host: &str) -> Option<NormalizedVideoUrl> {
     let parts = parsed
         .path_segments()?
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>();
     let post_id = if host == "redd.it" {
         *parts.first()?
-    } else if matches!(host.as_str(), "reddit.com" | "redditmedia.com")
-        || host.ends_with(".reddit.com")
-        || host.ends_with(".redditmedia.com")
-    {
+    } else if domain_matches(host, "reddit.com") || domain_matches(host, "redditmedia.com") {
         match parts.as_slice() {
             ["comments", id, ..]
             | ["r", _, "comments", id, ..]
@@ -325,21 +302,7 @@ pub(crate) fn normalize_reddit_url(input: &str) -> Option<NormalizedVideoUrl> {
     })
 }
 
-pub(crate) fn parse_http_url(input: &str) -> Option<url::Url> {
-    let parsed = url::Url::parse(input.trim()).ok()?;
-    matches!(parsed.scheme(), "http" | "https").then_some(parsed)
-}
-
-pub(crate) fn normalized_url_host(parsed: &url::Url) -> Option<String> {
-    Some(
-        parsed
-            .host_str()?
-            .trim_end_matches('.')
-            .to_ascii_lowercase(),
-    )
-}
-
-pub(crate) fn is_plausible_tiktok_handle(handle: &str) -> bool {
+fn is_plausible_tiktok_handle(handle: &str) -> bool {
     !handle.is_empty()
         && handle.len() <= 64
         && handle
@@ -347,18 +310,18 @@ pub(crate) fn is_plausible_tiktok_handle(handle: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.'))
 }
 
-pub(crate) fn is_plausible_numeric_id(value: &str) -> bool {
+fn is_plausible_numeric_id(value: &str) -> bool {
     (6..=32).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-pub(crate) fn is_plausible_content_code(value: &str) -> bool {
+fn is_plausible_content_code(value: &str) -> bool {
     (3..=128).contains(&value.len())
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
-pub(crate) fn is_instagram_content_route(route: &str) -> bool {
+fn is_instagram_content_route(route: &str) -> bool {
     matches!(route.to_ascii_lowercase().as_str(), "p" | "reel" | "tv")
 }
 pub(crate) fn normalize_link_dump_host(host: &str) -> String {

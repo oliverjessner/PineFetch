@@ -1,3 +1,4 @@
+import { formatHistorySource, formatLocalDateTime, formatUploadDate } from './formatters.js';
 export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, formatDuration, detectPlatform }) => {
     const state = {
         contextEntryId: null,
@@ -9,38 +10,10 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         captions: new Map(),
     };
 
-    const formatSource = source => {
-        const name = `${source || 'unknown'}`.trim().toLowerCase();
-        const known = {
-            youtube: 'YouTube',
-            tiktok: 'TikTok',
-            instagram: 'Instagram',
-            facebook: 'Facebook',
-            twitch: 'Twitch',
-            linkedin: 'LinkedIn',
-            reddit: 'Reddit',
-            x: 'X',
-        };
-        return known[name] || (name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Unknown');
-    };
-
     const formatDateTime = timestamp => {
         const date = new Date(Number(timestamp));
         if (!Number.isFinite(Number(timestamp)) || Number.isNaN(date.getTime())) return null;
-        return date.toLocaleString([], {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-        });
-    };
-
-    const formatUploadDate = value => {
-        const raw = `${value || ''}`.trim();
-        if (!raw) return null;
-        if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
-        return raw;
+        return formatLocalDateTime(date);
     };
 
     const basename = path => `${path || ''}`.split(/[\\/]/).filter(Boolean).pop() || '';
@@ -106,7 +79,7 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         const captionCount = Array.isArray(details.captions) ? details.captions.length : 0;
 
         els.historyOverviewList.replaceChildren();
-        addOverviewRow('Source', source ? formatSource(source) : null);
+        addOverviewRow('Source', source ? formatHistorySource(source) : null);
         if (platform && platform.toLowerCase() !== `${source || ''}`.toLowerCase())
             addOverviewRow('Platform', platform);
         addOverviewRow('Original URL', entry.url, entry.url);

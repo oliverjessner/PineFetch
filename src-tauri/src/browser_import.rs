@@ -1,3 +1,4 @@
+use crate::download_rules::request_from_preset;
 use crate::events::emit_queue;
 use crate::link_dump_store::get_link_dump_settings;
 use crate::link_dump_store::validate_link_dump_secret;
@@ -604,24 +605,9 @@ pub(super) fn build_link_dump_download_request(
         )
     };
 
-    Ok(DownloadRequest {
-        url: normalized.url.clone(),
-        format: preset.format.to_string(),
-        output_dir: None,
-        extract_audio: preset.extract_audio,
-        audio_format: preset.audio_format.map(str::to_string),
-        transcribe_text: preset.transcribe_text,
-        transcribe_timestamps: preset.transcribe_timestamps,
-        cut_at_timestamp_enabled,
-        cut_start_time: None,
-        filename_suffix: preset.filename_suffix.map(str::to_string),
-        title: None,
-        uploader: None,
-        thumbnail: normalized.thumbnail.clone(),
-        upload_date: None,
-        timestamp: None,
-        duration_seconds: None,
-    })
+    let mut request = request_from_preset(preset, normalized.url.clone(), cut_at_timestamp_enabled);
+    request.thumbnail = normalized.thumbnail.clone();
+    Ok(request)
 }
 
 const LINK_DUMP_MAX_BATCH_SIZE: usize = 500;

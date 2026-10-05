@@ -5,12 +5,18 @@ const normalizePositiveTimestamp = seconds => {
     return Number.isFinite(value) && value > 0 ? value : null;
 };
 
+const parseDecimalNumber = value => {
+    if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/.test(value)) return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+};
+
 const parseTimestampValue = raw => {
     const value = `${raw || ''}`.trim().toLowerCase();
     if (!value) return null;
 
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) return normalizePositiveTimestamp(numeric);
+    const numeric = parseDecimalNumber(value);
+    if (numeric !== null) return normalizePositiveTimestamp(numeric);
 
     if (value.includes(':')) {
         const parts = value.split(':');
@@ -19,20 +25,23 @@ const parseTimestampValue = raw => {
         let total = 0;
         for (const part of parts) {
             if (!part) return null;
-            const amount = Number(part);
-            if (!Number.isFinite(amount) || amount < 0) return null;
+            const amount = parseDecimalNumber(part);
+            if (amount === null || amount < 0) return null;
             total = total * 60 + amount;
         }
         return normalizePositiveTimestamp(total);
     }
 
-    const matches = [...value.matchAll(/(\d+(?:\.\d+)?)([hms])/g)];
+    const matches = [...value.matchAll(/([\d.]+)([hms])/g)];
     if (!matches.length || matches.map(match => match[0]).join('') !== value) return null;
 
-    const total = matches.reduce((sum, [, amount, unit]) => {
+    let total = 0;
+    for (const [, rawAmount, unit] of matches) {
+        const amount = parseDecimalNumber(rawAmount);
+        if (amount === null) return null;
         const multiplier = unit === 'h' ? 3600 : unit === 'm' ? 60 : 1;
-        return sum + Number(amount) * multiplier;
-    }, 0);
+        total += amount * multiplier;
+    }
     return normalizePositiveTimestamp(total);
 };
 
@@ -61,26 +70,50 @@ const extractUrlStartTimestamp = url => {
     return null;
 };
 
+const platformDomains = Object.freeze([
+    ['youtube.com', 'youtube'],
+    ['facebook.com', 'facebook'],
+    ['twitch.tv', 'twitch'],
+    ['x.com', 'x'],
+    ['twitter.com', 'x'],
+    ['reddit.com', 'reddit'],
+    ['redditmedia.com', 'reddit'],
+    ['tiktok.com', 'tiktok'],
+    ['instagram.com', 'instagram'],
+    ['instagr.am', 'instagram'],
+]);
+
+const platformForHostname = hostname => {
+    const host = normalizeHostname(hostname).replace(/^www\./, '');
+    for (const [domain, platform] of platformDomains) {
+        if (matchesDomain(host, domain)) return platform;
+    }
+    switch (host) {
+        case 'youtu.be':
+            return 'youtube';
+        case 'fb.watch':
+            return 'facebook';
+        case 'redd.it':
+            return 'reddit';
+        default:
+            return null;
+    }
+};
+
 const detectPlatform = url => {
     try {
-        const host = new URL(url).hostname.toLowerCase().replace(/\.$/, '');
-        const matches = domain => host === domain || host.endsWith(`.${domain}`);
-
-        if (matches('youtu.be') || matches('youtube.com')) return 'youtube';
-        if (matches('facebook.com') || matches('fb.watch')) return 'facebook';
-        if (matches('twitch.tv')) return 'twitch';
-        if (matches('x.com') || matches('twitter.com')) return 'x';
-        if (matches('reddit.com') || matches('redditmedia.com') || host === 'redd.it') return 'reddit';
-        if (matches('tiktok.com')) return 'tiktok';
-        if (matches('instagram.com') || matches('instagr.am')) return 'instagram';
+        return platformForHostname(new URL(url).hostname);
     } catch {
         return null;
     }
-    return null;
 };
 
 const isValidHttpUrl = value => {
     try {
+        for (const character of `${value}`) {
+            const code = character.charCodeAt(0);
+            if (code < 32 || (code >= 127 && code <= 159)) return false;
+        }
         const parsed = new URL(value);
         return parsed.protocol === 'http:' || parsed.protocol === 'https:';
     } catch {
@@ -89,26 +122,11 @@ const isValidHttpUrl = value => {
 };
 
 const normalizeHostname = hostname => `${hostname || ''}`.replace(/\.$/, '').toLowerCase();
+const matchesDomain = (host, domain) => host === domain || host.endsWith(`.${domain}`);
 
-const isYouTubeHostname = hostname => {
-    const host = normalizeHostname(hostname).replace(/^www\./, '');
-    return host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com');
-};
-
-const isTikTokHostname = hostname => {
-    const host = normalizeHostname(hostname);
-    return host === 'tiktok.com' || host.endsWith('.tiktok.com');
-};
-
-const isInstagramHostname = hostname => {
-    const host = normalizeHostname(hostname);
-    return (
-        host === 'instagram.com' ||
-        host.endsWith('.instagram.com') ||
-        host === 'instagr.am' ||
-        host.endsWith('.instagr.am')
-    );
-};
+const isYouTubeHostname = hostname => platformForHostname(hostname) === 'youtube';
+const isTikTokHostname = hostname => platformForHostname(hostname) === 'tiktok';
+const isInstagramHostname = hostname => platformForHostname(hostname) === 'instagram';
 
 const getYouTubeVideoIdFromParsedUrl = parsed => {
     const host = normalizeHostname(parsed.hostname).replace(/^www\./, '');

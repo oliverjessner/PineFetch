@@ -2,8 +2,7 @@ use crate::models::DownloadJob;
 use crate::models::DownloadProgress;
 use crate::models::InfoFormat;
 use crate::models::InfoResponse;
-use crate::platform::caption_platform;
-use crate::platform::site_format_sort;
+use crate::platform::Platform;
 
 pub(crate) const PROGRESS_PATTERN: &str =
     r"\[download\]\s+([\d\.]+)%.*?at\s+([^\s]+).*?ETA\s+([^\s]+)";
@@ -14,7 +13,8 @@ pub(crate) fn build_download_args(
     ffmpeg_location: Option<&str>,
     deno_path: Option<&str>,
 ) -> Result<Vec<String>, String> {
-    let save_captions = caption_platform(&job.url, job.save_captions).is_some();
+    let platform = Platform::from_url(&job.url);
+    let save_captions = job.save_captions && platform.is_some_and(Platform::supports_captions);
     let mut args = vec![
         "--no-playlist".to_string(),
         "--newline".to_string(),
@@ -57,25 +57,8 @@ pub(crate) fn build_download_args(
         );
     }
 
-    if let Some(deno) = deno_path {
-        args.push("--js-runtimes".to_string());
-        args.push(format!("deno:{deno}"));
-    }
-
-    if job.extract_audio {
-        args.push("--extract-audio".to_string());
-        if let Some(fmt) = job.audio_format.as_ref() {
-            args.push("--audio-format".to_string());
-            args.push(fmt.to_string());
-        }
-    }
-
-    if let Some(format_sort) = site_format_sort(&job.url) {
-        args.push("--format-sort".to_string());
-        args.push(format_sort.to_string());
-    }
-
-    args.push(job.url.clone());
+    append_deno_args(&mut args, deno_path);
+    append_job_args(&mut args, job, platform);
 
     Ok(args)
 }
@@ -285,4 +268,55 @@ pub(crate) fn parse_info_json(raw: &str) -> Result<InfoResponse, String> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     })
+}
+
+pub(crate) fn build_filename_probe_args(
+    job: &DownloadJob,
+    output_template: &str,
+    deno_path: Option<&str>,
+) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "--simulate",
+        "--no-playlist",
+        "--no-warnings",
+        "--print",
+        "filename",
+        "-f",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    args.extend([job.format.clone(), "-o".into(), output_template.into()]);
+    append_deno_args(&mut args, deno_path);
+    append_job_args(&mut args, job, Platform::from_url(&job.url));
+    args
+}
+
+pub(crate) fn build_info_args(url: &str, deno_path: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = ["--dump-json", "--no-playlist", "--no-warnings"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    append_deno_args(&mut args, deno_path);
+    args.push(url.into());
+    args
+}
+
+fn append_deno_args(args: &mut Vec<String>, deno_path: Option<&str>) {
+    if let Some(deno) = deno_path {
+        args.extend(["--js-runtimes".into(), format!("deno:{deno}")]);
+    }
+}
+
+fn append_job_args(args: &mut Vec<String>, job: &DownloadJob, platform: Option<Platform>) {
+    if job.extract_audio {
+        args.push("--extract-audio".into());
+        if let Some(format) = &job.audio_format {
+            args.extend(["--audio-format".into(), format.clone()]);
+        }
+    }
+    if let Some(sort) = platform.and_then(Platform::format_sort) {
+        args.extend(["--format-sort".into(), sort.into()]);
+    }
+    args.push(job.url.clone());
 }

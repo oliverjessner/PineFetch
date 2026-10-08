@@ -176,6 +176,15 @@ for those guarantees and their temporary-database/fault-injection regressions.
 
 ## Frontend boundary
 
+`oj-designsystem` supplies the shared visual foundations and components through
+its public `oj-*` classes, local fonts/icons and ESM behavior helpers. PineFetch
+owns application layout and domain-specific `pinefetch-*` classes. The complete
+locked package distribution and its license notices are copied to
+`src/vendor/oj/` by `scripts/sync-design-system.mjs`; those generated files are
+ignored and imported by their local URLs because Tauri embeds `src/` directly.
+The development/build/install hooks keep static browser and packaged desktop
+assets in sync. See [DEVELOPMENT.md](DEVELOPMENT.md) for the regeneration flow.
+
 `src/tauri-client.js` owns command/event names and the Tauri global bridge. Views
 receive its named methods, and contract tests inject a fake bridge. Methods retain
 argument objects, results, errors and event unsubscribe callbacks. ESLint prevents

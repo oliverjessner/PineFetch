@@ -2,7 +2,9 @@ import http from 'node:http';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { syncDesignSystem } from './sync-design-system.mjs';
 
+await syncDesignSystem();
 const root = await realpath(fileURLToPath(new URL('../src/', import.meta.url)));
 const host = '127.0.0.1';
 
@@ -16,6 +18,7 @@ const mime = {
     '.jpeg': 'image/jpeg',
     '.webp': 'image/webp',
     '.svg': 'image/svg+xml',
+    '.woff2': 'font/woff2',
 };
 
 export const createDevServer = () =>

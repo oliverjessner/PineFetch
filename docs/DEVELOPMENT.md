@@ -44,6 +44,20 @@ npm ci
 npm run check
 ```
 
+`npm ci` also runs `sync:design-system`, which copies the pinned
+`oj-designsystem` package's complete `dist/` plus its MIT license, README and
+third-party notices into the ignored `src/vendor/oj/` directory. CSS, ESM,
+Comfortaa, JetBrains Mono, Font Awesome and their original licenses stay local.
+Keep `package.json` and `package-lock.json` together when updating the dependency;
+do not edit the generated assets. If dependencies were installed with
+`--ignore-scripts`, run `npm run sync:design-system` explicitly.
+
+PineFetch serves `src/` directly, without a frontend bundler. The development
+server and screenshot server prepare the assets before serving, and Tauri's
+`beforeBuildCommand` prepares them before packaging. `build:check` also performs
+the copy before Cargo embeds the frontend. Direct Cargo builds require `npm ci`
+or `npm run sync:design-system` first.
+
 `check` stops on the first failure and returns a nonzero exit code. It checks
 version consistency, ESLint, Clippy, Prettier, rustfmt, JavaScript tests, and Rust
 tests. Neither it nor the individual check commands writes tracked files, repairs
@@ -62,12 +76,14 @@ ignored build output.
 | `npm run format:check:rust`                 | Check Cargo sources and the standalone fake-process fixture             |
 | `npm test`                                  | Both test suites, once                                                  |
 | `npm run test:js`                           | Native Node.js test runner; each file has a 30-second timeout           |
+| `npm run test:ui`                           | Offline Chromium/WebKit verification of the design-system integration   |
 | `npm run test:rust`                         | All Cargo test targets through the bounded test runner                  |
 | `npm run check:fast`                        | Quality checks plus pure/component Rust and JavaScript tests            |
 | `npm run test:integration`                  | SQLite, filesystem, fake processes, TCP and built CLI tests             |
 | `npm run format`                            | Explicit automatic formatting with Prettier and rustfmt                 |
 | `npm run format:js` / `npm run format:rust` | Format only one language                                                |
 | `npm run build:check`                       | Release compilation and linking, including embedded frontend assets     |
+| `npm run sync:design-system`                | Regenerate complete local design-system assets from the locked package  |
 
 Run one existing test while investigating a failure:
 
@@ -90,8 +106,8 @@ npx playwright install chromium
 npm run screenshots
 ```
 
-`scripts/screenshots.mjs` first deletes image files in `src/images/mockups`,
-then creates `browser_import.webp`, `download.webp`, `history.webp`,
+`scripts/screenshots.mjs` prepares the local design-system assets, deletes image
+files in `src/images/mockups`, then creates `browser_import.webp`, `download.webp`, `history.webp`,
 `more_data.webp` (the History Details dialog), and `settings.webp`.
 Non-image files are preserved. Captures use a 1400 × 1080 viewport at 2× resolution
 and WebP quality 90. The script works from any working directory and closes its
@@ -124,6 +140,19 @@ instructions are documented in [TESTING.md](TESTING.md).
 Release-gate tests execute an isolated copy of `publish.sh` with mocked npm,
 repository, signing, network, and publishing commands. They never publish.
 
+The design-system browser check uses the real frontend, local assets and an
+isolated Tauri fixture bridge in Chromium and WebKit. Install both browsers once,
+then run the explicit UI check:
+
+```sh
+npm exec playwright install chromium webkit
+npm run test:ui
+```
+
+It verifies offline asset loading and the integrated keyboard/dialog behavior.
+It is separate from the normal Node/Rust quality gates and requires no desktop
+app, media runtimes or personal database.
+
 The frontend was already written as browser ES modules. `src/package.json`
 declares that existing module type for Node imports; the root package's module
 configuration is unchanged. ESLint gives browser code browser globals and gives
@@ -147,9 +176,10 @@ application features are checked; `--all-features` is deliberately not used.
 
 `npm run build:check` runs Cargo with `--locked --release --features
 custom-protocol`. It compiles and links the application and embeds the checked-in
-frontend. Committed runtime placeholder directories make this work on a clean
-checkout without Python, FFmpeg, Deno, yt-dlp, signing credentials, or a prepared
-runtime bundle. It does not synchronize versions or invoke runtime preparation.
+frontend after preparing the generated design-system assets. Committed runtime
+placeholder directories make this work on a clean checkout without Python,
+FFmpeg, Deno, yt-dlp, signing credentials, or a prepared runtime bundle. It does
+not synchronize versions or invoke runtime preparation.
 
 This check does **not** validate Whisper/FFmpeg/Deno runtime contents, an app
 bundle or DMG, installation, runtime downloads, signatures, or notarization.

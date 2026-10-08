@@ -4,7 +4,7 @@
     "version": "2.2.1",
     "identifier": "com.pinefetch.app",
     "build": {
-        "beforeBuildCommand": "",
+        "beforeBuildCommand": "npm run sync:design-system",
         "beforeDevCommand": "node scripts/dev-server.mjs",
         "devUrl": "http://127.0.0.1:1420",
         "frontendDist": "../src"

@@ -1,4 +1,5 @@
 node_modules
+src/vendor/oj/
 src-tauri/target
 src-tauri/gen/schemas/
 .DS_Store

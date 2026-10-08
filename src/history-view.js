@@ -1,3 +1,5 @@
+import { confirmDialog } from './vendor/oj/index.js';
+import { createDropdownChoice } from './dropdown-choice.js';
 import { formatHistorySource, formatLocalDateTime, formatUploadDate } from './formatters.js';
 import { createHistoryDetailsView } from './history-details-view.js';
 
@@ -26,6 +28,17 @@ export const createHistoryView = ({
     const historyPageSize = 20;
     const historySearchDelayMs = 250;
     let historySearchTimer = null;
+    const searchFieldChoice = createDropdownChoice({
+        menu: els.historySearchFieldMenu,
+        value: els.historySearchFieldValue,
+    });
+    searchFieldChoice.setOptions([
+        { value: 'title', label: 'Title' },
+        { value: 'description', label: 'Description' },
+        { value: 'user', label: 'User' },
+    ]);
+    const sourceChoice = createDropdownChoice({ menu: els.historySourceMenu, value: els.historySourceValue });
+    sourceChoice.setOptions([{ value: '', label: 'All sources' }]);
     const historyDetailsView = createHistoryDetailsView({
         els,
         api,
@@ -77,8 +90,8 @@ export const createHistoryView = ({
     const setHistoryActionStatus = (message, isError = false) => {
         els.historyActionStatus.textContent = message;
         els.historyActionStatus.hidden = !message;
-        els.historyActionStatus.classList.toggle('pf-status-error', isError);
-        els.historyActionStatus.classList.toggle('pf-status-success', Boolean(message && !isError));
+        els.historyActionStatus.classList.toggle('oj-status-error', isError);
+        els.historyActionStatus.classList.toggle('oj-status-success', Boolean(message && !isError));
     };
 
     const renderHistorySources = sourceCounts => {
@@ -87,6 +100,7 @@ export const createHistoryView = ({
             const count = Number(entry?.count);
             if (!Number.isFinite(count) || count <= 0) continue;
             const row = document.createElement('li');
+            row.className = 'oj-list-item';
             const name = document.createElement('span');
             name.textContent = formatHistorySource(entry?.source);
             const value = document.createElement('strong');
@@ -108,27 +122,13 @@ export const createHistoryView = ({
             sources.push(source);
         }
 
-        const fragment = document.createDocumentFragment();
-        const allOption = document.createElement('option');
-        allOption.value = '';
-        allOption.textContent = 'All sources';
-        fragment.appendChild(allOption);
-        for (const source of sources) {
-            const option = document.createElement('option');
-            option.value = source;
-            option.textContent = formatHistorySource(source);
-            fragment.appendChild(option);
-        }
-        els.historySourceSelect.replaceChildren(fragment);
-
-        if (!state.historySource || seen.has(state.historySource)) {
-            els.historySourceSelect.value = state.historySource;
-            return false;
-        }
-
-        state.historySource = '';
-        els.historySourceSelect.value = '';
-        return true;
+        const previousSource = state.historySource;
+        sourceChoice.setOptions([
+            { value: '', label: 'All sources' },
+            ...sources.map(source => ({ value: source, label: formatHistorySource(source) })),
+        ]);
+        state.historySource = sourceChoice.getValue();
+        return state.historySource !== previousSource;
     };
 
     const renderHistoryStats = async () => {
@@ -156,13 +156,15 @@ export const createHistoryView = ({
 
     const createHistoryItem = entry => {
         const item = document.createElement('div');
-        item.className = 'pf-list-card pf-history-item';
+        item.className = 'oj-panel oj-panel-compact oj-panel-interactive pinefetch-history-item';
         item.dataset.historyId = entry.id;
         const entryLabel = entry.title || entry.filename || entry.url || 'download';
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
-        openBtn.className = `pf-history-open-btn pf-list-card-layout ${entry.thumbnail ? '' : 'pf-no-media'}`;
+        openBtn.className = `pinefetch-history-open-btn pinefetch-list-card-layout ${entry.thumbnail ? '' : 'pinefetch-no-media'}`;
         openBtn.setAttribute('aria-label', `Open downloaded file: ${entryLabel}`);
+        openBtn.setAttribute('aria-haspopup', 'menu');
+        openBtn.setAttribute('aria-controls', 'historyContextMenu');
 
         openBtn.onclick = async () => {
             // Rust uses snake_case: output_path, not outputPath
@@ -180,15 +182,15 @@ export const createHistoryView = ({
         };
 
         const content = document.createElement('div');
-        content.className = 'pf-history-content';
+        content.className = 'pinefetch-history-content';
 
         const title = document.createElement('div');
-        title.className = 'pf-history-title';
+        title.className = 'pinefetch-history-title';
         title.textContent = entryLabel;
         content.appendChild(title);
 
         const meta = document.createElement('div');
-        meta.className = 'pf-history-meta';
+        meta.className = 'pinefetch-history-meta';
         const dateStr = formatHistoryDate(entry.completed_at);
         const source = entry.source || entry.platform || detectPlatform(entry.url) || 'unknown';
         const uploadDate = formatUploadTimestamp(entry.timestamp) || formatUploadDate(entry.upload_date);
@@ -206,15 +208,18 @@ export const createHistoryView = ({
 
         if (entry.thumbnail) {
             const thumb = document.createElement('div');
-            thumb.className = 'pf-media-thumbnail pf-history-thumb';
+            thumb.className = 'pinefetch-media-thumbnail pinefetch-history-thumb';
             thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
             openBtn.appendChild(thumb);
         }
         item.appendChild(openBtn);
 
         const removeBtn = document.createElement('button');
-        removeBtn.className = 'pf-icon-btn pf-icon-btn-danger pf-history-item-remove-btn';
-        removeBtn.textContent = '×';
+        removeBtn.className = 'oj-icon-button oj-button-danger pinefetch-history-item-remove-btn';
+        const removeIcon = document.createElement('i');
+        removeIcon.className = 'fa-solid fa-xmark';
+        removeIcon.setAttribute('aria-hidden', 'true');
+        removeBtn.appendChild(removeIcon);
         removeBtn.title = 'Remove from history';
         removeBtn.setAttribute('aria-label', `Remove from history: ${entryLabel}`);
         removeBtn.onclick = async event => {
@@ -317,8 +322,8 @@ export const createHistoryView = ({
         };
         const applyHistoryFilters = () => {
             const query = els.historySearchInput.value.trim();
-            const searchField = els.historySearchFieldSelect.value;
-            const source = els.historySourceSelect.value;
+            const searchField = searchFieldChoice.getValue();
+            const source = sourceChoice.getValue();
             if (
                 query === state.historyQuery &&
                 searchField === state.historySearchField &&
@@ -334,8 +339,7 @@ export const createHistoryView = ({
         const applySelectFilters = () => {
             if (historySearchTimer !== null) clearTimeout(historySearchTimer);
             historySearchTimer = null;
-            els.historySearchInput.placeholder =
-                searchPlaceholders[els.historySearchFieldSelect.value] || 'Search history';
+            els.historySearchInput.placeholder = searchPlaceholders[searchFieldChoice.getValue()] || 'Search history';
             applyHistoryFilters();
         };
 
@@ -349,18 +353,33 @@ export const createHistoryView = ({
                 applyHistoryFilters();
             }, historySearchDelayMs);
         });
-        els.historySearchFieldSelect.addEventListener('change', applySelectFilters);
-        els.historySourceSelect.addEventListener('change', applySelectFilters);
+        for (const [dropdown, choice] of [
+            [els.historySearchFieldDropdown, searchFieldChoice],
+            [els.historySourceDropdown, sourceChoice],
+        ]) {
+            dropdown.addEventListener('oj:select', event => {
+                if (event.target !== dropdown || !choice.hasValue(event.detail?.value)) return;
+                choice.setValue(event.detail.value);
+                applySelectFilters();
+            });
+        }
         els.clearHistoryBtn.addEventListener('click', async () => {
             if (!api.available || state.historyClearing) return;
-            if (
-                !window.confirm(
-                    'Delete all history entries and saved transcripts? This cannot be undone. Downloaded files will stay on disk.'
-                )
-            )
-                return;
-
             state.historyClearing = true;
+            els.clearHistoryBtn.focus({ preventScroll: true });
+            if (
+                !(await confirmDialog({
+                    title: 'Clear history?',
+                    message:
+                        'Delete all history entries and saved transcripts? This cannot be undone. Downloaded files will stay on disk.',
+                    confirmLabel: 'Clear history',
+                    variant: 'danger',
+                }))
+            ) {
+                state.historyClearing = false;
+                els.clearHistoryBtn.disabled = state.historyLoading;
+                return;
+            }
             els.clearHistoryBtn.disabled = true;
             setHistoryActionStatus('Deleting history...');
             try {
@@ -368,9 +387,9 @@ export const createHistoryView = ({
                 if (historySearchTimer !== null) clearTimeout(historySearchTimer);
                 historySearchTimer = null;
                 els.historySearchInput.value = '';
-                els.historySearchFieldSelect.value = 'title';
+                searchFieldChoice.setValue('title');
                 els.historySearchInput.placeholder = searchPlaceholders.title;
-                els.historySourceSelect.value = '';
+                sourceChoice.setValue('');
                 state.historyQuery = '';
                 state.historySearchField = 'title';
                 state.historySource = '';

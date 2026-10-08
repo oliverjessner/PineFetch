@@ -5,347 +5,455 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>PineFetch</title>
         <link rel="icon" href="images/logo.png" />
-        <link rel="stylesheet" href="vendor/pinefetch.css" />
+        <link rel="stylesheet" href="vendor/oj/styles.css" />
         <link rel="stylesheet" href="styles.css" />
     </head>
-    <body>
-        <div class="pf-app-shell pf-pinefetch-shell">
-            <header class="pf-toolbar pf-pinefetch-top-bar">
-                <h1 class="pf-title" aria-label="PineFetch">
+    <body class="oj-app">
+        <div class="pinefetch-app-shell pinefetch-shell">
+            <header class="oj-toolbar pinefetch-top-bar">
+                <h1 class="oj-heading-1" aria-label="PineFetch">
                     <button
                         id="magicImportTrigger"
-                        class="pf-pinefetch-brand"
+                        class="pinefetch-brand"
                         type="button"
                         aria-label="Magic import from clipboard"
+                        data-oj-tooltip="Import a link from the clipboard when the URL field is empty"
                     >
-                        <img class="pf-pinefetch-brand-logo" src="images/logo.png" alt="" />
+                        <img class="pinefetch-brand-logo" src="images/logo.png" alt="" />
                         <span>PineFetch</span>
                     </button>
                 </h1>
-                <div class="pf-pinefetch-top-actions">
-                    <nav class="pf-segmented" aria-label="Main view">
-                        <button
-                            id="viewDownloadBtn"
-                            class="pf-segmented-btn pf-is-active"
-                            type="button"
-                            aria-pressed="true"
-                        >
+                <div class="pinefetch-top-actions">
+                    <nav class="oj-nav" aria-label="Main view">
+                        <button id="viewDownloadBtn" class="oj-nav-link" type="button" aria-current="page">
+                            <i class="fa-solid fa-download" aria-hidden="true"></i>
                             Download
                         </button>
-                        <button id="viewHistoryBtn" class="pf-segmented-btn" type="button" aria-pressed="false">
+                        <button id="viewHistoryBtn" class="oj-nav-link" type="button">
+                            <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
                             History
                         </button>
-                        <button id="viewLinkDumpBtn" class="pf-segmented-btn" type="button" aria-pressed="false">
+                        <button id="viewLinkDumpBtn" class="oj-nav-link" type="button">
+                            <i class="fa-solid fa-globe" aria-hidden="true"></i>
                             Browser Import
                         </button>
-                        <button id="viewSettingsBtn" class="pf-segmented-btn" type="button" aria-pressed="false">
+                        <button id="viewSettingsBtn" class="oj-nav-link" type="button">
+                            <i class="fa-solid fa-gear" aria-hidden="true"></i>
                             Settings
                         </button>
                     </nav>
                 </div>
             </header>
 
-            <main class="pf-pinefetch-split">
-                <section class="pf-panel pf-pinefetch-panel pf-pinefetch-panel-left">
-                    <div class="pf-panel-header">
-                        <div class="pf-panel-heading">
-                            <h2 class="pf-section-title" id="leftPanelTitle">Download</h2>
+            <main class="pinefetch-split">
+                <section class="oj-panel pinefetch-panel pinefetch-panel-left">
+                    <div class="oj-section-header">
+                        <div class="pinefetch-panel-heading">
+                            <h2 class="oj-heading-3" id="leftPanelTitle">Download</h2>
                         </div>
-                        <span class="pf-badge" id="infoBadge">Idle</span>
+                        <span class="oj-badge" id="infoBadge">Idle</span>
                     </div>
 
-                    <div id="downloadView" class="pf-panel-view pf-stack">
-                        <label class="pf-field" for="urlInput">
-                            <span class="pf-label">URL</span>
-                            <input id="urlInput" class="pf-input" type="text" placeholder="https://..." />
+                    <div id="downloadView" class="pinefetch-panel-view oj-stack">
+                        <label class="oj-field" for="urlInput">
+                            <span class="oj-label">URL</span>
+                            <input id="urlInput" class="oj-input" type="text" placeholder="https://..." />
                         </label>
 
-                        <label class="pf-field" for="presetSelect">
-                            <span class="pf-label">Preset format</span>
-                            <select id="presetSelect" class="pf-select"></select>
-                        </label>
+                        <div class="oj-field">
+                            <span id="presetLabel" class="oj-label">Preset format</span>
+                            <div id="presetDropdown" class="oj-dropdown pinefetch-choice-dropdown" data-oj-dropdown>
+                                <button
+                                    id="presetTrigger"
+                                    class="oj-button oj-button-secondary pinefetch-choice-trigger"
+                                    type="button"
+                                    data-oj-dropdown-trigger
+                                    aria-labelledby="presetLabel presetValue"
+                                    disabled
+                                >
+                                    <span id="presetValue">Loading formats...</span>
+                                    <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                                </button>
+                                <div
+                                    id="presetMenu"
+                                    class="oj-menu pinefetch-preset-menu"
+                                    data-oj-dropdown-menu
+                                    role="menu"
+                                    aria-labelledby="presetLabel"
+                                    hidden
+                                ></div>
+                            </div>
+                        </div>
 
-                        <div id="transcriptionOptions" class="pf-stack" hidden>
-                            <label class="pf-toggle" for="downloadVideoWithTranscript">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Keep video with transcript</span>
-                                    <span class="pf-toggle-hint"
+                        <div id="transcriptionOptions" class="oj-stack" hidden>
+                            <label class="oj-switch" for="downloadVideoWithTranscript">
+                                <span class="pinefetch-switch-copy">
+                                    <span class="pinefetch-switch-title">Keep video with transcript</span>
+                                    <span class="oj-helper"
                                         >Save the video file alongside the generated transcript.</span
                                     >
                                 </span>
-                                <input id="downloadVideoWithTranscript" class="pf-toggle-input" type="checkbox" />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                                <input id="downloadVideoWithTranscript" type="checkbox" role="switch" />
+                                <span class="oj-switch-track" aria-hidden="true"></span>
                             </label>
                         </div>
 
-                        <p id="captionHint" class="pf-hint" hidden></p>
+                        <p id="captionHint" class="oj-helper" hidden></p>
 
-                        <div class="pf-field-row pf-pinefetch-download-actions">
-                            <button id="startDownloadBtn" class="pf-btn pf-btn-primary">Queue</button>
-                            <button id="loadInfoBtn" class="pf-btn">
-                                <span class="pf-pinefetch-btn-label">Load info</span>
+                        <div class="oj-cluster pinefetch-download-actions">
+                            <button id="startDownloadBtn" class="oj-button oj-button-primary" type="button">
+                                <i class="fa-solid fa-plus" aria-hidden="true"></i>
+                                Queue
                             </button>
-                            <button id="importTxtBtn" class="pf-btn pf-btn-ghost" type="button">Import TXT</button>
+                            <button id="loadInfoBtn" class="oj-button">
+                                <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                                <span class="pinefetch-btn-label">Load info</span>
+                            </button>
+                            <button id="importTxtBtn" class="oj-button oj-button-ghost" type="button">
+                                Import TXT
+                            </button>
                         </div>
-                        <p id="txtImportStatus" class="pf-status" role="status" aria-live="polite" hidden></p>
+                        <p id="txtImportStatus" class="oj-status" role="status" aria-live="polite" hidden></p>
 
-                        <div class="pf-panel-soft pf-pinefetch-info-card" id="infoCard" hidden>
-                            <div class="pf-pinefetch-info-meta">
+                        <div class="oj-panel oj-panel-compact pinefetch-info-card" id="infoCard" hidden>
+                            <div class="pinefetch-info-meta">
                                 <div>
-                                    <p class="pf-label">Title</p>
-                                    <p class="pf-text pf-truncate" id="infoTitle">-</p>
+                                    <p class="oj-label">Title</p>
+                                    <p class="oj-text oj-truncate" id="infoTitle">-</p>
                                 </div>
                                 <div>
-                                    <p class="pf-label">Uploader</p>
-                                    <p class="pf-text pf-truncate" id="infoUploader">-</p>
+                                    <p class="oj-label">Uploader</p>
+                                    <p class="oj-text oj-truncate" id="infoUploader">-</p>
                                 </div>
                                 <div>
-                                    <p class="pf-label">Duration</p>
-                                    <p class="pf-text pf-truncate" id="infoDuration">-</p>
+                                    <p class="oj-label">Duration</p>
+                                    <p class="oj-text oj-truncate" id="infoDuration">-</p>
                                 </div>
                             </div>
-                            <div class="pf-media-thumbnail pf-pinefetch-info-thumb" id="infoThumb"></div>
+                            <div class="pinefetch-media-thumbnail pinefetch-info-thumb" id="infoThumb"></div>
                         </div>
                     </div>
 
-                    <div id="historyView" class="pf-panel-view pf-stack" hidden>
-                        <div class="pf-history-search-controls">
-                            <label class="pf-field pf-history-search-query" for="historySearchInput">
-                                <span class="pf-label">Search history</span>
+                    <div id="historyView" class="pinefetch-panel-view oj-stack" hidden>
+                        <div class="pinefetch-history-search-controls">
+                            <label class="oj-field pinefetch-history-search-query" for="historySearchInput">
+                                <span class="oj-label">Search history</span>
                                 <input
                                     id="historySearchInput"
-                                    class="pf-input"
+                                    class="oj-input"
                                     type="search"
                                     placeholder="Search titles"
                                     autocomplete="off"
                                 />
                             </label>
-                            <label class="pf-field" for="historySearchFieldSelect">
-                                <span class="pf-label">Search in</span>
-                                <select id="historySearchFieldSelect" class="pf-select">
-                                    <option value="title">Title</option>
-                                    <option value="description">Description</option>
-                                    <option value="user">User</option>
-                                </select>
-                            </label>
-                            <label class="pf-field" for="historySourceSelect">
-                                <span class="pf-label">Source</span>
-                                <select id="historySourceSelect" class="pf-select">
-                                    <option value="">All sources</option>
-                                </select>
-                            </label>
+                            <div class="oj-field">
+                                <span id="historySearchFieldLabel" class="oj-label">Search in</span>
+                                <div
+                                    id="historySearchFieldDropdown"
+                                    class="oj-dropdown pinefetch-choice-dropdown"
+                                    data-oj-dropdown
+                                >
+                                    <button
+                                        id="historySearchFieldTrigger"
+                                        class="oj-button oj-button-secondary pinefetch-choice-trigger"
+                                        type="button"
+                                        data-oj-dropdown-trigger
+                                        aria-labelledby="historySearchFieldLabel historySearchFieldValue"
+                                    >
+                                        <span id="historySearchFieldValue">Title</span>
+                                        <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                                    </button>
+                                    <div
+                                        id="historySearchFieldMenu"
+                                        class="oj-menu"
+                                        data-oj-dropdown-menu
+                                        role="menu"
+                                        aria-labelledby="historySearchFieldLabel"
+                                        hidden
+                                    ></div>
+                                </div>
+                            </div>
+                            <div class="oj-field">
+                                <span id="historySourceLabel" class="oj-label">Source</span>
+                                <div
+                                    id="historySourceDropdown"
+                                    class="oj-dropdown pinefetch-choice-dropdown"
+                                    data-oj-dropdown
+                                >
+                                    <button
+                                        id="historySourceTrigger"
+                                        class="oj-button oj-button-secondary pinefetch-choice-trigger"
+                                        type="button"
+                                        data-oj-dropdown-trigger
+                                        aria-labelledby="historySourceLabel historySourceValue"
+                                    >
+                                        <span id="historySourceValue">All sources</span>
+                                        <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                                    </button>
+                                    <div
+                                        id="historySourceMenu"
+                                        class="oj-menu"
+                                        data-oj-dropdown-menu
+                                        role="menu"
+                                        aria-labelledby="historySourceLabel"
+                                        hidden
+                                    ></div>
+                                </div>
+                            </div>
                         </div>
-                        <div id="historyList" class="pf-scroll-area pf-pinefetch-history-list"></div>
-                        <div class="pf-pinefetch-history-actions">
+                        <div
+                            id="historyList"
+                            class="oj-scroll-area pinefetch-history-list"
+                            aria-label="Download history"
+                            tabindex="0"
+                        ></div>
+                        <div class="pinefetch-history-actions">
                             <button
                                 id="loadMoreHistoryBtn"
-                                class="pf-btn pf-pinefetch-history-load-more"
+                                class="oj-button pinefetch-history-load-more"
                                 type="button"
                                 hidden
                             >
                                 Load more
                             </button>
-                            <button id="clearHistoryBtn" class="pf-btn pf-btn-danger" type="button">
+                            <button id="clearHistoryBtn" class="oj-button oj-button-danger" type="button">
                                 Clear History
                             </button>
                         </div>
-                        <p id="historyActionStatus" class="pf-status" role="status" aria-live="polite" hidden></p>
-                        <p class="pf-hint" id="historyHint" hidden>
+                        <p id="historyActionStatus" class="oj-status" role="status" aria-live="polite" hidden></p>
+                        <p class="oj-helper" id="historyHint" hidden>
                             No history yet. Downloaded items will appear here.
                         </p>
                     </div>
 
-                    <div id="settingsView" class="pf-panel-view pf-stack" hidden>
-                        <p id="settingsSaveStatus" class="pf-status" role="status" aria-live="polite">
+                    <div id="settingsView" class="pinefetch-panel-view oj-stack" hidden>
+                        <p id="settingsSaveStatus" class="oj-status" role="status" aria-live="polite">
                             Changes save automatically and apply to new downloads.
                         </p>
 
-                        <section class="pf-stack pf-settings-group" aria-labelledby="settingsDownloadTitle">
-                            <h3 id="settingsDownloadTitle" class="pf-section-title">Download</h3>
-                            <div class="pf-field">
-                                <label class="pf-label" for="outputDir">Output folder</label>
-                                <div class="pf-field-row pf-pinefetch-output-row">
-                                    <input id="outputDir" class="pf-input" type="text" placeholder="/Users/..." />
-                                    <button id="pickDirBtn" class="pf-btn pf-btn-ghost" type="button">Choose</button>
-                                    <button id="openFolderBtn" class="pf-btn pf-btn-ghost" type="button">
+                        <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsDownloadTitle">
+                            <h3 id="settingsDownloadTitle" class="oj-heading-3">Download</h3>
+                            <div class="oj-field">
+                                <label class="oj-label" for="outputDir">Output folder</label>
+                                <div class="oj-input-group pinefetch-output-row">
+                                    <input id="outputDir" class="oj-input" type="text" placeholder="/Users/..." />
+                                    <button id="pickDirBtn" class="oj-button oj-button-ghost" type="button">
+                                        Choose
+                                    </button>
+                                    <button id="openFolderBtn" class="oj-button oj-button-ghost" type="button">
                                         Open folder
                                     </button>
                                 </div>
                             </div>
 
-                            <label class="pf-toggle" for="cutAtTimestampEnabled">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Cut at timestamp</span>
-                                    <span class="pf-toggle-hint"
+                            <label class="oj-switch" for="cutAtTimestampEnabled">
+                                <span class="pinefetch-switch-copy">
+                                    <span class="pinefetch-switch-title">Cut at timestamp</span>
+                                    <span class="oj-helper"
                                         >Links with a timestamp such as t=61 start the download at that second.</span
                                     >
                                 </span>
-                                <input id="cutAtTimestampEnabled" class="pf-toggle-input" type="checkbox" checked />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                                <input id="cutAtTimestampEnabled" type="checkbox" role="switch" checked />
+                                <span class="oj-switch-track" aria-hidden="true"></span>
                             </label>
 
-                            <label class="pf-toggle" for="saveCaptions">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Save post captions</span>
-                                    <span class="pf-toggle-hint"
+                            <label class="oj-switch" for="saveCaptions">
+                                <span class="pinefetch-switch-copy">
+                                    <span class="pinefetch-switch-title">Save post captions</span>
+                                    <span class="oj-helper"
                                         >Save post text from YouTube, TikTok, Instagram, Facebook, X and Reddit as
                                         .caption.txt.</span
                                     >
                                 </span>
-                                <input id="saveCaptions" class="pf-toggle-input" type="checkbox" />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                                <input id="saveCaptions" type="checkbox" role="switch" />
+                                <span class="oj-switch-track" aria-hidden="true"></span>
                             </label>
 
-                            <label class="pf-toggle" for="saveThumbnails">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Save thumbnails</span>
-                                    <span class="pf-toggle-hint"
-                                        >Save available thumbnail images beside downloads.</span
-                                    >
+                            <label class="oj-switch" for="saveThumbnails">
+                                <span class="pinefetch-switch-copy">
+                                    <span class="pinefetch-switch-title">Save thumbnails</span>
+                                    <span class="oj-helper">Save available thumbnail images beside downloads.</span>
                                 </span>
-                                <input id="saveThumbnails" class="pf-toggle-input" type="checkbox" />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                                <input id="saveThumbnails" type="checkbox" role="switch" />
+                                <span class="oj-switch-track" aria-hidden="true"></span>
                             </label>
                         </section>
 
-                        <section class="pf-stack pf-settings-group" aria-labelledby="settingsTranscriptionTitle">
-                            <h3 id="settingsTranscriptionTitle" class="pf-section-title">Transcription</h3>
-                            <label class="pf-field" for="fasterWhisperModel">
-                                <span class="pf-label">Transcription quality</span>
-                                <select id="fasterWhisperModel" class="pf-select">
-                                    <option value="base">Fast (base)</option>
-                                    <option value="small">Balanced (small)</option>
-                                    <option value="medium">High (medium)</option>
-                                    <option value="large-v3">Best (large-v3)</option>
-                                </select>
-                                <span class="pf-hint"
+                        <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsTranscriptionTitle">
+                            <h3 id="settingsTranscriptionTitle" class="oj-heading-3">Transcription</h3>
+                            <div class="oj-field">
+                                <span id="fasterWhisperModelLabel" class="oj-label">Transcription quality</span>
+                                <div
+                                    id="fasterWhisperModelDropdown"
+                                    class="oj-dropdown pinefetch-choice-dropdown"
+                                    data-oj-dropdown
+                                >
+                                    <button
+                                        id="fasterWhisperModelTrigger"
+                                        class="oj-button oj-button-secondary pinefetch-choice-trigger"
+                                        type="button"
+                                        data-oj-dropdown-trigger
+                                        aria-labelledby="fasterWhisperModelLabel fasterWhisperModelValue"
+                                        aria-describedby="fasterWhisperModelHelp"
+                                    >
+                                        <span id="fasterWhisperModelValue">Fast (base)</span>
+                                        <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                                    </button>
+                                    <div
+                                        id="fasterWhisperModelMenu"
+                                        class="oj-menu"
+                                        data-oj-dropdown-menu
+                                        role="menu"
+                                        aria-labelledby="fasterWhisperModelLabel"
+                                        hidden
+                                    ></div>
+                                </div>
+                                <span id="fasterWhisperModelHelp" class="oj-helper"
                                     >Larger models improve accuracy but need more download time, memory, and processing
                                     time.</span
                                 >
-                            </label>
+                            </div>
                         </section>
 
-                        <section class="pf-stack pf-settings-group" aria-labelledby="settingsApplicationTitle">
-                            <h3 id="settingsApplicationTitle" class="pf-section-title">Application</h3>
-                            <label class="pf-toggle" for="magicImportEnabled">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Magic import</span>
-                                    <span class="pf-toggle-hint"
+                        <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsApplicationTitle">
+                            <h3 id="settingsApplicationTitle" class="oj-heading-3">Application</h3>
+                            <label class="oj-switch" for="magicImportEnabled">
+                                <span class="pinefetch-switch-copy">
+                                    <span class="pinefetch-switch-title">Magic import</span>
+                                    <span class="oj-helper"
                                         >Click PineFetch with an empty URL field to import a URL from the
                                         clipboard.</span
                                     >
                                 </span>
-                                <input id="magicImportEnabled" class="pf-toggle-input" type="checkbox" checked />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                                <input id="magicImportEnabled" type="checkbox" role="switch" checked />
+                                <span class="oj-switch-track" aria-hidden="true"></span>
                             </label>
 
-                            <label class="pf-toggle" for="notificationsEnabled">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Download notifications</span>
-                                    <span class="pf-toggle-hint"
+                            <label class="oj-switch" for="notificationsEnabled">
+                                <span class="pinefetch-switch-copy">
+                                    <span class="pinefetch-switch-title">Download notifications</span>
+                                    <span class="oj-helper"
                                         >Notify when a queue of more than one video finishes successfully.</span
                                     >
                                 </span>
-                                <input id="notificationsEnabled" class="pf-toggle-input" type="checkbox" />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                                <input id="notificationsEnabled" type="checkbox" role="switch" />
+                                <span class="oj-switch-track" aria-hidden="true"></span>
                             </label>
                         </section>
 
-                        <section class="pf-stack pf-settings-group" aria-labelledby="settingsDiagnosticsTitle">
-                            <h3 id="settingsDiagnosticsTitle" class="pf-section-title">Diagnostics</h3>
-                            <label class="pf-field" for="ytDlpPath">
-                                <span class="pf-label">yt-dlp path</span>
+                        <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsDiagnosticsTitle">
+                            <h3 id="settingsDiagnosticsTitle" class="oj-heading-3">Diagnostics</h3>
+                            <label class="oj-field" for="ytDlpPath">
+                                <span class="oj-label">yt-dlp path</span>
                                 <input
                                     id="ytDlpPath"
-                                    class="pf-input"
+                                    class="oj-input"
                                     type="text"
                                     placeholder="Auto-detect from PATH"
                                 />
                             </label>
 
-                            <div class="pf-field">
-                                <span class="pf-label">yt-dlp versions</span>
-                                <div class="pf-panel-soft pf-pinefetch-version-info">
+                            <div class="oj-field">
+                                <span class="oj-label">yt-dlp versions</span>
+                                <div class="oj-panel oj-panel-compact pinefetch-version-info">
                                     <p id="ytDlpInstalledVersion">Installed: -</p>
                                     <p id="ytDlpLatestVersion">Latest: -</p>
                                 </div>
                             </div>
 
-                            <section class="pf-panel-soft pf-terminal pf-pinefetch-log-panel" id="logPanel">
-                                <div class="pf-panel-header pf-terminal-header pf-pinefetch-log-header">
-                                    <div class="pf-panel-heading">
-                                        <h3 class="pf-section-title">Terminal Log</h3>
-                                        <p class="pf-subtitle" id="logHint">stdout / stderr</p>
+                            <section
+                                class="oj-panel oj-panel-compact pinefetch-terminal pinefetch-log-panel"
+                                id="logPanel"
+                            >
+                                <div class="oj-section-header pinefetch-terminal-header pinefetch-log-header">
+                                    <div class="pinefetch-panel-heading">
+                                        <h3 class="oj-heading-3">Terminal Log</h3>
+                                        <p class="oj-caption" id="logHint">stdout / stderr</p>
                                     </div>
-                                    <div class="pf-row">
-                                        <button id="copyLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>
+                                    <div class="oj-cluster">
+                                        <button
+                                            id="copyLogsBtn"
+                                            class="oj-button oj-button-ghost"
+                                            type="button"
+                                            disabled
+                                        >
                                             Copy
                                         </button>
-                                        <button id="clearLogsBtn" class="pf-btn pf-btn-ghost" type="button" disabled>
+                                        <button
+                                            id="clearLogsBtn"
+                                            class="oj-button oj-button-ghost"
+                                            type="button"
+                                            disabled
+                                        >
                                             Clear
                                         </button>
                                     </div>
                                 </div>
-                                <div id="logBody" class="pf-terminal-body pf-pinefetch-log-body"></div>
+                                <div
+                                    id="logBody"
+                                    class="oj-code-block oj-scroll-area pinefetch-terminal-body pinefetch-log-body"
+                                    aria-label="Terminal log"
+                                    tabindex="0"
+                                ></div>
                             </section>
                         </section>
                     </div>
 
-                    <div id="linkDumpView" class="pf-panel-view pf-stack" hidden>
-                        <section class="pf-panel-soft pf-link-dump-section" id="linkDumpServerPanel">
-                            <header class="pf-panel-header">
-                                <div class="pf-panel-heading">
-                                    <h3 class="pf-section-title">Local Link Dump Server</h3>
-                                    <p class="pf-subtitle" id="linkDumpServerHint">
+                    <div id="linkDumpView" class="pinefetch-panel-view oj-stack" hidden>
+                        <section class="oj-panel oj-panel-compact pinefetch-link-dump-section" id="linkDumpServerPanel">
+                            <header class="oj-section-header">
+                                <div class="pinefetch-panel-heading">
+                                    <h3 class="oj-heading-3">Local Link Dump Server</h3>
+                                    <p class="oj-caption" id="linkDumpServerHint">
                                         Browser extensions can send YouTube, TikTok, Instagram, Facebook, X, and Reddit
                                         links to this PineFetch instance.
                                     </p>
                                 </div>
-                                <span class="pf-badge pf-badge-muted" id="linkDumpServerStatusBadge">Stopped</span>
+                                <span class="oj-badge" id="linkDumpServerStatusBadge">Stopped</span>
                             </header>
 
-                            <div class="pf-grid">
-                                <label class="pf-field" for="linkDumpServerUrl">
-                                    <span class="pf-label">Server URL</span>
-                                    <input id="linkDumpServerUrl" class="pf-input" type="text" readonly />
+                            <div class="oj-grid">
+                                <label class="oj-field" for="linkDumpServerUrl">
+                                    <span class="oj-label">Server URL</span>
+                                    <input id="linkDumpServerUrl" class="oj-input" type="text" readonly />
                                 </label>
 
-                                <label class="pf-field" for="linkDumpPort">
-                                    <span class="pf-label">Port</span>
-                                    <input id="linkDumpPort" class="pf-input" type="number" min="1" max="65535" />
+                                <label class="oj-field" for="linkDumpPort">
+                                    <span class="oj-label">Port</span>
+                                    <input id="linkDumpPort" class="oj-input" type="number" min="1" max="65535" />
                                 </label>
                             </div>
 
-                            <label class="pf-toggle" for="linkDumpServerEnabled">
-                                <span class="pf-toggle-copy">
-                                    <span class="pf-toggle-title">Enable server</span>
-                                    <span class="pf-toggle-hint">Listen on local loopback only.</span>
+                            <label class="oj-switch" for="linkDumpServerEnabled">
+                                <span class="pinefetch-switch-copy">
+                                    <span class="pinefetch-switch-title">Enable server</span>
+                                    <span class="oj-helper">Listen on local loopback only.</span>
                                 </span>
-                                <input id="linkDumpServerEnabled" class="pf-toggle-input" type="checkbox" checked />
-                                <span class="pf-toggle-track" aria-hidden="true"></span>
+                                <input id="linkDumpServerEnabled" type="checkbox" role="switch" checked />
+                                <span class="oj-switch-track" aria-hidden="true"></span>
                             </label>
 
-                            <div class="pf-row">
-                                <button id="saveLinkDumpServerBtn" class="pf-btn" type="button">Save Server</button>
-                                <button id="restartLinkDumpServerBtn" class="pf-btn pf-btn-ghost" type="button">
+                            <div class="oj-cluster">
+                                <button id="saveLinkDumpServerBtn" class="oj-button" type="button">Save Server</button>
+                                <button id="restartLinkDumpServerBtn" class="oj-button oj-button-ghost" type="button">
                                     Restart Server
                                 </button>
                             </div>
-                            <p id="linkDumpServerStatusText" class="pf-status" role="status" aria-live="polite"></p>
+                            <p id="linkDumpServerStatusText" class="oj-status" role="status" aria-live="polite"></p>
                         </section>
 
-                        <section class="pf-panel-soft pf-link-dump-section">
-                            <header class="pf-panel-header">
-                                <div class="pf-panel-heading">
-                                    <h3 class="pf-section-title">Browser Extension</h3>
-                                    <p class="pf-subtitle">
+                        <section class="oj-panel oj-panel-compact pinefetch-link-dump-section">
+                            <header class="oj-section-header">
+                                <div class="pinefetch-panel-heading">
+                                    <h3 class="oj-heading-3">Browser Extension</h3>
+                                    <p class="oj-caption">
                                         Install or inspect the Chrome extension that sends video links to PineFetch.
                                     </p>
                                 </div>
                             </header>
                             <a
                                 id="linkDumpExtensionRepoLink"
-                                class="pf-btn pf-btn-ghost pf-link-dump-repo-link"
+                                class="oj-button oj-button-ghost pinefetch-link-dump-repo-link"
                                 href="https://github.com/oliverjessner/PineFetch-Link-Dump"
                                 target="_blank"
                                 rel="noopener noreferrer"
@@ -356,16 +464,16 @@
                     </div>
                 </section>
 
-                <section class="pf-panel pf-pinefetch-panel pf-pinefetch-panel-right">
-                    <div class="pf-panel-header">
-                        <div class="pf-panel-heading">
-                            <h2 class="pf-section-title" id="rightPanelTitle">Queue / Progress</h2>
+                <section class="oj-panel pinefetch-panel pinefetch-panel-right">
+                    <div class="oj-section-header">
+                        <div class="pinefetch-panel-heading">
+                            <h2 class="oj-heading-3" id="rightPanelTitle">Queue / Progress</h2>
                         </div>
-                        <div class="pf-row">
-                            <div class="pf-badge" id="queueBadge">0 waiting · 0 active</div>
+                        <div class="oj-cluster">
+                            <div class="oj-badge" id="queueBadge">0 waiting · 0 active</div>
                             <button
                                 id="queueCollapseBtn"
-                                class="pf-btn pf-btn-ghost"
+                                class="oj-button oj-button-ghost"
                                 type="button"
                                 aria-expanded="true"
                                 aria-controls="queueProgressView"
@@ -375,124 +483,142 @@
                         </div>
                     </div>
 
-                    <div id="queueProgressView" class="pf-pinefetch-right-panel-view">
-                        <p id="queueEmptyHint" class="pf-hint">
+                    <div id="queueProgressView" class="pinefetch-right-panel-view">
+                        <p id="queueEmptyHint" class="oj-helper">
                             The queue is empty. Paste a link, choose a format, then click Queue.
                         </p>
-                        <div id="queueList" class="pf-scroll-area pf-pinefetch-queue-list" hidden></div>
-                        <p id="queueModeHint" class="pf-hint" hidden></p>
-                        <div class="pf-pinefetch-queue-actions">
-                            <div class="pf-row">
+                        <div id="queueList" class="oj-scroll-area pinefetch-queue-list" hidden></div>
+                        <p id="queueModeHint" class="oj-helper" hidden></p>
+                        <div class="pinefetch-queue-actions">
+                            <div class="oj-cluster">
                                 <button
                                     id="queueAutoStartBtn"
-                                    class="pf-btn pf-btn-ghost"
+                                    class="oj-button oj-button-ghost"
                                     type="button"
                                     aria-pressed="true"
                                 >
                                     Auto-start: on
                                 </button>
-                                <button id="startQueueBtn" class="pf-btn" type="button">Download</button>
-                                <button id="pauseQueueBtn" class="pf-btn pf-btn-ghost" type="button">
+                                <button id="startQueueBtn" class="oj-button" type="button">Download</button>
+                                <button id="pauseQueueBtn" class="oj-button oj-button-ghost" type="button">
                                     Pause after current
                                 </button>
                             </div>
-                            <button id="clearQueueBtn" class="pf-btn pf-btn-ghost" type="button">
+                            <button id="clearQueueBtn" class="oj-button oj-button-ghost" type="button">
                                 Cancel and clear
                             </button>
                         </div>
                     </div>
 
-                    <div id="historySummaryView" class="pf-pinefetch-right-panel-view" hidden>
-                        <div class="pf-history-summary-grid">
-                            <section class="pf-panel-soft pf-stat">
-                                <span class="pf-label">Completed downloads</span>
-                                <p class="pf-stat-value" id="historyVideoCount">0</p>
+                    <div id="historySummaryView" class="pinefetch-right-panel-view" hidden>
+                        <div class="pinefetch-history-summary-grid">
+                            <section class="oj-panel oj-panel-compact oj-metric">
+                                <span class="oj-metric-label">Completed downloads</span>
+                                <p class="oj-metric-value oj-mono" id="historyVideoCount">0</p>
                             </section>
-                            <section class="pf-panel-soft pf-stat">
-                                <span class="pf-label">Total data</span>
-                                <p class="pf-stat-value" id="historyTotalSize">0 B</p>
+                            <section class="oj-panel oj-panel-compact oj-metric">
+                                <span class="oj-metric-label">Total data</span>
+                                <p class="oj-metric-value oj-mono" id="historyTotalSize">0 B</p>
                             </section>
-                            <section class="pf-panel-soft pf-stat">
-                                <span class="pf-label">Total runtime</span>
-                                <p class="pf-stat-value" id="historyTotalDuration">0m 00s</p>
+                            <section class="oj-panel oj-panel-compact oj-metric">
+                                <span class="oj-metric-label">Total runtime</span>
+                                <p class="oj-metric-value oj-mono" id="historyTotalDuration">0m 00s</p>
                             </section>
                         </div>
-                        <section class="pf-panel-soft pf-history-sources" aria-labelledby="historySourcesTitle">
-                            <h3 class="pf-section-title" id="historySourcesTitle">Sources</h3>
-                            <ul id="historySourcesList" class="pf-history-sources-list"></ul>
-                            <p id="historySourcesEmpty" class="pf-hint">Sources appear after the first download.</p>
+                        <section
+                            class="oj-panel oj-panel-compact oj-stack pinefetch-history-sources"
+                            aria-labelledby="historySourcesTitle"
+                        >
+                            <h3 class="oj-heading-3" id="historySourcesTitle">Sources</h3>
+                            <ul id="historySourcesList" class="oj-list pinefetch-history-sources-list"></ul>
+                            <p id="historySourcesEmpty" class="oj-helper">Sources appear after the first download.</p>
                         </section>
                     </div>
 
-                    <div
-                        id="linkDumpSideView"
-                        class="pf-pinefetch-right-panel-view pf-pinefetch-link-dump-side-view"
-                        hidden
-                    >
-                        <div class="pf-stack">
-                            <section class="pf-panel-soft pf-link-dump-section" id="linkDumpConnectionsPanel">
-                                <header class="pf-panel-header">
-                                    <div class="pf-panel-heading">
-                                        <h3 class="pf-section-title">Link Dump Connections</h3>
-                                        <p class="pf-subtitle">
+                    <div id="linkDumpSideView" class="pinefetch-right-panel-view pinefetch-link-dump-side-view" hidden>
+                        <div class="oj-stack">
+                            <section
+                                class="oj-panel oj-panel-compact pinefetch-link-dump-section"
+                                id="linkDumpConnectionsPanel"
+                            >
+                                <header class="oj-section-header">
+                                    <div class="pinefetch-panel-heading">
+                                        <h3 class="oj-heading-3">Link Dump Connections</h3>
+                                        <p class="oj-caption">
                                             Connect one or more browser extensions to this PineFetch instance.
                                         </p>
                                     </div>
                                 </header>
 
-                                <div class="pf-field-row pf-link-dump-generate-row">
-                                    <label class="pf-field pf-grow" for="linkDumpSecretName">
-                                        <span class="pf-label">Connection name</span>
+                                <div class="oj-cluster pinefetch-link-dump-generate-row">
+                                    <label class="oj-field oj-grow" for="linkDumpSecretName">
+                                        <span class="oj-label">Connection name</span>
                                         <input
                                             id="linkDumpSecretName"
-                                            class="pf-input"
+                                            class="oj-input"
                                             type="text"
                                             placeholder="Chrome Extension on MacBook"
                                         />
                                     </label>
-                                    <button id="generateLinkDumpSecretBtn" class="pf-btn pf-btn-primary" type="button">
+                                    <button
+                                        id="generateLinkDumpSecretBtn"
+                                        class="oj-button oj-button-primary"
+                                        type="button"
+                                    >
                                         Generate Secret
                                     </button>
                                 </div>
 
                                 <div
                                     id="generatedLinkDumpSecretPanel"
-                                    class="pf-panel-soft pf-link-dump-secret-panel"
+                                    class="oj-panel oj-panel-compact pinefetch-link-dump-secret-panel"
                                     hidden
                                 >
-                                    <label class="pf-field" for="generatedLinkDumpSecret">
-                                        <span class="pf-label">New secret</span>
-                                        <input id="generatedLinkDumpSecret" class="pf-input" type="text" readonly />
+                                    <label class="oj-field" for="generatedLinkDumpSecret">
+                                        <span class="oj-label">New secret</span>
+                                        <input id="generatedLinkDumpSecret" class="oj-input" type="text" readonly />
                                     </label>
-                                    <div class="pf-row">
-                                        <button id="copyGeneratedLinkDumpSecretBtn" class="pf-btn" type="button">
+                                    <div class="oj-cluster">
+                                        <button id="copyGeneratedLinkDumpSecretBtn" class="oj-button" type="button">
                                             Copy Secret
                                         </button>
                                     </div>
-                                    <p class="pf-hint">Copy this secret now. It will not be shown again.</p>
+                                    <p class="oj-helper">Copy this secret now. It will not be shown again.</p>
                                 </div>
 
-                                <div id="linkDumpSecretList" class="pf-link-dump-secret-list"></div>
-                                <p id="linkDumpSecretHint" class="pf-hint" hidden>
+                                <div id="linkDumpSecretList" class="pinefetch-link-dump-secret-list"></div>
+                                <p id="linkDumpSecretHint" class="oj-helper" hidden>
                                     Generate a secret to connect a browser extension.
                                 </p>
-                                <p id="linkDumpSecretStatus" class="pf-status" role="status" aria-live="polite"></p>
+                                <p id="linkDumpSecretStatus" class="oj-status" role="status" aria-live="polite"></p>
                             </section>
                         </div>
                     </div>
                 </section>
             </main>
 
-            <div id="queueContextMenu" class="pf-menu pf-menu-popover pf-queue-context-menu" hidden>
-                <button class="pf-menu-item pf-queue-context-menu-btn" type="button" data-action="copy-link">
+            <div
+                id="queueContextMenu"
+                class="oj-menu pinefetch-context-menu pinefetch-queue-context-menu"
+                role="menu"
+                aria-label="Queue actions"
+                hidden
+            >
+                <button
+                    class="oj-menu-item pinefetch-queue-context-menu-btn"
+                    type="button"
+                    role="menuitem"
+                    data-action="copy-link"
+                >
                     Copy link
                 </button>
-                <div class="pf-menu-divider pf-queue-context-divider" role="separator" aria-hidden="true"></div>
-                <div id="queueContextDownloads" class="pf-menu-group pf-queue-context-downloads"></div>
+                <div class="oj-menu-divider pinefetch-queue-context-divider" role="separator" aria-hidden="true"></div>
+                <div id="queueContextDownloads" class="pinefetch-menu-group pinefetch-queue-context-downloads"></div>
                 <button
                     id="queueContextCancelBtn"
-                    class="pf-menu-item pf-menu-item-danger pf-queue-context-menu-btn"
+                    class="oj-menu-item oj-menu-item-danger pinefetch-queue-context-menu-btn"
                     type="button"
+                    role="menuitem"
                     data-action="cancel"
                     hidden
                 >
@@ -500,8 +626,9 @@
                 </button>
                 <button
                     id="queueContextRemoveBtn"
-                    class="pf-menu-item pf-queue-context-menu-btn"
+                    class="oj-menu-item pinefetch-queue-context-menu-btn"
                     type="button"
+                    role="menuitem"
                     data-action="remove"
                     hidden
                 >
@@ -511,137 +638,171 @@
 
             <div
                 id="historyContextMenu"
-                class="pf-menu pf-menu-popover pf-history-context-menu"
+                class="oj-menu pinefetch-context-menu pinefetch-history-context-menu"
                 role="menu"
                 aria-label="History actions"
                 hidden
             >
-                <button id="historyShowMoreDataBtn" class="pf-menu-item" type="button" role="menuitem">
+                <button id="historyShowMoreDataBtn" class="oj-menu-item" type="button" role="menuitem">
                     Show More Data
                 </button>
             </div>
 
-            <dialog id="historyDetailsDialog" class="pf-history-details-dialog" aria-labelledby="historyDetailsTitle">
-                <div class="pf-history-details-modal">
-                    <header class="pf-history-details-header">
-                        <div class="pf-panel-heading">
-                            <h2 id="historyDetailsTitle" class="pf-section-title">History Details</h2>
-                            <p id="historyDetailsSubtitle" class="pf-subtitle"></p>
+            <dialog
+                id="historyDetailsDialog"
+                class="oj-dialog pinefetch-history-details-dialog"
+                data-oj-dialog
+                aria-labelledby="historyDetailsTitle"
+            >
+                <div class="pinefetch-history-details-modal">
+                    <header class="oj-dialog-header pinefetch-history-details-header">
+                        <div class="pinefetch-panel-heading">
+                            <h2 id="historyDetailsTitle" class="oj-dialog-title">History Details</h2>
+                            <p id="historyDetailsSubtitle" class="oj-caption"></p>
                         </div>
                         <button
                             id="historyDetailsCloseBtn"
-                            class="pf-icon-btn"
+                            class="oj-icon-button"
                             type="button"
                             aria-label="Close history details"
+                            data-oj-dialog-close="close"
+                            autofocus
                         >
-                            ×
+                            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
                         </button>
                     </header>
 
-                    <p id="historyDetailsStatus" class="pf-status" role="status" aria-live="polite"></p>
+                    <div class="oj-dialog-body pinefetch-history-details-body">
+                        <p id="historyDetailsStatus" class="oj-status" role="status" aria-live="polite"></p>
 
-                    <div id="historyDetailsContent" class="pf-history-details-content" hidden>
                         <div
-                            id="historyDetailsTabs"
-                            class="pf-segmented pf-history-details-tabs"
-                            role="tablist"
-                            aria-label="History details"
-                        >
-                            <button
-                                id="historyOverviewTab"
-                                class="pf-segmented-btn"
-                                type="button"
-                                role="tab"
-                                aria-selected="true"
-                                aria-controls="historyOverviewPanel"
-                                data-history-tab="overview"
-                            >
-                                Overview
-                            </button>
-                            <button
-                                id="historyTranscriptTab"
-                                class="pf-segmented-btn"
-                                type="button"
-                                role="tab"
-                                aria-selected="false"
-                                aria-controls="historyTranscriptPanel"
-                                data-history-tab="transcript"
-                                hidden
-                            >
-                                Transcript
-                            </button>
-                            <button
-                                id="historyCaptionsTab"
-                                class="pf-segmented-btn"
-                                type="button"
-                                role="tab"
-                                aria-selected="false"
-                                aria-controls="historyCaptionsPanel"
-                                data-history-tab="captions"
-                                hidden
-                            >
-                                Captions
-                            </button>
-                        </div>
-
-                        <section
-                            id="historyOverviewPanel"
-                            class="pf-history-details-panel"
-                            role="tabpanel"
-                            aria-labelledby="historyOverviewTab"
-                        >
-                            <dl id="historyOverviewList" class="pf-history-overview-list"></dl>
-                        </section>
-
-                        <section
-                            id="historyTranscriptPanel"
-                            class="pf-history-details-panel"
-                            role="tabpanel"
-                            aria-labelledby="historyTranscriptTab"
+                            id="historyDetailsContent"
+                            class="oj-tabs pinefetch-history-details-content"
+                            data-oj-tabs
                             hidden
                         >
-                            <div class="pf-history-content-toolbar">
-                                <p id="historyTranscriptMeta" class="pf-muted"></p>
+                            <div
+                                id="historyDetailsTabs"
+                                class="oj-tab-list pinefetch-history-details-tabs"
+                                role="tablist"
+                                aria-label="History details"
+                            >
                                 <button
-                                    id="historyTranscriptCopyBtn"
-                                    class="pf-btn pf-btn-ghost"
+                                    id="historyOverviewTab"
+                                    class="oj-tab"
                                     type="button"
-                                    disabled
+                                    role="tab"
+                                    aria-selected="true"
+                                    aria-controls="historyOverviewPanel"
+                                    data-history-tab="overview"
                                 >
-                                    Copy
+                                    Overview
                                 </button>
-                            </div>
-                            <p id="historyTranscriptNotice" class="pf-hint" hidden></p>
-                            <p id="historyTranscriptStatus" class="pf-status" role="status" aria-live="polite"></p>
-                            <pre id="historyTranscriptText" class="pf-history-text-viewer" tabindex="0" hidden></pre>
-                        </section>
-
-                        <section
-                            id="historyCaptionsPanel"
-                            class="pf-history-details-panel"
-                            role="tabpanel"
-                            aria-labelledby="historyCaptionsTab"
-                            hidden
-                        >
-                            <div class="pf-history-content-toolbar">
-                                <label
-                                    id="historyCaptionTrackField"
-                                    class="pf-field pf-history-caption-track"
-                                    for="historyCaptionTrackSelect"
+                                <button
+                                    id="historyTranscriptTab"
+                                    class="oj-tab"
+                                    type="button"
+                                    role="tab"
+                                    aria-selected="false"
+                                    aria-controls="historyTranscriptPanel"
+                                    data-history-tab="transcript"
+                                    disabled
                                     hidden
                                 >
-                                    <span class="pf-label">Caption track</span>
-                                    <select id="historyCaptionTrackSelect" class="pf-select"></select>
-                                </label>
-                                <button id="historyCaptionCopyBtn" class="pf-btn pf-btn-ghost" type="button" disabled>
-                                    Copy
+                                    Transcript
+                                </button>
+                                <button
+                                    id="historyCaptionsTab"
+                                    class="oj-tab"
+                                    type="button"
+                                    role="tab"
+                                    aria-selected="false"
+                                    aria-controls="historyCaptionsPanel"
+                                    data-history-tab="captions"
+                                    disabled
+                                    hidden
+                                >
+                                    Captions
                                 </button>
                             </div>
-                            <p id="historyCaptionMeta" class="pf-muted"></p>
-                            <p id="historyCaptionNotice" class="pf-hint" hidden></p>
-                            <p id="historyCaptionStatus" class="pf-status" role="status" aria-live="polite"></p>
-                            <pre id="historyCaptionText" class="pf-history-text-viewer" tabindex="0" hidden></pre>
-                        </section>
+
+                            <section
+                                id="historyOverviewPanel"
+                                class="oj-tab-panel pinefetch-history-details-panel"
+                                role="tabpanel"
+                                aria-labelledby="historyOverviewTab"
+                            >
+                                <dl
+                                    id="historyOverviewList"
+                                    class="oj-definition-list pinefetch-history-overview-list"
+                                ></dl>
+                            </section>
+
+                            <section
+                                id="historyTranscriptPanel"
+                                class="oj-tab-panel pinefetch-history-details-panel"
+                                role="tabpanel"
+                                aria-labelledby="historyTranscriptTab"
+                                hidden
+                            >
+                                <div class="pinefetch-history-content-toolbar">
+                                    <p id="historyTranscriptMeta" class="oj-muted"></p>
+                                    <button
+                                        id="historyTranscriptCopyBtn"
+                                        class="oj-button oj-button-ghost"
+                                        type="button"
+                                        disabled
+                                    >
+                                        Copy
+                                    </button>
+                                </div>
+                                <p id="historyTranscriptNotice" class="oj-helper" hidden></p>
+                                <p id="historyTranscriptStatus" class="oj-status" role="status" aria-live="polite"></p>
+                                <pre
+                                    id="historyTranscriptText"
+                                    class="oj-code-block pinefetch-history-text-viewer"
+                                    tabindex="0"
+                                    hidden
+                                ></pre>
+                            </section>
+
+                            <section
+                                id="historyCaptionsPanel"
+                                class="oj-tab-panel pinefetch-history-details-panel"
+                                role="tabpanel"
+                                aria-labelledby="historyCaptionsTab"
+                                hidden
+                            >
+                                <div class="pinefetch-history-content-toolbar">
+                                    <label
+                                        id="historyCaptionTrackField"
+                                        class="oj-field pinefetch-history-caption-track"
+                                        for="historyCaptionTrackSelect"
+                                        hidden
+                                    >
+                                        <span class="oj-label">Caption track</span>
+                                        <select id="historyCaptionTrackSelect" class="oj-select"></select>
+                                    </label>
+                                    <button
+                                        id="historyCaptionCopyBtn"
+                                        class="oj-button oj-button-ghost"
+                                        type="button"
+                                        disabled
+                                    >
+                                        Copy
+                                    </button>
+                                </div>
+                                <p id="historyCaptionMeta" class="oj-muted"></p>
+                                <p id="historyCaptionNotice" class="oj-helper" hidden></p>
+                                <p id="historyCaptionStatus" class="oj-status" role="status" aria-live="polite"></p>
+                                <pre
+                                    id="historyCaptionText"
+                                    class="oj-code-block pinefetch-history-text-viewer"
+                                    tabindex="0"
+                                    hidden
+                                ></pre>
+                            </section>
+                        </div>
                     </div>
                 </div>
             </dialog>

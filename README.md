@@ -105,6 +105,10 @@ npm ci
 npm run dev
 ```
 
+The interface uses [oj-designsystem](https://github.com/oliverjessner/oj-designsystem).
+`npm ci` prepares its complete local stylesheet, JavaScript, fonts, icons and
+license notices for Tauri. No font or icon CDN is needed.
+
 Create a macOS release build with:
 
 ```bash
@@ -138,7 +142,7 @@ Please respect platform terms and local laws. PineFetch does not attempt to bypa
 
 ## Built with
 
-[yt-dlp](https://github.com/yt-dlp/yt-dlp) · [FFmpeg](https://ffmpeg.org/) · Tauri · Rust
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) · [FFmpeg](https://ffmpeg.org/) · [oj-designsystem](https://github.com/oliverjessner/oj-designsystem) · Tauri · Rust
 
 ## License
 

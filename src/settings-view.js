@@ -1,16 +1,28 @@
+import { createDropdownChoice } from './dropdown-choice.js';
+
 export const createSettingsView = ({
     els,
     api,
     appendLog,
-    normalizePresetKey,
+    setSelectedPresetKey,
     getSelectedPresetKey,
     updateDownloadOptionHints,
     isActive,
 }) => {
     const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
     const defaultFasterWhisperModel = 'base';
-    const fasterWhisperModels = new Set(['base', 'small', 'medium', 'large-v3']);
-    const normalizeFasterWhisperModel = model => (fasterWhisperModels.has(model) ? model : defaultFasterWhisperModel);
+    const fasterWhisperModelChoice = createDropdownChoice({
+        menu: els.fasterWhisperModelMenu,
+        value: els.fasterWhisperModelValue,
+    });
+    fasterWhisperModelChoice.setOptions([
+        { value: 'base', label: 'Fast (base)' },
+        { value: 'small', label: 'Balanced (small)' },
+        { value: 'medium', label: 'High (medium)' },
+        { value: 'large-v3', label: 'Best (large-v3)' },
+    ]);
+    const normalizeFasterWhisperModel = model =>
+        fasterWhisperModelChoice.hasValue(model) ? model : defaultFasterWhisperModel;
     let config = null;
     let configSaveQueue = Promise.resolve();
     let configSaveRevision = 0;
@@ -123,9 +135,9 @@ export const createSettingsView = ({
             els.saveThumbnails.checked = config.save_thumbnails ?? false;
             els.outputDir.value = config.default_output_dir || '';
             els.ytDlpPath.value = config.yt_dlp_path || '';
-            els.fasterWhisperModel.value = normalizeFasterWhisperModel(config.faster_whisper_model);
+            fasterWhisperModelChoice.setValue(normalizeFasterWhisperModel(config.faster_whisper_model));
             els.downloadVideoWithTranscript.checked = config.download_video_with_transcript ?? false;
-            els.presetSelect.value = normalizePresetKey(config.selected_preset_key);
+            setSelectedPresetKey(config.selected_preset_key);
             els.magicImportEnabled.checked = config.magic_import_enabled ?? true;
             els.cutAtTimestampEnabled.checked = config.cut_at_timestamp_enabled ?? true;
             syncMagicImportTriggerState();
@@ -159,7 +171,7 @@ export const createSettingsView = ({
                 config = await api.getConfig();
             } catch (err) {
                 els.settingsSaveStatus.textContent = `Could not load settings: ${err}`;
-                els.settingsSaveStatus.classList.add('pf-status-error');
+                els.settingsSaveStatus.classList.add('oj-status-error');
                 appendLog(`[config] ${err}`, true);
                 return false;
             }
@@ -169,7 +181,7 @@ export const createSettingsView = ({
         const localRevision = ++configLocalRevision;
         const revision = ++configSaveRevision;
         els.settingsSaveStatus.textContent = 'Saving changes…';
-        els.settingsSaveStatus.classList.remove('pf-status-error');
+        els.settingsSaveStatus.classList.remove('oj-status-error');
 
         const queuedSave = configSaveQueue.then(() => api.patchConfig({ changes: patch }));
         configSaveQueue = queuedSave.catch(() => {});
@@ -189,7 +201,7 @@ export const createSettingsView = ({
             if (revision === configSaveRevision) {
                 await syncConfig();
                 els.settingsSaveStatus.textContent = `Could not save changes: ${err}`;
-                els.settingsSaveStatus.classList.add('pf-status-error');
+                els.settingsSaveStatus.classList.add('oj-status-error');
             }
             return false;
         }
@@ -234,8 +246,14 @@ export const createSettingsView = ({
         els.notificationsEnabled.addEventListener('change', () => {
             void saveSettings({ notifications_enabled: els.notificationsEnabled.checked });
         });
-        els.fasterWhisperModel.addEventListener('change', () => {
-            void saveSettings({ faster_whisper_model: normalizeFasterWhisperModel(els.fasterWhisperModel.value) });
+        els.fasterWhisperModelDropdown.addEventListener('oj:select', event => {
+            if (
+                event.target !== els.fasterWhisperModelDropdown ||
+                !fasterWhisperModelChoice.hasValue(event.detail?.value)
+            )
+                return;
+            const model = fasterWhisperModelChoice.setValue(event.detail.value);
+            void saveSettings({ faster_whisper_model: model });
         });
         els.downloadVideoWithTranscript.addEventListener('change', () => {
             void saveSettings({ download_video_with_transcript: els.downloadVideoWithTranscript.checked });

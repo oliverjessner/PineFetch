@@ -1,9 +1,10 @@
 import { formatHistorySource, formatLocalDateTime, formatUploadDate } from './formatters.js';
+import { closeDialog, initTabs, openDialog, toast } from './vendor/oj/index.js';
+
 export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, formatDuration, detectPlatform }) => {
     const state = {
         contextEntryId: null,
         contextReturnFocus: null,
-        dialogReturnFocus: null,
         details: null,
         detailsRequestId: 0,
         transcript: undefined,
@@ -20,6 +21,7 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
 
     const hideContextMenu = ({ restoreFocus = false } = {}) => {
         const returnFocus = state.contextReturnFocus;
+        returnFocus?.setAttribute('aria-expanded', 'false');
         state.contextEntryId = null;
         state.contextReturnFocus = null;
         els.historyContextMenu.hidden = true;
@@ -29,8 +31,10 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
     };
 
     const openContextMenu = (entryId, x, y, returnFocus) => {
+        hideContextMenu();
         state.contextEntryId = entryId;
         state.contextReturnFocus = returnFocus;
+        returnFocus?.setAttribute('aria-expanded', 'true');
         els.historyContextMenu.hidden = false;
 
         requestAnimationFrame(() => {
@@ -47,13 +51,14 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         });
     };
 
-    const addOverviewRow = (label, value, title = null) => {
+    const addOverviewRow = (label, value, title = null, className = null) => {
         if (value === null || value === undefined || value === '') return;
         const term = document.createElement('dt');
         term.textContent = label;
         const description = document.createElement('dd');
         description.textContent = `${value}`;
         if (title) description.title = title;
+        if (className) description.className = className;
         els.historyOverviewList.append(term, description);
     };
 
@@ -96,8 +101,8 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
                 : null
         );
         addOverviewRow('Media type', entry.medium);
-        addOverviewRow('Filename', entry.filename);
-        addOverviewRow('File path', entry.output_path, entry.output_path);
+        addOverviewRow('Filename', entry.filename, null, 'oj-mono');
+        addOverviewRow('File path', entry.output_path, entry.output_path, 'oj-path');
         addOverviewRow(
             'File status',
             entry.output_path ? (details.output_file_available ? 'Available' : 'Missing') : null
@@ -109,25 +114,11 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
                 ? formatFileSize(entry.file_size_bytes)
                 : null
         );
-        addOverviewRow('SHA-256', entry.sha256);
+        addOverviewRow('SHA-256', entry.sha256, null, 'oj-mono');
         addOverviewRow('Thumbnail', entry.thumbnail ? 'Available' : null);
         addOverviewRow('Transcript', transcriptLabel);
         addOverviewRow('Captions', captionCount ? `${captionCount} ${captionCount === 1 ? 'track' : 'tracks'}` : null);
         addOverviewRow('PineFetch version', entry.pinefetch_version);
-    };
-
-    const updateTabs = activeTab => {
-        const tabs = [
-            [els.historyOverviewTab, els.historyOverviewPanel, 'overview'],
-            [els.historyTranscriptTab, els.historyTranscriptPanel, 'transcript'],
-            [els.historyCaptionsTab, els.historyCaptionsPanel, 'captions'],
-        ];
-        for (const [tab, panel, name] of tabs) {
-            const active = name === activeTab;
-            tab.setAttribute('aria-selected', `${active}`);
-            tab.tabIndex = active ? 0 : -1;
-            panel.hidden = !active;
-        }
     };
 
     const renderTranscript = content => {
@@ -165,17 +156,23 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         }
         const entryId = state.details?.entry?.id;
         if (!entryId) return;
+        const requestId = state.detailsRequestId;
         els.historyTranscriptStatus.textContent = 'Loading transcript...';
         els.historyTranscriptText.hidden = true;
         els.historyTranscriptCopyBtn.disabled = true;
         try {
             const content = await api.getHistoryTranscript({ id: entryId });
-            if (!els.historyDetailsDialog.open || state.details?.entry?.id !== entryId) return;
+            if (
+                requestId !== state.detailsRequestId ||
+                !els.historyDetailsDialog.open ||
+                state.details?.entry?.id !== entryId
+            )
+                return;
             state.transcript = content || null;
             renderTranscript(state.transcript);
         } catch (err) {
             appendLog(`[history details] ${err}`, true);
-            if (state.details?.entry?.id === entryId) {
+            if (requestId === state.detailsRequestId && els.historyDetailsDialog.open) {
                 els.historyTranscriptStatus.textContent = 'Transcript could not be loaded.';
             }
         }
@@ -231,6 +228,7 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         const entryId = state.details?.entry?.id;
         const mediaPath = els.historyCaptionTrackSelect.value;
         if (!entryId || !mediaPath) return;
+        const requestId = state.detailsRequestId;
         if (state.captions.has(mediaPath)) {
             renderCaption(state.captions.get(mediaPath));
             return;
@@ -241,6 +239,7 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         try {
             const content = await api.getHistoryCaption({ id: entryId, mediaPath });
             if (
+                requestId !== state.detailsRequestId ||
                 !els.historyDetailsDialog.open ||
                 state.details?.entry?.id !== entryId ||
                 els.historyCaptionTrackSelect.value !== mediaPath
@@ -250,31 +249,17 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
             renderCaption(content || null);
         } catch (err) {
             appendLog(`[history details] ${err}`, true);
-            if (state.details?.entry?.id === entryId) {
+            if (
+                requestId === state.detailsRequestId &&
+                els.historyDetailsDialog.open &&
+                els.historyCaptionTrackSelect.value === mediaPath
+            ) {
                 els.historyCaptionStatus.textContent = 'Captions could not be loaded.';
             }
         }
     };
 
-    const activateTab = tabName => {
-        if (tabName === 'transcript' && els.historyTranscriptTab.hidden) return;
-        if (tabName === 'captions' && els.historyCaptionsTab.hidden) return;
-        updateTabs(tabName);
-        if (tabName === 'transcript') void loadTranscript();
-        if (tabName === 'captions') void loadSelectedCaption();
-    };
-
-    const closeDialog = () => {
-        if (!els.historyDetailsDialog.open) return;
-        const returnFocus = state.dialogReturnFocus;
-        state.detailsRequestId += 1;
-        els.historyDetailsDialog.close();
-        state.dialogReturnFocus = null;
-        if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
-    };
-
     const openDetails = async (entryId, returnFocus) => {
-        state.dialogReturnFocus = returnFocus;
         state.details = null;
         state.transcript = undefined;
         state.captions.clear();
@@ -282,8 +267,8 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         els.historyDetailsSubtitle.textContent = '';
         els.historyDetailsStatus.textContent = 'Loading details...';
         els.historyDetailsContent.hidden = true;
-        if (!els.historyDetailsDialog.open) els.historyDetailsDialog.showModal();
-        els.historyDetailsCloseBtn.focus({ preventScroll: true });
+        els.historyOverviewTab.click();
+        openDialog(els.historyDetailsDialog, { trigger: returnFocus });
 
         try {
             const details = await api.getHistoryDetails({ id: entryId });
@@ -298,13 +283,14 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
             els.historyDetailsSubtitle.textContent = title;
             els.historyDetailsStatus.textContent = '';
             els.historyTranscriptTab.hidden = !details.transcript;
+            els.historyTranscriptTab.disabled = !details.transcript;
             els.historyCaptionsTab.hidden = !details.captions?.length;
+            els.historyCaptionsTab.disabled = !details.captions?.length;
             const visibleTabCount = 1 + Number(Boolean(details.transcript)) + Number(Boolean(details.captions?.length));
             els.historyDetailsTabs.hidden = visibleTabCount === 1;
             renderOverview(details);
             renderCaptionOptions(details.captions || []);
             els.historyDetailsContent.hidden = false;
-            activateTab('overview');
         } catch (err) {
             appendLog(`[history details] ${err}`, true);
             if (requestId === state.detailsRequestId) {
@@ -318,6 +304,7 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         try {
             await navigator.clipboard.writeText(content.text);
             statusElement.textContent = `${label} copied.`;
+            toast(`${label} copied.`, { type: 'success', root: els.historyDetailsDialog });
         } catch (err) {
             appendLog(`[copy] ${err}`, true);
             statusElement.textContent = `${label} could not be copied.`;
@@ -325,12 +312,15 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
     };
 
     const bindEvents = () => {
+        const cleanupTabs = initTabs(els.historyDetailsContent);
+        window.addEventListener('pagehide', cleanupTabs, { once: true });
+
         els.historyList.addEventListener('contextmenu', event => {
             const target = event.target instanceof Element ? event.target : null;
-            const item = target?.closest('.pf-history-item');
+            const item = target?.closest('.pinefetch-history-item');
             if (!item || !els.historyList.contains(item)) return;
             const interactive = target.closest('a, button, input, select, textarea, [contenteditable="true"]');
-            if (interactive && !interactive.classList.contains('pf-history-open-btn')) {
+            if (interactive && !interactive.classList.contains('pinefetch-history-open-btn')) {
                 hideContextMenu();
                 return;
             }
@@ -339,8 +329,18 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
                 item.dataset.historyId,
                 event.clientX,
                 event.clientY,
-                item.querySelector('.pf-history-open-btn')
+                item.querySelector('.pinefetch-history-open-btn')
             );
+        });
+        els.historyList.addEventListener('keydown', event => {
+            if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+            const target = event.target instanceof Element ? event.target : null;
+            const opener = target?.closest('.pinefetch-history-open-btn');
+            const item = opener?.closest('.pinefetch-history-item');
+            if (!item || !els.historyList.contains(item)) return;
+            event.preventDefault();
+            const rect = opener.getBoundingClientRect();
+            openContextMenu(item.dataset.historyId, rect.left, rect.bottom, opener);
         });
         els.historyContextMenu.addEventListener('contextmenu', event => event.preventDefault());
         els.historyShowMoreDataBtn.addEventListener('click', () => {
@@ -360,9 +360,13 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
                 event.preventDefault();
                 return;
             }
-            if (!target?.closest('.pf-history-item')) hideContextMenu();
+            if (!target?.closest('.pinefetch-history-item')) hideContextMenu();
         });
         document.addEventListener('keydown', event => {
+            if (event.key === 'Tab' && !els.historyContextMenu.hidden) {
+                hideContextMenu({ restoreFocus: true });
+                return;
+            }
             if (event.key === 'Escape' && !els.historyContextMenu.hidden) {
                 event.preventDefault();
                 hideContextMenu({ restoreFocus: true });
@@ -376,32 +380,17 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         window.addEventListener('blur', () => hideContextMenu());
         els.historyList.addEventListener('scroll', () => hideContextMenu(), { passive: true });
 
-        els.historyDetailsCloseBtn.addEventListener('click', closeDialog);
-        els.historyDetailsDialog.addEventListener('cancel', event => {
-            event.preventDefault();
-            closeDialog();
+        els.historyDetailsDialog.addEventListener('oj:close', event => {
+            if (event.target !== els.historyDetailsDialog) return;
+            state.detailsRequestId += 1;
         });
         els.historyDetailsDialog.addEventListener('click', event => {
-            if (event.target === els.historyDetailsDialog) closeDialog();
+            if (event.target === els.historyDetailsDialog) closeDialog(els.historyDetailsDialog, 'close');
         });
-        els.historyDetailsTabs.addEventListener('click', event => {
-            const tab = event.target.closest('[data-history-tab]');
-            if (tab && !tab.hidden) activateTab(tab.dataset.historyTab);
-        });
-        els.historyDetailsTabs.addEventListener('keydown', event => {
-            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-            const tabs = Array.from(els.historyDetailsTabs.querySelectorAll('[role="tab"]:not([hidden])'));
-            const currentIndex = tabs.indexOf(document.activeElement);
-            if (currentIndex < 0) return;
-            event.preventDefault();
-            const nextIndex =
-                event.key === 'Home'
-                    ? 0
-                    : event.key === 'End'
-                      ? tabs.length - 1
-                      : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-            tabs[nextIndex].focus();
-            activateTab(tabs[nextIndex].dataset.historyTab);
+        els.historyDetailsContent.addEventListener('oj:change', event => {
+            if (event.target !== els.historyDetailsContent) return;
+            if (event.detail.tab === els.historyTranscriptTab) void loadTranscript();
+            if (event.detail.tab === els.historyCaptionsTab) void loadSelectedCaption();
         });
         els.historyCaptionTrackSelect.addEventListener('change', () => void loadSelectedCaption());
         els.historyTranscriptCopyBtn.addEventListener(

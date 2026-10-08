@@ -1,3 +1,5 @@
+import { initOJ, toast } from './vendor/oj/index.js';
+import { createDropdownChoice } from './dropdown-choice.js';
 import { formatDuration, formatFileSize } from './formatters.js';
 import {
     createAppState,
@@ -40,7 +42,9 @@ const els = Object.seal({
     openFolderBtn: document.getElementById('openFolderBtn'),
     outputDir: document.getElementById('outputDir'),
     ytDlpPath: document.getElementById('ytDlpPath'),
-    fasterWhisperModel: document.getElementById('fasterWhisperModel'),
+    fasterWhisperModelDropdown: document.getElementById('fasterWhisperModelDropdown'),
+    fasterWhisperModelValue: document.getElementById('fasterWhisperModelValue'),
+    fasterWhisperModelMenu: document.getElementById('fasterWhisperModelMenu'),
     downloadVideoWithTranscript: document.getElementById('downloadVideoWithTranscript'),
     ytDlpInstalledVersion: document.getElementById('ytDlpInstalledVersion'),
     ytDlpLatestVersion: document.getElementById('ytDlpLatestVersion'),
@@ -60,7 +64,10 @@ const els = Object.seal({
     linkDumpSecretList: document.getElementById('linkDumpSecretList'),
     linkDumpSecretHint: document.getElementById('linkDumpSecretHint'),
     linkDumpSecretStatus: document.getElementById('linkDumpSecretStatus'),
-    presetSelect: document.getElementById('presetSelect'),
+    presetDropdown: document.getElementById('presetDropdown'),
+    presetTrigger: document.getElementById('presetTrigger'),
+    presetValue: document.getElementById('presetValue'),
+    presetMenu: document.getElementById('presetMenu'),
     infoCard: document.getElementById('infoCard'),
     infoTitle: document.getElementById('infoTitle'),
     infoUploader: document.getElementById('infoUploader'),
@@ -86,8 +93,12 @@ const els = Object.seal({
     historyView: document.getElementById('historyView'),
     historyList: document.getElementById('historyList'),
     historySearchInput: document.getElementById('historySearchInput'),
-    historySearchFieldSelect: document.getElementById('historySearchFieldSelect'),
-    historySourceSelect: document.getElementById('historySourceSelect'),
+    historySearchFieldDropdown: document.getElementById('historySearchFieldDropdown'),
+    historySearchFieldValue: document.getElementById('historySearchFieldValue'),
+    historySearchFieldMenu: document.getElementById('historySearchFieldMenu'),
+    historySourceDropdown: document.getElementById('historySourceDropdown'),
+    historySourceValue: document.getElementById('historySourceValue'),
+    historySourceMenu: document.getElementById('historySourceMenu'),
     historyHint: document.getElementById('historyHint'),
     settingsView: document.getElementById('settingsView'),
     linkDumpView: document.getElementById('linkDumpView'),
@@ -180,8 +191,13 @@ const presetLabels = Object.freeze([
 ]);
 let presetOptions = [];
 let presets = Object.freeze({});
-const normalizePresetKey = key => (presets[key] ? key : presetLabels[0]?.key || 'best');
-const getSelectedPresetKey = () => normalizePresetKey(els.presetSelect.value);
+const presetChoice = createDropdownChoice({ menu: els.presetMenu, value: els.presetValue });
+const normalizePresetKey = key => (Object.hasOwn(presets, key) ? key : presetLabels[0].key);
+const getSelectedPresetKey = () => normalizePresetKey(presetChoice.getValue());
+const setSelectedPresetKey = key => {
+    presetChoice.setValue(normalizePresetKey(key));
+    updateDownloadOptionHints();
+};
 const findPresetForDownloadJob = job =>
     presetOptions.find(
         preset =>
@@ -234,109 +250,24 @@ const formatCutStartLabel = seconds => {
     return `from ${formatDuration(Number(seconds))}`;
 };
 
-const svgNamespace = 'http://www.w3.org/2000/svg';
-
-const createSvgElement = shapes => {
-    const svg = document.createElementNS(svgNamespace, 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.setAttribute('focusable', 'false');
-
-    shapes.forEach(({ tag, attrs }) => {
-        const shape = document.createElementNS(svgNamespace, tag);
-        Object.entries(attrs).forEach(([name, value]) => {
-            shape.setAttribute(name, value);
-        });
-        svg.appendChild(shape);
-    });
-
-    return svg;
+const createIcon = (name, family = 'fa-solid') => {
+    const icon = document.createElement('i');
+    icon.className = `${family} fa-${name}`;
+    icon.setAttribute('aria-hidden', 'true');
+    return icon;
 };
 
 const getPlatformIconElement = platform => {
-    switch (platform) {
-        case 'youtube':
-            return createSvgElement([
-                {
-                    tag: 'path',
-                    attrs: {
-                        d: 'M22 12c0 2.7-.3 4.4-.6 5.3-.3.8-.9 1.4-1.7 1.7-.9.3-2.6.6-7.7.6s-6.8-.3-7.7-.6c-.8-.3-1.4-.9-1.7-1.7C2.3 16.4 2 14.7 2 12s.3-4.4.6-5.3c.3-.8.9-1.4 1.7-1.7C5.2 4.7 6.9 4.4 12 4.4s6.8.3 7.7.6c.8.3 1.4.9 1.7 1.7.3.9.6 2.6.6 5.3Z',
-                        fill: 'currentColor',
-                    },
-                },
-                { tag: 'path', attrs: { d: 'M10 8.8 15.5 12 10 15.2V8.8Z', fill: '#fff' } },
-            ]);
-        case 'facebook':
-            return createSvgElement([
-                {
-                    tag: 'path',
-                    attrs: {
-                        d: 'M13.6 8.6h2.3V5.4h-2.7c-2.6 0-4 1.5-4 4v1.9H7v3.1h2.2v5.2h3.3v-5.2h2.7l.4-3.1h-3.1V9.8c0-.8.3-1.2.8-1.2Z',
-                        fill: 'currentColor',
-                    },
-                },
-            ]);
-        case 'twitch':
-            return createSvgElement([
-                {
-                    tag: 'path',
-                    attrs: {
-                        d: 'M4 3h16v11.2l-4 4H12l-2.8 2.8V18.2H4V3Zm2 2v11.2h3.2v1.6l1.6-1.6H15l3-3V5H6Zm4.2 2.4h1.8v4.2h-1.8V7.4Zm4 0H16v4.2h-1.8V7.4Z',
-                        fill: 'currentColor',
-                    },
-                },
-            ]);
-        case 'x':
-            return createSvgElement([
-                {
-                    tag: 'path',
-                    attrs: {
-                        d: 'M4 4h3.8l4.7 6.4L17.8 4H20l-6.4 7.3L20.5 20h-3.8l-5-6.8L5.9 20H3.7l6.7-7.6L4 4Z',
-                        fill: 'currentColor',
-                    },
-                },
-            ]);
-        case 'tiktok':
-            return createSvgElement([
-                {
-                    tag: 'path',
-                    attrs: {
-                        d: 'M14.5 4c1.1 1.6 2.3 2.4 4 2.5V9c-1.5 0-2.8-.4-4-1.2v6.6a4.8 4.8 0 1 1-3.8-4.7v2.6a2.2 2.2 0 1 0 1.3 2V4h2.5Z',
-                        fill: 'currentColor',
-                    },
-                },
-            ]);
-        case 'instagram':
-            return createSvgElement([
-                {
-                    tag: 'rect',
-                    attrs: {
-                        x: '3.5',
-                        y: '3.5',
-                        width: '17',
-                        height: '17',
-                        rx: '5',
-                        fill: 'none',
-                        stroke: 'currentColor',
-                        'stroke-width': '2',
-                    },
-                },
-                {
-                    tag: 'circle',
-                    attrs: {
-                        cx: '12',
-                        cy: '12',
-                        r: '3.5',
-                        fill: 'none',
-                        stroke: 'currentColor',
-                        'stroke-width': '2',
-                    },
-                },
-                { tag: 'circle', attrs: { cx: '17.2', cy: '6.8', r: '1.2', fill: 'currentColor' } },
-            ]);
-        default:
-            return null;
-    }
+    const icons = {
+        youtube: 'youtube',
+        facebook: 'facebook',
+        twitch: 'twitch',
+        x: 'x-twitter',
+        tiktok: 'tiktok',
+        instagram: 'instagram',
+        reddit: 'reddit-alien',
+    };
+    return icons[platform] ? createIcon(icons[platform], 'fa-brands') : null;
 };
 
 const appendTextSpans = (parent, values) => {
@@ -353,12 +284,15 @@ const shakeUrlInput = () => {
         clearTimeout(urlShakeTimer);
         urlShakeTimer = null;
     }
-    els.urlInput.classList.remove('pf-is-invalid', 'pf-invalid-shake');
+    els.urlInput.removeAttribute('aria-invalid');
+    els.urlInput.classList.remove('pinefetch-invalid-shake');
     void els.urlInput.offsetWidth;
-    els.urlInput.classList.add('pf-is-invalid', 'pf-invalid-shake');
+    els.urlInput.setAttribute('aria-invalid', 'true');
+    els.urlInput.classList.add('pinefetch-invalid-shake');
     els.urlInput.focus();
     urlShakeTimer = setTimeout(() => {
-        els.urlInput.classList.remove('pf-is-invalid', 'pf-invalid-shake');
+        els.urlInput.removeAttribute('aria-invalid');
+        els.urlInput.classList.remove('pinefetch-invalid-shake');
         urlShakeTimer = null;
     }, 420);
 };
@@ -416,6 +350,12 @@ const getQueuedTxtImportKeys = () => {
 
 const setInfoBadge = text => {
     els.infoBadge.textContent = text;
+    els.infoBadge.classList.toggle('oj-badge-success', text === 'Ready');
+    els.infoBadge.classList.toggle('oj-badge-info', text === 'Loading...');
+    els.infoBadge.classList.toggle(
+        'oj-badge-danger',
+        ['Error', 'Formats unavailable', 'Unsupported link', 'Invalid URL'].includes(text)
+    );
 };
 
 const setActiveView = view => {
@@ -424,9 +364,9 @@ const setActiveView = view => {
     const isLinkDump = view === 'linkDump';
     const isSettings = view === 'settings';
     state.activeView = view;
-    const split = els.settingsView.closest('.pf-pinefetch-split');
-    split.classList.toggle('pf-settings-active', isSettings);
-    split.classList.toggle('pf-history-active', isHistory);
+    const split = els.settingsView.closest('.pinefetch-split');
+    split.classList.toggle('pinefetch-settings-active', isSettings);
+    split.classList.toggle('pinefetch-history-active', isHistory);
     settingsLogRenderReady = false;
     const activationId = ++viewActivationId;
     const runAfterViewPaint = callback => {
@@ -443,25 +383,21 @@ const setActiveView = view => {
     els.linkDumpView.hidden = !isLinkDump;
     els.queueProgressView.hidden = !isDownload || state.queueCollapsed;
     els.queueCollapseBtn.hidden = !isDownload;
-    split.classList.toggle('pf-queue-collapsed', isDownload && state.queueCollapsed);
+    split.classList.toggle('pinefetch-queue-collapsed', isDownload && state.queueCollapsed);
     els.historySummaryView.hidden = !isHistory;
     els.linkDumpSideView.hidden = !isLinkDump;
-    els.downloadView.classList.toggle('pf-is-active', isDownload);
-    els.historyView.classList.toggle('pf-is-active', isHistory);
-    els.settingsView.classList.toggle('pf-is-active', isSettings);
-    els.linkDumpView.classList.toggle('pf-is-active', isLinkDump);
-    els.queueProgressView.classList.toggle('pf-is-active', isDownload);
-    els.historySummaryView.classList.toggle('pf-is-active', isHistory);
-    els.linkDumpSideView.classList.toggle('pf-is-active', isLinkDump);
+    els.downloadView.classList.toggle('pinefetch-is-active', isDownload);
+    els.historyView.classList.toggle('pinefetch-is-active', isHistory);
+    els.settingsView.classList.toggle('pinefetch-is-active', isSettings);
+    els.linkDumpView.classList.toggle('pinefetch-is-active', isLinkDump);
+    els.queueProgressView.classList.toggle('pinefetch-is-active', isDownload);
+    els.historySummaryView.classList.toggle('pinefetch-is-active', isHistory);
+    els.linkDumpSideView.classList.toggle('pinefetch-is-active', isLinkDump);
 
-    els.viewDownloadBtn.classList.toggle('pf-is-active', isDownload);
-    els.viewDownloadBtn.setAttribute('aria-pressed', String(isDownload));
-    els.viewHistoryBtn.classList.toggle('pf-is-active', isHistory);
-    els.viewHistoryBtn.setAttribute('aria-pressed', String(isHistory));
-    els.viewLinkDumpBtn.classList.toggle('pf-is-active', isLinkDump);
-    els.viewLinkDumpBtn.setAttribute('aria-pressed', String(isLinkDump));
-    els.viewSettingsBtn.classList.toggle('pf-is-active', isSettings);
-    els.viewSettingsBtn.setAttribute('aria-pressed', String(isSettings));
+    els.viewDownloadBtn.setAttribute('aria-current', isDownload ? 'page' : 'false');
+    els.viewHistoryBtn.setAttribute('aria-current', isHistory ? 'page' : 'false');
+    els.viewLinkDumpBtn.setAttribute('aria-current', isLinkDump ? 'page' : 'false');
+    els.viewSettingsBtn.setAttribute('aria-current', isSettings ? 'page' : 'false');
 
     if (isDownload) {
         els.leftPanelTitle.textContent = 'Download';
@@ -501,25 +437,17 @@ const setActiveView = view => {
 };
 
 const renderPresetOptions = () => {
-    const selectedPresetKey = normalizePresetKey(els.presetSelect.value);
-    els.presetSelect.replaceChildren();
-
-    presetOptions.forEach(preset => {
-        const option = document.createElement('option');
-        option.value = preset.key;
-        option.textContent = preset.selectLabel;
-        els.presetSelect.appendChild(option);
-    });
-
-    els.presetSelect.value = selectedPresetKey;
+    presetChoice.setOptions(presetOptions.map(preset => ({ value: preset.key, label: preset.selectLabel })));
+    updateDownloadOptionHints();
 };
 
 const renderQueueContextMenu = () => {
     els.queueContextDownloads.replaceChildren();
     presetOptions.forEach(preset => {
         const button = document.createElement('button');
-        button.className = 'pf-menu-item pf-queue-context-menu-btn';
+        button.className = 'oj-menu-item pinefetch-queue-context-menu-btn';
         button.type = 'button';
+        button.setAttribute('role', 'menuitem');
         button.dataset.action = 'download';
         button.dataset.presetKey = preset.key;
         button.textContent = preset.menuLabel;
@@ -527,11 +455,14 @@ const renderQueueContextMenu = () => {
     });
 };
 
-const hideQueueContextMenu = () => {
+const hideQueueContextMenu = ({ restoreFocus = false } = {}) => {
+    const trigger = queueCardElements.get(state.contextMenuJobId)?.querySelector('.pinefetch-queue-more-btn');
+    trigger?.setAttribute('aria-expanded', 'false');
     state.contextMenuJobId = null;
     els.queueContextMenu.hidden = true;
     els.queueContextMenu.style.left = '';
     els.queueContextMenu.style.top = '';
+    if (restoreFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
 };
 
 const getContextMenuJob = () => {
@@ -553,9 +484,11 @@ const syncQueueContextMenuState = () => {
 };
 
 const openQueueContextMenu = (job, x, y) => {
+    if (state.contextMenuJobId && state.contextMenuJobId !== job.id) hideQueueContextMenu();
     state.contextMenuJobId = job.id;
     syncQueueContextMenuState();
     els.queueContextMenu.hidden = false;
+    queueCardElements.get(job.id)?.querySelector('.pinefetch-queue-more-btn')?.setAttribute('aria-expanded', 'true');
 
     requestAnimationFrame(() => {
         if (els.queueContextMenu.hidden || state.contextMenuJobId !== job.id) return;
@@ -567,7 +500,7 @@ const openQueueContextMenu = (job, x, y) => {
 
         els.queueContextMenu.style.left = `${left}px`;
         els.queueContextMenu.style.top = `${top}px`;
-        els.queueContextMenu.querySelector('button:not([hidden])')?.focus();
+        els.queueContextMenu.querySelector('button:not([hidden]):not(:disabled)')?.focus();
     });
 };
 
@@ -674,7 +607,7 @@ const toggleQueueCollapsed = () => {
     els.queueCollapseBtn.textContent = state.queueCollapsed ? 'Show queue' : 'Hide queue';
     els.queueCollapseBtn.setAttribute('aria-expanded', String(!state.queueCollapsed));
     els.queueProgressView.hidden = state.queueCollapsed;
-    document.querySelector('.pf-pinefetch-split')?.classList.toggle('pf-queue-collapsed', state.queueCollapsed);
+    document.querySelector('.pinefetch-split')?.classList.toggle('pinefetch-queue-collapsed', state.queueCollapsed);
     if (!state.queueCollapsed) scheduleQueueRender();
 };
 
@@ -695,15 +628,16 @@ const getQueueMetaItems = job => {
 
 const renderQueue = () => {
     const items = Array.from(state.jobs.values()).sort((a, b) => a.createdAt - b.createdAt);
-    const focusedItem = document.activeElement?.closest?.('.pf-queue-item');
+    const focusedItem = document.activeElement?.closest?.('.pinefetch-queue-item');
     const focusedJobId = focusedItem?.dataset.jobId;
-    const focusedMoreButton = document.activeElement?.classList?.contains('pf-queue-more-btn');
+    const focusedMoreButton = document.activeElement?.classList?.contains('pinefetch-queue-more-btn');
     els.queueList.replaceChildren();
     queueCardElements.clear();
     items.forEach(job => {
         const item = document.createElement('div');
-        item.className = `pf-list-card pf-queue-item ${job.id === state.selectedId ? 'pf-is-active' : ''}`;
+        item.className = `oj-panel oj-panel-compact oj-panel-interactive pinefetch-queue-item ${job.id === state.selectedId ? 'pinefetch-is-active' : ''}`;
         item.dataset.jobId = job.id;
+        if (job.id === state.selectedId) item.dataset.ojState = 'selected';
         item.oncontextmenu = event => {
             event.preventDefault();
             state.selectedId = job.id;
@@ -724,10 +658,10 @@ const renderQueue = () => {
         };
 
         const header = document.createElement('div');
-        header.className = 'pf-queue-header';
+        header.className = 'pinefetch-queue-header';
 
         const title = document.createElement('button');
-        title.className = 'pf-queue-title';
+        title.className = 'pinefetch-queue-title';
         title.type = 'button';
         title.setAttribute(
             'aria-label',
@@ -736,7 +670,7 @@ const renderQueue = () => {
         const platform = detectPlatform(job.url || '');
         if (platform) {
             const platformIcon = document.createElement('span');
-            platformIcon.className = `pf-queue-platform-icon pf-platform-${platform}`;
+            platformIcon.className = `pinefetch-queue-platform-icon pinefetch-platform-${platform}`;
             const icon = getPlatformIconElement(platform);
             if (icon) {
                 platformIcon.appendChild(icon);
@@ -744,19 +678,30 @@ const renderQueue = () => {
             }
         }
         const titleText = document.createElement('span');
-        titleText.className = 'pf-queue-title-text';
+        titleText.className = 'pinefetch-queue-title-text';
         titleText.textContent = job.label || job.url;
         title.appendChild(titleText);
 
         const badge = document.createElement('div');
-        badge.className = 'pf-badge pf-badge-muted pf-queue-badge';
+        const badgeVariant =
+            {
+                success: 'oj-badge-success',
+                error: 'oj-badge-danger',
+                downloading: 'oj-badge-info',
+                transcribing: 'oj-badge-info',
+                cancelling: 'oj-badge-warning',
+            }[job.state] || '';
+        badge.className = `oj-badge ${badgeVariant} pinefetch-queue-badge`;
         badge.textContent =
             { success: 'Completed', error: 'Failed', transcribing: 'Transcribing' }[job.state] || job.state || 'queued';
 
         const moreBtn = document.createElement('button');
-        moreBtn.className = 'pf-icon-btn pf-queue-more-btn';
+        moreBtn.className = 'oj-icon-button pinefetch-queue-more-btn';
         moreBtn.type = 'button';
-        moreBtn.textContent = '⋯';
+        moreBtn.appendChild(createIcon('ellipsis'));
+        moreBtn.setAttribute('aria-haspopup', 'menu');
+        moreBtn.setAttribute('aria-controls', 'queueContextMenu');
+        moreBtn.setAttribute('aria-expanded', String(state.contextMenuJobId === job.id));
         moreBtn.setAttribute('aria-label', `More actions for ${job.label || job.url}`);
         moreBtn.onclick = event => {
             event.stopPropagation();
@@ -768,42 +713,35 @@ const renderQueue = () => {
 
         header.append(title, badge, moreBtn);
 
-        const progress = document.createElement('div');
-        progress.className = 'pf-progress';
         const isDownloading = job.state === 'downloading';
         const isProcessing = job.state === 'transcribing' || job.state === 'cancelling';
+        const progress = document.createElement(isProcessing ? 'div' : 'progress');
+        progress.className = `oj-progress${isProcessing ? ' oj-progress-indeterminate' : ''}`;
         progress.hidden = !isDownloading && !isProcessing && job.state !== 'success';
-        progress.classList.toggle('pf-progress-indeterminate', isProcessing);
-        progress.setAttribute('role', 'progressbar');
         progress.setAttribute(
             'aria-label',
             isProcessing ? (job.state === 'transcribing' ? 'Transcribing' : 'Cancelling') : 'Download progress'
         );
-        if (!isProcessing)
-            progress.setAttribute(
-                'aria-valuenow',
-                String(Math.round(job.state === 'success' ? 100 : job.percent || 0))
-            );
-        progress.setAttribute('aria-valuemin', '0');
-        progress.setAttribute('aria-valuemax', '100');
-        const bar = document.createElement('span');
-        bar.className = 'pf-progress-bar';
-        bar.style.width = `${isProcessing ? 35 : job.state === 'success' ? 100 : job.percent || 0}%`;
-        progress.appendChild(bar);
+        if (isProcessing) {
+            progress.setAttribute('role', 'progressbar');
+        } else {
+            progress.max = 100;
+            progress.value = Math.max(0, Math.min(100, job.state === 'success' ? 100 : Number(job.percent) || 0));
+        }
 
         const meta = document.createElement('div');
-        meta.className = 'pf-queue-meta';
+        meta.className = 'pinefetch-queue-meta';
         appendTextSpans(meta, getQueueMetaItems(job));
         const main = document.createElement('div');
-        main.className = 'pf-list-card-layout pf-queue-main';
+        main.className = 'pinefetch-list-card-layout pinefetch-queue-main';
 
         const content = document.createElement('div');
-        content.className = 'pf-queue-content';
+        content.className = 'pinefetch-queue-content';
         content.append(header, progress, meta);
         if (job.clearError || job.error) {
             const errorText = document.createElement('p');
             const isHistoryWarning = job.state === 'success' && !job.clearError;
-            errorText.className = `pf-status ${isHistoryWarning ? 'pf-queue-warning' : 'pf-status-error'} pf-queue-error`;
+            errorText.className = `oj-status ${isHistoryWarning ? 'oj-status-warning' : 'oj-status-error'} pinefetch-queue-error`;
             errorText.textContent =
                 job.clearError || (job.state === 'success' ? `History warning: ${job.error}` : job.error);
             content.appendChild(errorText);
@@ -813,11 +751,11 @@ const renderQueue = () => {
         const thumbUrl = job.thumbnail || resolveYouTubeThumbnail(job.url);
         if (thumbUrl) {
             const thumb = document.createElement('div');
-            thumb.className = 'pf-media-thumbnail pf-queue-thumb';
+            thumb.className = 'pinefetch-media-thumbnail pinefetch-queue-thumb';
             thumb.style.backgroundImage = `url('${thumbUrl}')`;
             main.appendChild(thumb);
         } else {
-            main.classList.add('pf-no-media');
+            main.classList.add('pinefetch-no-media');
         }
 
         item.append(main);
@@ -827,7 +765,7 @@ const renderQueue = () => {
     if (focusedJobId) {
         const restoredItem = Array.from(els.queueList.children).find(item => item.dataset.jobId === focusedJobId);
         restoredItem
-            ?.querySelector(focusedMoreButton ? '.pf-queue-more-btn' : '.pf-queue-title')
+            ?.querySelector(focusedMoreButton ? '.pinefetch-queue-more-btn' : '.pinefetch-queue-title')
             ?.focus({ preventScroll: true });
     }
 
@@ -850,11 +788,10 @@ const renderQueueProgress = () => {
             queueRenderDirty = true;
             return;
         }
-        const progress = item.querySelector('.pf-progress');
+        const progress = item.querySelector('.oj-progress');
         const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
-        progress.setAttribute('aria-valuenow', String(Math.round(percent)));
-        progress.querySelector('.pf-progress-bar').style.width = `${percent}%`;
-        const meta = item.querySelector('.pf-queue-meta');
+        progress.value = percent;
+        const meta = item.querySelector('.pinefetch-queue-meta');
         meta.replaceChildren();
         appendTextSpans(meta, getQueueMetaItems(job));
     }
@@ -887,7 +824,7 @@ const scheduleQueueRender = ({ progressOnly = false } = {}) => {
 
 const createLogLine = ({ text, isError }) => {
     const line = document.createElement('div');
-    line.className = `pf-terminal-line pf-log-line ${isError ? 'pf-status-error' : ''}`;
+    line.className = `pinefetch-terminal-line pinefetch-log-line ${isError ? 'oj-status-error' : ''}`;
     line.textContent = text;
     return line;
 };
@@ -1025,7 +962,8 @@ const loadInfo = async () => {
     const requestUrl = url;
     const requestId = ++loadInfoRequestId;
     loadInfoInFlight = true;
-    els.loadInfoBtn.classList.add('pf-btn-loading');
+    els.loadInfoBtn.classList.add('oj-button-loading');
+    els.loadInfoBtn.setAttribute('aria-busy', 'true');
     els.loadInfoBtn.disabled = true;
     setInfoBadge('Loading...');
     try {
@@ -1050,7 +988,8 @@ const loadInfo = async () => {
         appendLog(`[info] ${err}`, true);
     } finally {
         loadInfoInFlight = false;
-        els.loadInfoBtn.classList.remove('pf-btn-loading');
+        els.loadInfoBtn.classList.remove('oj-button-loading');
+        els.loadInfoBtn.removeAttribute('aria-busy');
         els.loadInfoBtn.disabled = false;
 
         const nextUrl = els.urlInput.value.trim();
@@ -1252,8 +1191,8 @@ const setTxtImportStatus = (message, isError = false) => {
     if (!els.txtImportStatus) return;
     els.txtImportStatus.textContent = message;
     els.txtImportStatus.hidden = !message;
-    els.txtImportStatus.classList.toggle('pf-status-error', Boolean(message && isError));
-    els.txtImportStatus.classList.toggle('pf-status-success', Boolean(message && !isError));
+    els.txtImportStatus.classList.toggle('oj-status-error', Boolean(message && isError));
+    els.txtImportStatus.classList.toggle('oj-status-success', Boolean(message && !isError));
 };
 
 const setTxtImportBusy = isBusy => {
@@ -1416,7 +1355,7 @@ const settings = createSettingsView({
     els,
     api,
     appendLog,
-    normalizePresetKey,
+    setSelectedPresetKey,
     getSelectedPresetKey,
     updateDownloadOptionHints,
     isActive: () => state.activeView === 'settings',
@@ -1445,9 +1384,10 @@ const bindEvents = () => {
     });
     els.loadInfoBtn.addEventListener('click', loadInfo);
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
-    els.presetSelect.addEventListener('change', () => {
+    els.presetDropdown.addEventListener('oj:select', event => {
+        if (event.target !== els.presetDropdown || !Object.hasOwn(presets, event.detail?.value)) return;
+        setSelectedPresetKey(event.detail.value);
         void settings.persistSelectedPresetKey();
-        updateDownloadOptionHints();
     });
     els.importTxtBtn.addEventListener('click', () => {
         void importTxtLinks();
@@ -1512,7 +1452,8 @@ const bindEvents = () => {
             state.infoUrl = null;
             renderInfo();
             setInfoBadge('Idle');
-            els.loadInfoBtn.classList.remove('pf-btn-loading');
+            els.loadInfoBtn.classList.remove('oj-button-loading');
+            els.loadInfoBtn.removeAttribute('aria-busy');
             els.loadInfoBtn.disabled = false;
             els.urlInput.focus();
             return;
@@ -1528,17 +1469,50 @@ const bindEvents = () => {
     els.queueContextMenu.addEventListener('contextmenu', event => {
         event.preventDefault();
     });
+    let menuSearch = '';
+    let menuSearchTimer = null;
+    els.queueContextMenu.addEventListener('keydown', event => {
+        const items = Array.from(els.queueContextMenu.querySelectorAll('button')).filter(
+            button => !button.disabled && !button.hidden
+        );
+        if (event.key === 'Tab') {
+            const jobId = state.contextMenuJobId;
+            hideQueueContextMenu();
+            queueCardElements.get(jobId)?.querySelector('.pinefetch-queue-more-btn')?.focus();
+            return;
+        }
+        const index = items.indexOf(document.activeElement);
+        let next = null;
+        if (event.key === 'ArrowDown') next = items[(index + 1) % items.length];
+        if (event.key === 'ArrowUp') next = items[(index - 1 + items.length) % items.length];
+        if (event.key === 'Home') next = items[0];
+        if (event.key === 'End') next = items.at(-1);
+        if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            if (menuSearchTimer !== null) clearTimeout(menuSearchTimer);
+            menuSearch += event.key.toLowerCase();
+            menuSearchTimer = setTimeout(() => {
+                menuSearch = '';
+                menuSearchTimer = null;
+            }, 500);
+            next = items.find(button => button.textContent.trim().toLowerCase().startsWith(menuSearch));
+        }
+        if (next) {
+            event.preventDefault();
+            next.focus();
+        }
+    });
     els.queueContextMenu.addEventListener('click', async event => {
         const button = event.target.closest('button[data-action]');
         if (!button) return;
 
         const job = getContextMenuJob();
-        hideQueueContextMenu();
+        hideQueueContextMenu({ restoreFocus: true });
         if (!job) return;
 
         if (button.dataset.action === 'copy-link') {
             try {
                 await navigator.clipboard.writeText(job.url || '');
+                toast('Link copied.', { type: 'success' });
             } catch (err) {
                 appendLog(`[copy] ${err}`, true);
             }
@@ -1566,6 +1540,10 @@ const bindEvents = () => {
 
         if (button.dataset.action === 'remove') {
             await removeJobFromQueue(job);
+            requestAnimationFrame(() => {
+                const nextTrigger = els.queueList.querySelector('.pinefetch-queue-more-btn');
+                (nextTrigger || els.queueAutoStartBtn).focus({ preventScroll: true });
+            });
         }
     });
     document.addEventListener('pointerdown', event => {
@@ -1580,7 +1558,7 @@ const bindEvents = () => {
             event.preventDefault();
             return;
         }
-        if (!target?.closest('.pf-queue-item')) hideQueueContextMenu();
+        if (!target?.closest('.pinefetch-queue-item')) hideQueueContextMenu();
     });
     document.addEventListener('keydown', event => {
         if (event.key !== 'Escape' || els.queueContextMenu.hidden) return;
@@ -1588,7 +1566,7 @@ const bindEvents = () => {
         hideQueueContextMenu();
         Array.from(els.queueList.children)
             .find(item => item.dataset.jobId === jobId)
-            ?.querySelector('.pf-queue-more-btn')
+            ?.querySelector('.pinefetch-queue-more-btn')
             ?.focus({ preventScroll: true });
     });
     window.addEventListener('resize', hideQueueContextMenu);
@@ -1598,6 +1576,7 @@ const bindEvents = () => {
     els.copyLogsBtn.addEventListener('click', async () => {
         try {
             await navigator.clipboard.writeText(state.logs.map(entry => entry.text).join('\n'));
+            toast('Logs copied.', { type: 'success' });
         } catch (err) {
             appendLog(`[copy] ${err}`, true);
         }
@@ -1670,32 +1649,38 @@ const bindBackendEvents = async () => {
 };
 
 const init = async () => {
-    els.presetSelect.disabled = true;
+    els.presetTrigger.disabled = true;
+    els.presetTrigger.setAttribute('aria-busy', 'true');
     els.startDownloadBtn.disabled = true;
     els.importTxtBtn.disabled = true;
-    const loadingFormat = document.createElement('option');
-    loadingFormat.textContent = 'Loading formats...';
-    els.presetSelect.replaceChildren(loadingFormat);
+    els.presetValue.textContent = 'Loading formats...';
     settings.syncMagicImportTriggerState();
     renderQueueControls();
     bindEvents();
+    const cleanupOJ = initOJ();
+    window.addEventListener('pagehide', cleanupOJ, { once: true });
     setActiveView('download');
     requestAnimationFrame(() => {
         els.urlInput.focus();
     });
     if (!api.available || !api.eventsAvailable) {
+        els.presetValue.textContent = 'Formats unavailable';
+        els.presetTrigger.removeAttribute('aria-busy');
         appendLog('[tauri] API not available. Start the app with `npm run dev` (Tauri), not in a browser.', true);
         return;
     }
     try {
         await loadDownloadPresets();
-        els.presetSelect.disabled = false;
+        els.presetTrigger.disabled = false;
         els.startDownloadBtn.disabled = false;
         els.importTxtBtn.disabled = false;
     } catch (err) {
+        els.presetValue.textContent = 'Formats unavailable';
         setInfoBadge('Formats unavailable');
         setTxtImportStatus(`Could not load download formats: ${err}`, true);
         appendLog(`[presets] ${err}`, true);
+    } finally {
+        els.presetTrigger.removeAttribute('aria-busy');
     }
     await settings.sync();
     await syncQueueStatus();

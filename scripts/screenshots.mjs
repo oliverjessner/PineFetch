@@ -97,7 +97,7 @@ try {
         await page.evaluate(async () => {
             await globalThis.document.fonts.ready;
             const urls = new Set();
-            for (const element of globalThis.document.querySelectorAll('img, .pf-media-thumbnail')) {
+            for (const element of globalThis.document.querySelectorAll('img, .pinefetch-media-thumbnail')) {
                 if (!element.checkVisibility()) continue;
                 const background = globalThis.getComputedStyle(element).backgroundImage;
                 const url = element.tagName === 'IMG' ? element.src : background.match(/^url\(["']?(.*?)["']?\)$/)?.[1];
@@ -116,7 +116,7 @@ try {
         const png = await page.screenshot({ animations: 'disabled', caret: 'hide' });
         assert.deepEqual(errors, [], 'The screenshot page reported errors.');
         assert.equal(
-            await page.locator('.pf-log-line.pf-status-error').count(),
+            await page.locator('.pinefetch-log-line.oj-status-error').count(),
             0,
             'A screenshot fixture command failed.'
         );
@@ -133,7 +133,7 @@ try {
         );
         await page.locator('#startDownloadBtn').click();
         await page.waitForFunction(
-            count => globalThis.document.querySelectorAll('.pf-queue-item').length === count,
+            count => globalThis.document.querySelectorAll('.pinefetch-queue-item').length === count,
             index + 1
         );
     }
@@ -149,7 +149,7 @@ try {
 
     await page.locator('#viewHistoryBtn').click();
     await page.waitForFunction(
-        count => globalThis.document.querySelectorAll('.pf-history-item').length === count,
+        count => globalThis.document.querySelectorAll('.pinefetch-history-item').length === count,
         links.length
     );
     await page.waitForFunction(
@@ -158,7 +158,7 @@ try {
     );
     await capture('history.webp');
 
-    await page.locator('.pf-history-open-btn').first().click({ button: 'right' });
+    await page.locator('.pinefetch-history-open-btn').first().click({ button: 'right' });
     await page.locator('#historyShowMoreDataBtn').click();
     await page.locator('#historyDetailsContent').waitFor({ state: 'visible' });
     await capture('more_data.webp');
@@ -168,7 +168,7 @@ try {
     await page.waitForFunction(
         () => globalThis.document.querySelector('#linkDumpServerStatusBadge').textContent === 'Running'
     );
-    await page.locator('.pf-link-dump-secret-item').waitFor({ state: 'visible' });
+    await page.locator('.pinefetch-link-dump-secret-item').waitFor({ state: 'visible' });
     await capture('browser_import.webp');
 
     await page.locator('#viewSettingsBtn').click();

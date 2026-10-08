@@ -1,8 +1,10 @@
+import { confirmDialog, toast } from './vendor/oj/index.js';
 import { formatLocalDateTime } from './formatters.js';
 export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }) => {
     const linkDumpExtensionRepoUrl = 'https://github.com/oliverjessner/PineFetch-Link-Dump';
     const state = { linkDump: null, generatedLinkDumpSecret: null };
     let linkDumpSyncPromise = null;
+    const pendingConnectionActions = new Set();
 
     const formatDateTime = value => {
         if (!value) return '-';
@@ -19,15 +21,15 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
     const setLinkDumpStatusText = (message, isError = false) => {
         if (!els.linkDumpServerStatusText) return;
         els.linkDumpServerStatusText.textContent = message || '';
-        els.linkDumpServerStatusText.classList.toggle('pf-status-error', Boolean(message && isError));
-        els.linkDumpServerStatusText.classList.toggle('pf-status-success', Boolean(message && !isError));
+        els.linkDumpServerStatusText.classList.toggle('oj-status-error', Boolean(message && isError));
+        els.linkDumpServerStatusText.classList.toggle('oj-status-success', Boolean(message && !isError));
     };
 
     const setLinkDumpSecretStatus = (message, isError = false) => {
         if (!els.linkDumpSecretStatus) return;
         els.linkDumpSecretStatus.textContent = message || '';
-        els.linkDumpSecretStatus.classList.toggle('pf-status-error', Boolean(message && isError));
-        els.linkDumpSecretStatus.classList.toggle('pf-status-success', Boolean(message && !isError));
+        els.linkDumpSecretStatus.classList.toggle('oj-status-error', Boolean(message && isError));
+        els.linkDumpSecretStatus.classList.toggle('oj-status-success', Boolean(message && !isError));
     };
 
     const applyLinkDumpServerStatus = serverStatus => {
@@ -37,10 +39,10 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
         }
         const status = `${serverStatus.status || 'stopped'}`.toLowerCase();
         els.linkDumpServerStatusBadge.textContent = statusLabel(status);
-        els.linkDumpServerStatusBadge.classList.toggle('pf-badge-danger', status === 'error');
-        els.linkDumpServerStatusBadge.classList.toggle('pf-badge-warning', status === 'stopped');
-        els.linkDumpServerStatusBadge.classList.toggle('pf-badge-muted', status !== 'running' && status !== 'error');
-        els.linkDumpServerStatusBadge.classList.toggle('pf-badge', true);
+        els.linkDumpServerStatusBadge.classList.toggle('oj-badge-danger', status === 'error');
+        els.linkDumpServerStatusBadge.classList.toggle('oj-badge-warning', status === 'stopped');
+        els.linkDumpServerStatusBadge.classList.toggle('oj-badge-success', status === 'running');
+        els.linkDumpServerStatusBadge.classList.toggle('oj-badge', true);
 
         if (status === 'running') {
             setLinkDumpStatusText(
@@ -66,17 +68,17 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
 
         visibleSecrets.forEach(connection => {
             const item = document.createElement('div');
-            item.className = 'pf-link-dump-secret-item';
+            item.className = 'oj-panel oj-panel-compact pinefetch-link-dump-secret-item';
 
             const content = document.createElement('div');
-            content.className = 'pf-link-dump-secret-content';
+            content.className = 'pinefetch-link-dump-secret-content';
 
             const title = document.createElement('div');
-            title.className = 'pf-link-dump-secret-title';
+            title.className = 'pinefetch-link-dump-secret-title';
             title.textContent = connection.name || 'Link Dump Connection';
 
             const meta = document.createElement('div');
-            meta.className = 'pf-link-dump-secret-meta';
+            meta.className = 'pinefetch-link-dump-secret-meta';
             appendTextSpans(meta, [
                 `Created ${formatDateTime(connection.created_at)}`,
                 `Last used ${formatDateTime(connection.last_used_at)}`,
@@ -85,49 +87,33 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
             content.append(title, meta);
 
             const actions = document.createElement('div');
-            actions.className = 'pf-row pf-link-dump-secret-actions';
+            actions.className = 'oj-cluster pinefetch-link-dump-secret-actions';
 
             const badge = document.createElement('span');
             const status = `${connection.status || 'active'}`.toLowerCase();
-            badge.className = `pf-badge ${
-                status === 'active' ? '' : status === 'revoked' ? 'pf-badge-warning' : 'pf-badge-muted'
+            badge.className = `oj-badge ${
+                status === 'active' ? 'oj-badge-success' : status === 'revoked' ? 'oj-badge-warning' : ''
             }`;
             badge.textContent = statusLabel(status);
             actions.appendChild(badge);
 
             if (status === 'active') {
                 const revokeBtn = document.createElement('button');
-                revokeBtn.className = 'pf-btn pf-btn-ghost';
+                revokeBtn.className = 'oj-button oj-button-ghost';
                 revokeBtn.type = 'button';
                 revokeBtn.textContent = 'Revoke';
-                revokeBtn.onclick = () => {
-                    if (
-                        !window.confirm(
-                            'Revoke this connection? Extensions using this secret will no longer be able to send links.'
-                        )
-                    ) {
-                        return;
-                    }
-                    void revokeLinkDumpSecret(connection.id);
-                };
+                revokeBtn.onclick = () =>
+                    confirmConnectionAction(connection.id, 'Revoke', revokeLinkDumpSecret, revokeBtn);
                 actions.appendChild(revokeBtn);
             }
 
             if (status !== 'deleted') {
                 const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'pf-btn pf-btn-danger';
+                deleteBtn.className = 'oj-button oj-button-danger';
                 deleteBtn.type = 'button';
                 deleteBtn.textContent = 'Delete';
-                deleteBtn.onclick = () => {
-                    if (
-                        !window.confirm(
-                            'Delete this connection? Extensions using this secret will no longer be able to send links.'
-                        )
-                    ) {
-                        return;
-                    }
-                    void deleteLinkDumpSecret(connection.id);
-                };
+                deleteBtn.onclick = () =>
+                    confirmConnectionAction(connection.id, 'Delete', deleteLinkDumpSecret, deleteBtn);
                 actions.appendChild(deleteBtn);
             }
 
@@ -246,6 +232,7 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
             els.generatedLinkDumpSecret.value = '';
             els.generatedLinkDumpSecretPanel.hidden = true;
             setLinkDumpSecretStatus('Secret copied.');
+            toast('Secret copied.', { type: 'success' });
         } catch (err) {
             setLinkDumpSecretStatus(`Copy failed: ${err}`, true);
             appendLog(`[copy] ${err}`, true);
@@ -273,6 +260,23 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
         } catch (err) {
             setLinkDumpSecretStatus(`${err}`, true);
             appendLog(`[link-dump] ${err}`, true);
+        }
+    };
+
+    const confirmConnectionAction = async (id, label, action, trigger) => {
+        if (pendingConnectionActions.has(id)) return;
+        pendingConnectionActions.add(id);
+        trigger.focus({ preventScroll: true });
+        try {
+            const confirmed = await confirmDialog({
+                title: `${label} connection?`,
+                message: `${label} this connection? Extensions using this secret will no longer be able to send links.`,
+                confirmLabel: label,
+                variant: 'danger',
+            });
+            if (confirmed) await action(id);
+        } finally {
+            pendingConnectionActions.delete(id);
         }
     };
 

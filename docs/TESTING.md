@@ -188,10 +188,24 @@ There is no `continue-on-error`, skip-to-green gate or coverage percentage.
 Require all three status checks when configuring branch protection; changing
 workflow files does not itself update GitHub repository settings.
 
+`build:check` first prepares the pinned design-system's local CSS, ESM, fonts,
+icons and license notices, then embeds them through Tauri's static frontend.
+`npm ci`, development, screenshots and release packaging also prepare these
+assets. The screenshot script renders the same local assets and waits for font
+loading before capturing each view; see [DEVELOPMENT.md](DEVELOPMENT.md).
+
+`npm run test:ui` runs the design-system integration in Chromium and WebKit with
+an isolated Tauri fixture bridge and offline requests. It covers local fonts,
+icons and ESM loading, plus integrated keyboard navigation and dialogs. Prepare
+the browser engines with `npm exec playwright install chromium webkit` first.
+This explicit browser check is separate from the normal Node/Rust gates; it does
+not replace native Tauri or installed-bundle smoke tests.
+
 `build:check` does not prepare or validate bundled Whisper/FFmpeg/Deno runtimes,
 signatures, notarization, DMG installation or the desktop event loop. There is no
-existing Tauri desktop automation setup, so this work does not add a browser/UI
-matrix. Installed-app smoke and real-runtime checks remain explicit release
+existing Tauri desktop automation setup. The explicit browser integration check
+uses a fixture bridge and does not exercise the native desktop event loop.
+Installed-app smoke and real-runtime checks remain explicit release
 validation, described in [COMPATIBILITY.md](COMPATIBILITY.md) and
 [DEVELOPMENT.md](DEVELOPMENT.md); they are not silently skipped PR tests.
 

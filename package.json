@@ -15,8 +15,9 @@
         "format:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all && rustfmt --edition 2021 test/fixtures/fake-process.rs",
         "test": "npm run test:js && npm run test:rust",
         "test:js": "node --test --test-timeout=30000 \"test/*.test.mjs\"",
+        "test:ui": "node test/design-system-ui.mjs",
         "test:rust": "node scripts/run-rust-tests.mjs all",
-        "build:check": "cargo build --manifest-path src-tauri/Cargo.toml --locked --release --features custom-protocol",
+        "build:check": "npm run sync:design-system && cargo build --manifest-path src-tauri/Cargo.toml --locked --release --features custom-protocol",
         "dev": "npm run sync:version && tauri dev",
         "sync:version": "node scripts/sync-tauri-version.mjs",
         "screenshots": "node scripts/screenshots.mjs",
@@ -32,7 +33,9 @@
         "test:rust:fast": "node scripts/run-rust-tests.mjs fast",
         "test:rust:integration": "node scripts/run-rust-tests.mjs integration",
         "test:fast": "npm run test:js && npm run test:rust:fast",
-        "test:integration": "npm run test:rust:integration"
+        "test:integration": "npm run test:rust:integration",
+        "postinstall": "npm run sync:design-system",
+        "sync:design-system": "node scripts/sync-design-system.mjs"
     },
     "engines": {
         "node": "26.10.0"
@@ -63,6 +66,6 @@
     },
     "homepage": "https://oliverjessner.at/pinefetch",
     "dependencies": {
-        "pinefetch-designsystem": "^0.2.0"
+        "oj-designsystem": "0.1.0"
     }
 }

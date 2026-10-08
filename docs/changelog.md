@@ -1,3 +1,7 @@
+# 2.2.2
+
+- moving to https://github.com/oliverjessner/oj-designsystem
+
 # 2.2.1
 
 - security fixes that are coming from dependabot

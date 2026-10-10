@@ -4,6 +4,7 @@ import { closeDialog, initTabs, openDialog, toast } from './vendor/oj/index.js';
 export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, formatDuration, detectPlatform }) => {
     const state = {
         contextEntryId: null,
+        contextEntryUrl: '',
         contextReturnFocus: null,
         details: null,
         detailsRequestId: 0,
@@ -23,6 +24,7 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         const returnFocus = state.contextReturnFocus;
         returnFocus?.setAttribute('aria-expanded', 'false');
         state.contextEntryId = null;
+        state.contextEntryUrl = '';
         state.contextReturnFocus = null;
         els.historyContextMenu.hidden = true;
         els.historyContextMenu.style.left = '';
@@ -30,10 +32,13 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         if (restoreFocus && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
     };
 
-    const openContextMenu = (entryId, x, y, returnFocus) => {
+    const openContextMenu = (item, x, y, returnFocus) => {
         hideContextMenu();
+        const entryId = item.dataset.historyId;
         state.contextEntryId = entryId;
+        state.contextEntryUrl = item.dataset.historyUrl || '';
         state.contextReturnFocus = returnFocus;
+        els.historyOpenInBrowserBtn.disabled = !state.contextEntryUrl;
         returnFocus?.setAttribute('aria-expanded', 'true');
         els.historyContextMenu.hidden = false;
 
@@ -325,12 +330,7 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
                 return;
             }
             event.preventDefault();
-            openContextMenu(
-                item.dataset.historyId,
-                event.clientX,
-                event.clientY,
-                item.querySelector('.pinefetch-history-open-btn')
-            );
+            openContextMenu(item, event.clientX, event.clientY, item.querySelector('.pinefetch-history-open-btn'));
         });
         els.historyList.addEventListener('keydown', event => {
             if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
@@ -340,7 +340,7 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
             if (!item || !els.historyList.contains(item)) return;
             event.preventDefault();
             const rect = opener.getBoundingClientRect();
-            openContextMenu(item.dataset.historyId, rect.left, rect.bottom, opener);
+            openContextMenu(item, rect.left, rect.bottom, opener);
         });
         els.historyContextMenu.addEventListener('contextmenu', event => event.preventDefault());
         els.historyShowMoreDataBtn.addEventListener('click', () => {
@@ -348,6 +348,16 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
             const returnFocus = state.contextReturnFocus;
             hideContextMenu();
             if (entryId) void openDetails(entryId, returnFocus);
+        });
+        els.historyOpenInBrowserBtn.addEventListener('click', async () => {
+            const url = state.contextEntryUrl;
+            hideContextMenu({ restoreFocus: true });
+            if (!url || !api.available) return;
+            try {
+                await api.openExternalUrl({ url });
+            } catch (err) {
+                appendLog(`[open] ${err}`, true);
+            }
         });
         document.addEventListener('pointerdown', event => {
             const target = event.target instanceof Element ? event.target : null;
@@ -373,8 +383,17 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
                 return;
             }
             if (els.historyContextMenu.hidden || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+            const items = Array.from(els.historyContextMenu.querySelectorAll('button')).filter(
+                button => !button.disabled && !button.hidden
+            );
+            const index = items.indexOf(document.activeElement);
+            let next;
+            if (event.key === 'ArrowDown') next = items[(index + 1) % items.length];
+            if (event.key === 'ArrowUp') next = items[(index - 1 + items.length) % items.length];
+            if (event.key === 'Home') next = items[0];
+            if (event.key === 'End') next = items.at(-1);
             event.preventDefault();
-            els.historyShowMoreDataBtn.focus({ preventScroll: true });
+            next?.focus({ preventScroll: true });
         });
         window.addEventListener('resize', () => hideContextMenu());
         window.addEventListener('blur', () => hideContextMenu());

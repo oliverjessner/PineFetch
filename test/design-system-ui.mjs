@@ -360,7 +360,7 @@ try {
                 );
             };
             for (const [prefix, first, next, last] of [
-                ['historySearchField', 'title', 'description', 'user'],
+                ['historySearchField', 'title', 'description', 'transcript'],
                 ['historySource', '', 'youtube', 'tiktok'],
             ]) {
                 const trigger = page.locator(`#${prefix}Trigger`);
@@ -435,6 +435,16 @@ try {
             await selectHistoryFilter('historySearchField', 'description', 'Description');
             assert.equal(await searchInput.getAttribute('placeholder'), 'Search descriptions');
             await waitForHistoryRequest(beforeHistoryRequest, 'description', '', 'history query');
+            beforeHistoryRequest = await historyCommandCount();
+            await selectHistoryFilter('historySearchField', 'transcript', 'Transcript', true);
+            assert.equal(await searchInput.getAttribute('placeholder'), 'Search transcripts');
+            await waitForHistoryRequest(beforeHistoryRequest, 'transcript', '', 'history query');
+            beforeHistoryRequest = await historyCommandCount();
+            await selectHistoryFilter('historySource', 'youtube', 'YouTube');
+            await waitForHistoryRequest(beforeHistoryRequest, 'transcript', 'youtube', 'history query');
+            beforeHistoryRequest = await historyCommandCount();
+            await selectHistoryFilter('historySource', '', 'All sources');
+            await waitForHistoryRequest(beforeHistoryRequest, 'transcript', '', 'history query');
             beforeHistoryRequest = await historyCommandCount();
             await selectHistoryFilter('historySearchField', 'user', 'User', true);
             assert.equal(await searchInput.getAttribute('placeholder'), 'Search users');

@@ -125,11 +125,7 @@ pub(crate) fn open_file_path(app: AppHandle, path: String) -> Result<bool, Strin
 
 #[tauri::command]
 pub(crate) fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
-    if url != "https://github.com/oliverjessner/PineFetch-Link-Dump"
-        && url != "https://github.com/oliverjessner/PineFetch-Link-Dump/"
-    {
-        return Err("URL is not allowed".to_string());
-    }
+    validate_download_url(&url).map_err(|e| e.to_string())?;
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| format!("Open URL failed: {e}"))

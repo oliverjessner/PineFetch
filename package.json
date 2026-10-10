@@ -1,6 +1,6 @@
 {
     "name": "pinefetch",
-    "version": "2.2.2",
+    "version": "2.3.0",
     "scripts": {
         "check": "npm run check:versions && npm run lint && npm run format:check && npm test",
         "check:versions": "node scripts/check-versions.mjs",

@@ -1,3 +1,9 @@
+# 2.3.0
+
+- open in browser context menu in history
+- the download path is now in the download menu
+- search through transcriped texts
+
 # 2.2.2
 
 - moving to https://github.com/oliverjessner/oj-designsystem

@@ -1747,7 +1747,10 @@ fn history_search_filters_all_entries_before_pagination() {
 #[test]
 fn history_search_treats_sql_wildcards_as_plain_text() {
     let state = link_dump_test_state();
-    for (id, title) in [("literal", "100%_done"), ("other", "100ABdone")] {
+    for (id, title) in [
+        ("literal", r"100%_done C:\notes don't"),
+        ("other", "100ABdone C:Xnotes dont"),
+    ] {
         insert_history_entry_in_db(
             &state.db,
             &HistoryEntry {
@@ -1772,11 +1775,112 @@ fn history_search_treats_sql_wildcards_as_plain_text() {
             },
         )
         .unwrap();
+        insert_transcription_in_db(&state.db, id, title, "text", "en").unwrap();
     }
-    let result =
-        search_history_page_from_db(&state.db, 20, 0, Some("%_done"), Some("title"), None).unwrap();
-    assert_eq!(result.entries.len(), 1);
-    assert_eq!(result.entries[0].id, "literal");
+    for field in ["title", "transcript"] {
+        for query in ["%_done", r"C:\notes", "don't"] {
+            let result =
+                search_history_page_from_db(&state.db, 20, 0, Some(query), Some(field), None)
+                    .unwrap();
+            assert_eq!(result.entries.len(), 1, "{field}: {query}");
+            assert_eq!(result.entries[0].id, "literal");
+        }
+    }
+}
+
+#[test]
+fn history_search_matches_stored_transcripts_before_pagination() {
+    let state = link_dump_test_state();
+    for index in 0..35 {
+        let id = format!("history-{index:02}");
+        let source = if index % 2 == 0 { "youtube" } else { "tiktok" };
+        {
+            let conn = state.db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO history_entries (id, url, title, source, created_at)
+                 VALUES (?1, ?2, 'Pine needle in the title', ?3, ?4)",
+                params![id, format!("https://example.com/{index}"), source, index],
+            )
+            .unwrap();
+        }
+        if index == 34 {
+            // A title/caption match without a transcript must not match this field.
+            insert_captions_in_db(
+                &state.db,
+                &id,
+                &[SavedCaption {
+                    media_path: "/synthetic/post.mp4".to_string(),
+                    caption_path: "/synthetic/post.caption.txt".to_string(),
+                    text: "Pine needle in the caption".to_string(),
+                }],
+            )
+            .unwrap();
+            continue;
+        }
+        let timestamped = index % 2 != 0;
+        let text = match (index % 3 == 0, timestamped) {
+            (true, false) => "A pine needle in the stored transcript",
+            (true, true) => "[00:00:01 → 00:00:02] A pine needle in the stored transcript",
+            (false, _) => "An unrelated stored transcript",
+        };
+        let kind = if timestamped {
+            "text with timestamps"
+        } else {
+            "text"
+        };
+        insert_transcription_in_db(&state.db, &id, text, kind, "en").unwrap();
+    }
+
+    let search = |offset, source| {
+        search_history_page_from_db(
+            &state.db,
+            5,
+            offset,
+            Some(" PINE "),
+            Some("transcript"),
+            source,
+        )
+        .unwrap()
+    };
+    let first = search(0, None);
+    assert_eq!(first.entries.len(), 5);
+    assert_eq!(first.entries[0].id, "history-33");
+    assert!(first.has_more);
+    let second = search(5, None);
+    assert_eq!(second.entries.len(), 5);
+    assert_eq!(second.entries[0].id, "history-18");
+    assert!(second.has_more);
+    let last = search(10, None);
+    assert_eq!(last.entries.len(), 2);
+    assert_eq!(last.entries[0].id, "history-03");
+    assert!(!last.has_more);
+
+    let by_source = search(0, Some(" YOUTUBE "));
+    assert_eq!(by_source.entries.len(), 5);
+    assert!(by_source.has_more);
+    assert!(by_source
+        .entries
+        .iter()
+        .all(|entry| entry.source.as_deref() == Some("youtube")));
+    let last_by_source = search(5, Some("youtube"));
+    assert_eq!(last_by_source.entries.len(), 1);
+    assert_eq!(last_by_source.entries[0].id, "history-00");
+    assert!(!last_by_source.has_more);
+
+    let no_match = search_history_page_from_db(
+        &state.db,
+        5,
+        0,
+        Some("missing phrase"),
+        Some("transcript"),
+        None,
+    )
+    .unwrap();
+    assert!(no_match.entries.is_empty());
+    assert!(!no_match.has_more);
+    let empty_query =
+        search_history_page_from_db(&state.db, 5, 0, Some("  "), Some("transcript"), None).unwrap();
+    assert_eq!(empty_query.entries[0].id, "history-34");
 }
 
 #[test]

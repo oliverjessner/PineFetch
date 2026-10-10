@@ -36,6 +36,7 @@ export const createHistoryView = ({
         { value: 'title', label: 'Title' },
         { value: 'description', label: 'Description' },
         { value: 'user', label: 'User' },
+        { value: 'transcript', label: 'Transcript' },
     ]);
     const sourceChoice = createDropdownChoice({ menu: els.historySourceMenu, value: els.historySourceValue });
     sourceChoice.setOptions([{ value: '', label: 'All sources' }]);
@@ -158,6 +159,7 @@ export const createHistoryView = ({
         const item = document.createElement('div');
         item.className = 'oj-panel oj-panel-compact oj-panel-interactive pinefetch-history-item';
         item.dataset.historyId = entry.id;
+        item.dataset.historyUrl = entry.url || '';
         const entryLabel = entry.title || entry.filename || entry.url || 'download';
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
@@ -319,6 +321,7 @@ export const createHistoryView = ({
             title: 'Search titles',
             description: 'Search descriptions',
             user: 'Search users',
+            transcript: 'Search transcripts',
         };
         const applyHistoryFilters = () => {
             const query = els.historySearchInput.value.trim();

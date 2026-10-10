@@ -27,6 +27,7 @@ export const createSettingsView = ({
     let configSaveQueue = Promise.resolve();
     let configSaveRevision = 0;
     let configLocalRevision = 0;
+    let outputDirSaveRevision = 0;
     let ytDlpVersionsChecked = false;
     let ytDlpVersionsPromise = null;
     let ytDlpVersionRequestId = 0;
@@ -207,15 +208,33 @@ export const createSettingsView = ({
         }
     };
 
+    const setOutputDirStatus = (message, isError = false) => {
+        els.outputDirStatus.textContent = message;
+        els.outputDirStatus.hidden = !message;
+        els.outputDirStatus.classList.toggle('oj-status-error', isError);
+    };
+
+    const saveOutputDir = async value => {
+        const revision = ++outputDirSaveRevision;
+        setOutputDirStatus('Saving download folder…');
+        const saved = await saveSettings({ default_output_dir: value.trim() || null });
+        if (revision !== outputDirSaveRevision) return;
+        setOutputDirStatus(
+            saved ? 'Download folder saved. Applies to new downloads.' : 'Could not save download folder.',
+            !saved
+        );
+    };
+
     const pickDir = async () => {
         try {
             const result = await api.pickOutputDir();
             if (result) {
                 els.outputDir.value = result;
-                await saveSettings({ default_output_dir: result });
+                await saveOutputDir(result);
             }
         } catch (err) {
             appendLog(`[dir] ${err}`, true);
+            setOutputDirStatus(`Could not choose download folder: ${err}`, true);
         }
     };
 
@@ -259,7 +278,7 @@ export const createSettingsView = ({
             void saveSettings({ download_video_with_transcript: els.downloadVideoWithTranscript.checked });
         });
         els.outputDir.addEventListener('change', () => {
-            void saveSettings({ default_output_dir: els.outputDir.value.trim() || null });
+            void saveOutputDir(els.outputDir.value);
         });
         els.ytDlpPath.addEventListener('change', () => {
             void (async () => {

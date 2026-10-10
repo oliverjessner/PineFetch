@@ -132,6 +132,18 @@
                             </div>
                             <div class="pinefetch-media-thumbnail pinefetch-info-thumb" id="infoThumb"></div>
                         </div>
+
+                        <div class="oj-field">
+                            <label class="oj-label" for="outputDir">Download folder</label>
+                            <div class="oj-input-group pinefetch-output-row">
+                                <input id="outputDir" class="oj-input" type="text" placeholder="/Users/..." />
+                                <button id="pickDirBtn" class="oj-button oj-button-ghost" type="button">Choose</button>
+                                <button id="openFolderBtn" class="oj-button oj-button-ghost" type="button">
+                                    Open folder
+                                </button>
+                            </div>
+                            <p id="outputDirStatus" class="oj-status" role="status" aria-live="polite" hidden></p>
+                        </div>
                     </div>
 
                     <div id="historyView" class="pinefetch-panel-view oj-stack" hidden>
@@ -233,19 +245,6 @@
 
                         <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsDownloadTitle">
                             <h3 id="settingsDownloadTitle" class="oj-heading-3">Download</h3>
-                            <div class="oj-field">
-                                <label class="oj-label" for="outputDir">Output folder</label>
-                                <div class="oj-input-group pinefetch-output-row">
-                                    <input id="outputDir" class="oj-input" type="text" placeholder="/Users/..." />
-                                    <button id="pickDirBtn" class="oj-button oj-button-ghost" type="button">
-                                        Choose
-                                    </button>
-                                    <button id="openFolderBtn" class="oj-button oj-button-ghost" type="button">
-                                        Open folder
-                                    </button>
-                                </div>
-                            </div>
-
                             <label class="oj-switch" for="cutAtTimestampEnabled">
                                 <span class="pinefetch-switch-copy">
                                     <span class="pinefetch-switch-title">Cut at timestamp</span>
@@ -645,6 +644,9 @@
             >
                 <button id="historyShowMoreDataBtn" class="oj-menu-item" type="button" role="menuitem">
                     Show More Data
+                </button>
+                <button id="historyOpenInBrowserBtn" class="oj-menu-item" type="button" role="menuitem">
+                    Open in Browser
                 </button>
             </div>
 

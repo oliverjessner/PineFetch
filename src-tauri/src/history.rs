@@ -74,6 +74,7 @@ pub(super) fn search_history_page_from_db(
         None | Some("title") => "title",
         Some("description") => "description",
         Some("user") => "user",
+        Some("transcript") => "transcript",
         Some(field) => return Err(format!("Unsupported history search field: {field}")),
     };
     let source = source
@@ -91,6 +92,11 @@ pub(super) fn search_history_page_from_db(
                     SELECT 1 FROM captions
                     WHERE captions.history_entry_id = history.id
                       AND captions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                ))
+                OR (?2 = 'transcript' AND EXISTS (
+                    SELECT 1 FROM transcriptions
+                    WHERE transcriptions.history_entry_id = history.id
+                      AND transcriptions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
                 )))
                AND (?3 IS NULL OR history.source = ?3 COLLATE NOCASE)",
             params![pattern, search_field, source],
@@ -108,6 +114,11 @@ pub(super) fn search_history_page_from_db(
                     SELECT 1 FROM captions
                     WHERE captions.history_entry_id = history.id
                       AND captions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                ))
+                OR (?2 = 'transcript' AND EXISTS (
+                    SELECT 1 FROM transcriptions
+                    WHERE transcriptions.history_entry_id = history.id
+                      AND transcriptions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
                 )))
                AND (?3 IS NULL OR history.source = ?3 COLLATE NOCASE)
              ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC, id DESC

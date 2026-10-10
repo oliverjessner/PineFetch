@@ -55,7 +55,7 @@ pub(super) fn list_history_page_from_db(
     limit: u32,
     offset: u32,
 ) -> Result<HistoryPage, String> {
-    search_history_page_from_db(state, limit, offset, None, None, None)
+    search_history_page_from_db(state, limit, offset, None, None, None, false)
 }
 
 pub(super) fn search_history_page_from_db(
@@ -65,6 +65,7 @@ pub(super) fn search_history_page_from_db(
     query: Option<&str>,
     search_field: Option<&str>,
     source: Option<&str>,
+    exact_user: bool,
 ) -> Result<HistoryPage, String> {
     let pattern = history_search_pattern(query);
     let search_field = match search_field
@@ -77,6 +78,11 @@ pub(super) fn search_history_page_from_db(
         Some("transcript") => "transcript",
         Some(field) => return Err(format!("Unsupported history search field: {field}")),
     };
+    let exact_uploader = if exact_user && search_field == "user" {
+        query.map(str::trim).filter(|query| !query.is_empty())
+    } else {
+        None
+    };
     let source = source
         .map(str::trim)
         .filter(|source| !source.is_empty())
@@ -87,7 +93,10 @@ pub(super) fn search_history_page_from_db(
             "SELECT COUNT(*) FROM history_entries AS history
              WHERE (?1 IS NULL
                 OR (?2 = 'title' AND history.title LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
-                OR (?2 = 'user' AND history.uploader LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
+                OR (?2 = 'user' AND (
+                    (?4 IS NULL AND history.uploader LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
+                    OR history.uploader = ?4 COLLATE BINARY
+                ))
                 OR (?2 = 'description' AND EXISTS (
                     SELECT 1 FROM captions
                     WHERE captions.history_entry_id = history.id
@@ -99,7 +108,7 @@ pub(super) fn search_history_page_from_db(
                       AND transcriptions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
                 )))
                AND (?3 IS NULL OR history.source = ?3 COLLATE NOCASE)",
-            params![pattern, search_field, source],
+            params![pattern, search_field, source, exact_uploader],
             |row| row.get(0),
         )
         .map_err(|e| format!("History read failed: {e}"))?;
@@ -109,7 +118,10 @@ pub(super) fn search_history_page_from_db(
              FROM history_entries AS history
              WHERE (?1 IS NULL
                 OR (?2 = 'title' AND history.title LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
-                OR (?2 = 'user' AND history.uploader LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
+                OR (?2 = 'user' AND (
+                    (?6 IS NULL AND history.uploader LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
+                    OR history.uploader = ?6 COLLATE BINARY
+                ))
                 OR (?2 = 'description' AND EXISTS (
                     SELECT 1 FROM captions
                     WHERE captions.history_entry_id = history.id
@@ -133,7 +145,8 @@ pub(super) fn search_history_page_from_db(
                 search_field,
                 source,
                 i64::from(limit),
-                i64::from(offset)
+                i64::from(offset),
+                exact_uploader,
             ],
             map_history_entry,
         )

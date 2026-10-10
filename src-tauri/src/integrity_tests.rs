@@ -985,6 +985,7 @@ fn history_json_import_normalizes_new_metadata_before_search_and_preserves_exist
         Some("Grüße"),
         Some("title"),
         Some("youtube"),
+        false,
     )
     .unwrap();
     assert_eq!(page.entries.len(), 1);

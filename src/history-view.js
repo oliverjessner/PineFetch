@@ -23,11 +23,13 @@ export const createHistoryView = ({
         historyQuery: '',
         historySearchField: 'title',
         historySource: '',
+        historyExactUser: false,
         historyClearing: false,
     });
     const historyPageSize = 20;
     const historySearchDelayMs = 250;
     let historySearchTimer = null;
+    let historySources = [];
     const searchFieldChoice = createDropdownChoice({
         menu: els.historySearchFieldMenu,
         value: els.historySearchFieldValue,
@@ -47,6 +49,7 @@ export const createHistoryView = ({
         formatFileSize,
         formatDuration,
         detectPlatform,
+        showSavedVideosByCreator: creator => showSavedVideosByCreator(creator),
     });
 
     const formatHistoryDate = timestamp => {
@@ -113,6 +116,17 @@ export const createHistoryView = ({
         els.historySourcesEmpty.hidden = els.historySourcesList.childElementCount > 0;
     };
 
+    const updateHistorySourceOptions = () => {
+        const sources = [...historySources];
+        if (state.historyExactUser && state.historySource && !sources.includes(state.historySource)) {
+            sources.push(state.historySource);
+        }
+        sourceChoice.setOptions([
+            { value: '', label: 'All sources' },
+            ...sources.map(source => ({ value: source, label: formatHistorySource(source) })),
+        ]);
+    };
+
     const renderHistorySourceOptions = sourceCounts => {
         const sources = [];
         const seen = new Set();
@@ -123,11 +137,9 @@ export const createHistoryView = ({
             sources.push(source);
         }
 
+        historySources = sources;
         const previousSource = state.historySource;
-        sourceChoice.setOptions([
-            { value: '', label: 'All sources' },
-            ...sources.map(source => ({ value: source, label: formatHistorySource(source) })),
-        ]);
+        updateHistorySourceOptions();
         state.historySource = sourceChoice.getValue();
         return state.historySource !== previousSource;
     };
@@ -160,6 +172,8 @@ export const createHistoryView = ({
         item.className = 'oj-panel oj-panel-compact oj-panel-interactive pinefetch-history-item';
         item.dataset.historyId = entry.id;
         item.dataset.historyUrl = entry.url || '';
+        item.dataset.historyUploader = `${entry.uploader || ''}`.trim();
+        item.dataset.historySource = `${entry.source || ''}`.trim().toLowerCase();
         const entryLabel = entry.title || entry.filename || entry.url || 'download';
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
@@ -259,6 +273,7 @@ export const createHistoryView = ({
         const requestedQuery = state.historyQuery;
         const requestedSearchField = state.historySearchField;
         const requestedSource = state.historySource;
+        const requestedExactUser = state.historyExactUser;
         let needsFollowUpRefresh = false;
         const offset = append ? state.historyOffset : 0;
         setHistoryLoading(true);
@@ -270,6 +285,7 @@ export const createHistoryView = ({
                 ...(requestedQuery ? { query: requestedQuery } : {}),
                 searchField: requestedSearchField,
                 ...(requestedSource ? { source: requestedSource } : {}),
+                ...(requestedExactUser ? { exactUser: true } : {}),
             });
             if (state.historyRevision !== requestedRevision) {
                 needsFollowUpRefresh = true;
@@ -315,6 +331,25 @@ export const createHistoryView = ({
         }
     };
 
+    const showSavedVideosByCreator = ({ uploader, source }) => {
+        if (!uploader || !source) return;
+        if (historySearchTimer !== null) clearTimeout(historySearchTimer);
+        historySearchTimer = null;
+        els.historySearchInput.value = uploader;
+        searchFieldChoice.setValue('user');
+        els.historySearchInput.placeholder = 'Search users';
+        state.historyQuery = uploader;
+        state.historySearchField = 'user';
+        state.historySource = source;
+        state.historyExactUser = true;
+        state.historyOffset = 0;
+        updateHistorySourceOptions();
+        sourceChoice.setValue(source);
+        invalidateHistoryCache();
+        els.historySearchInput.focus({ preventScroll: true });
+        void renderHistory({ force: true });
+    };
+
     const bindEvents = () => {
         historyDetailsView.bindEvents();
         const searchPlaceholders = {
@@ -330,12 +365,14 @@ export const createHistoryView = ({
             if (
                 query === state.historyQuery &&
                 searchField === state.historySearchField &&
-                source === state.historySource
+                source === state.historySource &&
+                !state.historyExactUser
             )
                 return;
             state.historyQuery = query;
             state.historySearchField = searchField;
             state.historySource = source;
+            state.historyExactUser = false;
             invalidateHistoryCache();
             void renderHistory({ force: true });
         };
@@ -396,6 +433,7 @@ export const createHistoryView = ({
                 state.historyQuery = '';
                 state.historySearchField = 'title';
                 state.historySource = '';
+                state.historyExactUser = false;
                 invalidateHistoryCache();
                 await renderHistory({ force: true });
                 setHistoryActionStatus('History deleted. Downloaded files remain on disk.');

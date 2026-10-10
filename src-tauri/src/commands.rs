@@ -175,6 +175,7 @@ pub(crate) fn get_history(
     query: Option<String>,
     search_field: Option<String>,
     source: Option<String>,
+    exact_user: Option<bool>,
 ) -> Result<HistoryPage, String> {
     let limit = limit.unwrap_or(20).clamp(1, 100);
     let offset = offset.unwrap_or(0);
@@ -185,6 +186,7 @@ pub(crate) fn get_history(
         query.as_deref(),
         search_field.as_deref(),
         source.as_deref(),
+        exact_user.unwrap_or(false),
     )
 }
 

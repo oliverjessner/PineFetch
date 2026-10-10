@@ -25,6 +25,7 @@ const installUiResponses = () => {
     const listeners = new Map();
     let config;
     let historySources = ['youtube', 'tiktok'];
+    let historyEntries = null;
     let historyCleared = false;
     let releasePresets;
     const presetsReady = new Promise(resolve => {
@@ -37,6 +38,9 @@ const installUiResponses = () => {
         releasePresets,
         setHistorySources: sources => {
             historySources = [...sources];
+        },
+        setHistoryEntries: entries => {
+            historyEntries = entries;
         },
         emit: (name, payload) => {
             for (const handler of listeners.get(name) || []) handler({ payload });
@@ -82,6 +86,17 @@ const installUiResponses = () => {
             return { ...stats, source_counts: historySources.map(source => ({ source, count: 1 })) };
         }
         if (command === 'get_history' && historyCleared) return { entries: [], has_more: false };
+        if (command === 'get_history' && historyEntries) {
+            const filtered = historyEntries.filter(entry => {
+                if (args.source && entry.source !== args.source) return false;
+                if (!args.query || args.searchField !== 'user') return true;
+                if (args.exactUser) return entry.uploader === args.query;
+                return entry.uploader?.toLowerCase().includes(args.query.toLowerCase());
+            });
+            const offset = args.offset || 0;
+            const end = offset + args.limit;
+            return { entries: filtered.slice(offset, end), has_more: filtered.length > end };
+        }
         if (command === 'get_history_details') {
             const details = await invoke(command, args);
             if (args.id === 'history-2') return { ...details, transcript: null, captions: [] };
@@ -476,6 +491,121 @@ try {
                 () => globalThis.document.querySelectorAll('.pinefetch-history-item').length === 2
             );
 
+            // Creator shortcuts reset pagination and scope the exact stored name to its platform.
+            await page.evaluate(() => {
+                const creators = Array.from({ length: 25 }, (_, index) => ({
+                    id: `creator-${index}`,
+                    url: `https://example.com/${index}`,
+                    title: `Blender tutorial ${index}`,
+                    uploader: 'Blender',
+                    source: 'youtube',
+                }));
+                globalThis.__pinefetchUi.setHistoryEntries([
+                    { ...creators[0], id: 'similar-name', uploader: 'Blender Guru' },
+                    { ...creators[0], id: 'other-platform', source: 'tiktok' },
+                    { ...creators[0], id: 'missing-name', uploader: null },
+                    ...creators,
+                ]);
+                globalThis.__pinefetchUi.emit('history:changed', {});
+            });
+            await page.waitForFunction(
+                () => globalThis.document.querySelectorAll('.pinefetch-history-item').length === 20
+            );
+            await page.locator('#loadMoreHistoryBtn').click();
+            await page.locator('[data-history-id="creator-24"]').waitFor();
+            beforeHistoryRequest = await historyCommandCount();
+            const lastCreator = page.locator('[data-history-id="creator-24"] .pinefetch-history-open-btn');
+            await lastCreator.scrollIntoViewIfNeeded();
+            await page.evaluate(
+                () =>
+                    new Promise(resolve =>
+                        globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))
+                    )
+            );
+            await lastCreator.click({ button: 'right' });
+            const creatorAction = page.getByRole('menuitem', {
+                name: 'Show saved videos by this creator',
+                exact: true,
+            });
+            assert(await creatorAction.isEnabled());
+            await creatorAction.click();
+            await waitForHistoryRequest(beforeHistoryRequest, 'user', 'youtube', 'Blender');
+            await page.waitForFunction(() => {
+                const entries = [...globalThis.document.querySelectorAll('.pinefetch-history-item')];
+                return entries.length === 20 && entries.every(entry => entry.dataset.historyId.startsWith('creator-'));
+            });
+            assert.equal(await searchInput.inputValue(), 'Blender');
+            assert.equal(await searchInput.getAttribute('placeholder'), 'Search users');
+            assert.equal(await page.locator('#historySearchFieldValue').textContent(), 'User');
+            assert.equal(await page.locator('#historySourceValue').textContent(), 'YouTube');
+            assert.equal(await page.locator('#historyContextMenu').isVisible(), false);
+            assert(await searchInput.evaluate(node => node === globalThis.document.activeElement));
+            const latestHistoryArgs = () =>
+                page.evaluate(
+                    () => globalThis.__pinefetchUi.commands.findLast(call => call.command === 'get_history').args
+                );
+            assert.equal((await latestHistoryArgs()).offset, 0);
+            assert.equal((await latestHistoryArgs()).exactUser, true);
+            await page.locator('#loadMoreHistoryBtn').click();
+            await page.locator('[data-history-id="creator-24"]').waitFor();
+            assert.equal(await page.locator('.pinefetch-history-item').count(), 25);
+            assert.equal((await latestHistoryArgs()).offset, 20);
+            assert.equal((await latestHistoryArgs()).exactUser, true);
+
+            // A refresh and a view switch keep the shortcut; manual edits restore partial matching.
+            beforeHistoryRequest = await historyCommandCount();
+            await page.evaluate(() => globalThis.__pinefetchUi.emit('history:changed', {}));
+            await waitForHistoryRequest(beforeHistoryRequest, 'user', 'youtube', 'Blender');
+            assert.equal((await latestHistoryArgs()).exactUser, true);
+            await page.locator('#viewDownloadBtn').click();
+            await page.locator('#viewHistoryBtn').click();
+            assert.equal(await searchInput.inputValue(), 'Blender');
+            assert.equal(await page.locator('#historySourceValue').textContent(), 'YouTube');
+            beforeHistoryRequest = await historyCommandCount();
+            await searchInput.fill('Blend');
+            await waitForHistoryRequest(beforeHistoryRequest, 'user', 'youtube', 'Blend');
+            await page.locator('[data-history-id="similar-name"]').waitFor();
+            assert.equal(Object.hasOwn(await latestHistoryArgs(), 'exactUser'), false);
+            assert.equal((await latestHistoryArgs()).offset, 0);
+
+            // No creator metadata leaves the action disabled, including keyboard navigation.
+            beforeHistoryRequest = await historyCommandCount();
+            await searchInput.fill('');
+            await waitForHistoryRequest(beforeHistoryRequest, 'user', 'youtube');
+            await page.locator('[data-history-id="missing-name"] .pinefetch-history-open-btn').focus();
+            await page.evaluate(
+                () =>
+                    new Promise(resolve =>
+                        globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))
+                    )
+            );
+            await page.keyboard.press('Shift+F10');
+            await page.locator('#historyContextMenu').waitFor();
+            assert(await creatorAction.isDisabled());
+            await page.waitForFunction(
+                () => globalThis.document.getElementById('historyShowMoreDataBtn') === globalThis.document.activeElement
+            );
+            await page.keyboard.press('End');
+            await page.waitForFunction(
+                () =>
+                    globalThis.document.getElementById('historyOpenInBrowserBtn') === globalThis.document.activeElement
+            );
+            await page.keyboard.press('Escape');
+            await page.locator('#historyContextMenu').waitFor({ state: 'hidden' });
+
+            // Restore the standard history fixtures for the detail and deletion checks.
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.setHistoryEntries(null);
+                globalThis.__pinefetchUi.emit('history:changed', {});
+            });
+            beforeHistoryRequest = await historyCommandCount();
+            await selectHistoryFilter('historySource', '', 'All sources');
+            await waitForHistoryRequest(beforeHistoryRequest, 'user');
+            beforeHistoryRequest = await historyCommandCount();
+            await selectHistoryFilter('historySearchField', 'title', 'Title');
+            await waitForHistoryRequest(beforeHistoryRequest, 'title');
+            await page.locator('[data-history-id="history-2"]').waitFor();
+
             // Library tabs own roving focus, activation and lazy text fetching.
             await page.locator('.pinefetch-history-open-btn').first().focus();
             await page.keyboard.press('Shift+F10');
@@ -742,7 +872,7 @@ try {
             assert(loadedFonts.some(url => url.includes('fa-solid')));
             assert.deepEqual(errors, []);
             console.log(
-                `[test:ui] ${engine.name()}: offline assets, preset restoration/keyboard/persistence, queue requests/progress, history filters/reset, transcription model/save rollback, menus, tabs, dialog focus, confirmations and switches passed.`
+                `[test:ui] ${engine.name()}: offline assets, preset restoration/keyboard/persistence, queue requests/progress, history filters/creator/reset, transcription model/save rollback, menus, tabs, dialog focus, confirmations and switches passed.`
             );
         } finally {
             await browser.close();

@@ -1,10 +1,19 @@
 import { formatHistorySource, formatLocalDateTime, formatUploadDate } from './formatters.js';
 import { closeDialog, initTabs, openDialog, toast } from './vendor/oj/index.js';
 
-export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, formatDuration, detectPlatform }) => {
+export const createHistoryDetailsView = ({
+    els,
+    api,
+    appendLog,
+    formatFileSize,
+    formatDuration,
+    detectPlatform,
+    showSavedVideosByCreator,
+}) => {
     const state = {
         contextEntryId: null,
         contextEntryUrl: '',
+        contextCreator: null,
         contextReturnFocus: null,
         details: null,
         detailsRequestId: 0,
@@ -25,6 +34,7 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         returnFocus?.setAttribute('aria-expanded', 'false');
         state.contextEntryId = null;
         state.contextEntryUrl = '';
+        state.contextCreator = null;
         state.contextReturnFocus = null;
         els.historyContextMenu.hidden = true;
         els.historyContextMenu.style.left = '';
@@ -37,8 +47,13 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
         const entryId = item.dataset.historyId;
         state.contextEntryId = entryId;
         state.contextEntryUrl = item.dataset.historyUrl || '';
+        state.contextCreator = {
+            uploader: item.dataset.historyUploader || '',
+            source: item.dataset.historySource || '',
+        };
         state.contextReturnFocus = returnFocus;
         els.historyOpenInBrowserBtn.disabled = !state.contextEntryUrl;
+        els.historyShowCreatorVideosBtn.disabled = !state.contextCreator.uploader || !state.contextCreator.source;
         returnFocus?.setAttribute('aria-expanded', 'true');
         els.historyContextMenu.hidden = false;
 
@@ -358,6 +373,11 @@ export const createHistoryDetailsView = ({ els, api, appendLog, formatFileSize, 
             } catch (err) {
                 appendLog(`[open] ${err}`, true);
             }
+        });
+        els.historyShowCreatorVideosBtn.addEventListener('click', () => {
+            const creator = state.contextCreator;
+            hideContextMenu();
+            if (creator?.uploader && creator.source) showSavedVideosByCreator(creator);
         });
         document.addEventListener('pointerdown', event => {
             const target = event.target instanceof Element ? event.target : null;

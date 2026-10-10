@@ -122,6 +122,7 @@ const els = Object.seal({
     historyContextMenu: document.getElementById('historyContextMenu'),
     historyShowMoreDataBtn: document.getElementById('historyShowMoreDataBtn'),
     historyOpenInBrowserBtn: document.getElementById('historyOpenInBrowserBtn'),
+    historyShowCreatorVideosBtn: document.getElementById('historyShowCreatorVideosBtn'),
     historyDetailsDialog: document.getElementById('historyDetailsDialog'),
     historyDetailsTitle: document.getElementById('historyDetailsTitle'),
     historyDetailsSubtitle: document.getElementById('historyDetailsSubtitle'),

@@ -1726,21 +1726,25 @@ fn history_search_filters_all_entries_before_pagination() {
     }
 
     let first =
-        search_history_page_from_db(&state.db, 5, 0, Some(" pine "), Some("title"), None).unwrap();
+        search_history_page_from_db(&state.db, 5, 0, Some(" pine "), Some("title"), None, false)
+            .unwrap();
     let second =
-        search_history_page_from_db(&state.db, 5, 5, Some("pine"), Some("title"), None).unwrap();
+        search_history_page_from_db(&state.db, 5, 5, Some("pine"), Some("title"), None, false)
+            .unwrap();
     assert_eq!(first.entries.len(), 5);
     assert!(first.has_more);
     assert_eq!(first.entries[0].id, "history-33");
     assert_eq!(second.entries[0].id, "history-18");
     assert!(second.has_more);
     let final_page =
-        search_history_page_from_db(&state.db, 5, 10, Some("pine"), Some("title"), None).unwrap();
+        search_history_page_from_db(&state.db, 5, 10, Some("pine"), Some("title"), None, false)
+            .unwrap();
     assert_eq!(final_page.entries.len(), 2);
     assert!(!final_page.has_more);
 
     let empty_query =
-        search_history_page_from_db(&state.db, 5, 0, Some("  "), Some("title"), None).unwrap();
+        search_history_page_from_db(&state.db, 5, 0, Some("  "), Some("title"), None, false)
+            .unwrap();
     assert_eq!(empty_query.entries[0].id, "history-34");
 }
 
@@ -1779,9 +1783,16 @@ fn history_search_treats_sql_wildcards_as_plain_text() {
     }
     for field in ["title", "transcript"] {
         for query in ["%_done", r"C:\notes", "don't"] {
-            let result =
-                search_history_page_from_db(&state.db, 20, 0, Some(query), Some(field), None)
-                    .unwrap();
+            let result = search_history_page_from_db(
+                &state.db,
+                20,
+                0,
+                Some(query),
+                Some(field),
+                None,
+                false,
+            )
+            .unwrap();
             assert_eq!(result.entries.len(), 1, "{field}: {query}");
             assert_eq!(result.entries[0].id, "literal");
         }
@@ -1839,6 +1850,7 @@ fn history_search_matches_stored_transcripts_before_pagination() {
             Some(" PINE "),
             Some("transcript"),
             source,
+            false,
         )
         .unwrap()
     };
@@ -1874,13 +1886,91 @@ fn history_search_matches_stored_transcripts_before_pagination() {
         Some("missing phrase"),
         Some("transcript"),
         None,
+        false,
     )
     .unwrap();
     assert!(no_match.entries.is_empty());
     assert!(!no_match.has_more);
     let empty_query =
-        search_history_page_from_db(&state.db, 5, 0, Some("  "), Some("transcript"), None).unwrap();
+        search_history_page_from_db(&state.db, 5, 0, Some("  "), Some("transcript"), None, false)
+            .unwrap();
     assert_eq!(empty_query.entries[0].id, "history-34");
+}
+
+#[test]
+fn history_search_exact_creator_keeps_platform_and_pagination_scoped() {
+    let state = link_dump_test_state();
+    {
+        let conn = state.db.lock().unwrap();
+        for index in 0..25 {
+            conn.execute(
+                "INSERT INTO history_entries (id, url, title, uploader, source, created_at)
+                 VALUES (?1, ?2, 'Blender tutorial', 'Blender', 'youtube', ?3)",
+                params![
+                    format!("creator-{index:02}"),
+                    format!("https://example.com/{index}"),
+                    index
+                ],
+            )
+            .unwrap();
+        }
+        for (id, uploader, source) in [
+            ("similar-name", Some("Blender Guru"), "youtube"),
+            ("different-case", Some("blender"), "youtube"),
+            ("other-platform", Some("Blender"), "tiktok"),
+            ("missing-name", None, "youtube"),
+            ("literal-name", Some(r"100%_done C:\notes don't"), "youtube"),
+        ] {
+            conn.execute(
+                "INSERT INTO history_entries (id, url, title, uploader, source, created_at)
+                 VALUES (?1, ?2, 'Blender tutorial', ?3, ?4, 100)",
+                params![id, format!("https://example.com/{id}"), uploader, source],
+            )
+            .unwrap();
+        }
+    }
+    let search = |offset, query, exact_user| {
+        search_history_page_from_db(
+            &state.db,
+            20,
+            offset,
+            Some(query),
+            Some("user"),
+            Some(" YOUTUBE "),
+            exact_user,
+        )
+        .unwrap()
+    };
+    let first = search(0, "Blender", true);
+    assert_eq!(first.entries.len(), 20);
+    assert_eq!(first.entries[0].id, "creator-24");
+    assert!(first.has_more);
+    let last = search(20, "Blender", true);
+    assert_eq!(last.entries.len(), 5);
+    assert_eq!(last.entries[0].id, "creator-04");
+    assert!(!last.has_more);
+    assert!(first.entries.iter().chain(&last.entries).all(|entry| {
+        entry.uploader.as_deref() == Some("Blender") && entry.source.as_deref() == Some("youtube")
+    }));
+
+    let manual = search(0, "Blender", false);
+    assert!(manual
+        .entries
+        .iter()
+        .any(|entry| entry.id == "similar-name"));
+    assert!(manual
+        .entries
+        .iter()
+        .any(|entry| entry.id == "different-case"));
+    assert!(!manual
+        .entries
+        .iter()
+        .any(|entry| entry.id == "other-platform"));
+    assert!(search(0, "missing", true).entries.is_empty());
+    let literal = search(0, r"100%_done C:\notes don't", true);
+    assert_eq!(literal.entries.len(), 1);
+    assert_eq!(literal.entries[0].id, "literal-name");
+    assert!(!literal.has_more);
 }
 
 #[test]
@@ -1928,12 +2018,20 @@ fn history_search_filters_by_field_and_source() {
     .unwrap();
 
     let by_user =
-        search_history_page_from_db(&state.db, 20, 0, Some("alice"), Some("user"), None).unwrap();
+        search_history_page_from_db(&state.db, 20, 0, Some("alice"), Some("user"), None, false)
+            .unwrap();
     assert_eq!(by_user.entries.len(), 2);
 
-    let by_description =
-        search_history_page_from_db(&state.db, 20, 0, Some("sunset"), Some("description"), None)
-            .unwrap();
+    let by_description = search_history_page_from_db(
+        &state.db,
+        20,
+        0,
+        Some("sunset"),
+        Some("description"),
+        None,
+        false,
+    )
+    .unwrap();
     assert_eq!(by_description.entries.len(), 1);
     assert_eq!(by_description.entries[0].id, "instagram");
 
@@ -1944,13 +2042,14 @@ fn history_search_filters_by_field_and_source() {
         Some("alice"),
         Some("user"),
         Some("tiktok"),
+        false,
     )
     .unwrap();
     assert_eq!(by_source.entries.len(), 1);
     assert_eq!(by_source.entries[0].id, "tiktok");
 
     let invalid_field =
-        search_history_page_from_db(&state.db, 20, 0, Some("alice"), Some("source"), None);
+        search_history_page_from_db(&state.db, 20, 0, Some("alice"), Some("source"), None, false);
     assert!(invalid_field.is_err());
 }
 

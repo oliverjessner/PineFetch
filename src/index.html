@@ -213,12 +213,16 @@
                                 </div>
                             </div>
                         </div>
+                        <p class="oj-helper" id="historyHint" hidden>
+                            No history yet. Downloaded items will appear here.
+                        </p>
                         <div
                             id="historyList"
                             class="oj-scroll-area pinefetch-history-list"
                             aria-label="Download history"
                             tabindex="0"
                         ></div>
+                        <p id="historyActionStatus" class="oj-status" role="status" aria-live="polite" hidden></p>
                         <div class="pinefetch-history-actions">
                             <button
                                 id="loadMoreHistoryBtn"
@@ -232,10 +236,6 @@
                                 Clear History
                             </button>
                         </div>
-                        <p id="historyActionStatus" class="oj-status" role="status" aria-live="polite" hidden></p>
-                        <p class="oj-helper" id="historyHint" hidden>
-                            No history yet. Downloaded items will appear here.
-                        </p>
                     </div>
 
                     <div id="settingsView" class="pinefetch-panel-view oj-stack" hidden>

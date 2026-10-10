@@ -452,6 +452,11 @@ body {
     display: flex;
     justify-content: flex-end;
     gap: var(--oj-space-2);
+    flex-shrink: 0;
+}
+
+.pinefetch-history-list {
+    flex: 1;
 }
 
 .pinefetch-history-load-more {
@@ -751,6 +756,10 @@ body {
 
     .pinefetch-queue-list {
         max-height: 320px;
+    }
+
+    .pinefetch-history-list {
+        flex: initial;
     }
 
     #downloadView,

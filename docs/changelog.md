@@ -3,6 +3,8 @@
 - open in browser context menu in history
 - the download path is now in the download menu
 - search through transcriped texts
+- "Show saved videos by this creator" context menu
+-
 
 # 2.2.2
 

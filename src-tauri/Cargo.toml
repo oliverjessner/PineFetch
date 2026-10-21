@@ -33,7 +33,7 @@ libc = "0.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6.12"
 # Keep the Dock menu on Tauri's muda version so menu events share one dispatcher.
-muda = { version = "=0.20.0", default-features = false }
+muda = { version = "=0.21.2", default-features = false }
 objc2 = "=0.6.4"
 
 [features]

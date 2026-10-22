@@ -324,6 +324,10 @@ body {
     border-bottom: 1px solid var(--oj-border);
 }
 
+#browserAuthBrowser {
+    block-size: var(--oj-control-height);
+}
+
 #queueProgressView .pinefetch-queue-list {
     flex: 1;
 }

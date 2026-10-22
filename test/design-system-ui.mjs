@@ -79,6 +79,7 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
         releaseDuplicateRemoval: null,
         failDuplicateRemoval: false,
         failNextModelSave: false,
+        failBrowserAccess: false,
         holdPlaylist: false,
         releasePlaylist: null,
         failNextPlaylist: false,
@@ -146,6 +147,7 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
                 ...(await invoke(command, args)),
                 selected_preset_key: 'audio_opus',
                 faster_whisper_model: 'medium',
+                youtube_cookie_browser: 'firefox',
             };
             return { ...config };
         }
@@ -156,6 +158,10 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             }
             config = { ...config, ...args.changes };
             return { ...config };
+        }
+        if (command === 'check_youtube_cookie_access') {
+            if (ui.failBrowserAccess) throw new Error('Synthetic private cookie diagnostic');
+            return;
         }
         if (command === 'get_history_stats') {
             if (historyCleared) {
@@ -580,6 +586,22 @@ try {
             await page.evaluate(() => globalThis.__pinefetchUi.releasePresets());
             await page.waitForFunction(() => globalThis.__pinefetchScreenshot?.ready);
             assert(await page.locator('#settingsView').isVisible());
+            const authentication = page.locator(
+                '#settingsView section[aria-labelledby="settingsDownloadTitle"] #browserAuthentication'
+            );
+            assert(await authentication.isVisible());
+            assert.equal(await page.locator('#linkDumpView #browserAuthentication').count(), 0);
+            assert.equal(await page.locator('#browserAuthBrowser').inputValue(), 'firefox');
+            assert((await page.locator('#browserAuthBrowser').boundingBox()).height >= 32);
+            assert(await page.locator('#disconnectBrowserAuthBtn').isEnabled());
+            assert.equal(
+                await page.evaluate(
+                    () =>
+                        globalThis.__pinefetchUi.commands.filter(call => call.command === 'check_youtube_cookie_access')
+                            .length
+                ),
+                0
+            );
             // Dock requests restore startup selections and use the same views as the toolbar.
             for (const [index, [view, panel, button]] of [
                 ['history', '#historyView', '#viewHistoryBtn'],
@@ -2836,6 +2858,53 @@ try {
             );
 
             await page.locator('#viewSettingsBtn').click();
+            // Authentication is owned by Settings and preserves the saved browser on access failure.
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.failBrowserAccess = true;
+            });
+            await page.locator('#browserAuthBrowser').selectOption('chrome');
+            await page.getByRole('button', { name: 'Connect Browser', exact: true }).click();
+            await page.waitForFunction(() =>
+                globalThis.document
+                    .getElementById('browserAuthStatus')
+                    .textContent.includes('saved connection has not changed')
+            );
+            assert.doesNotMatch(await page.locator('#browserAuthStatus').textContent(), /Synthetic private/);
+            assert(await page.locator('#disconnectBrowserAuthBtn').isEnabled());
+            const beforeImport = await page.evaluate(() => globalThis.__pinefetchUi.commands.length);
+            await page.locator('#viewLinkDumpBtn').click();
+            assert(await page.locator('#linkDumpServerPanel').isVisible());
+            assert.equal(await page.getByRole('heading', { name: 'Browser Authentication', exact: true }).count(), 0);
+            await page.locator('#viewSettingsBtn').click();
+            assert.deepEqual(
+                await page.evaluate(
+                    after =>
+                        globalThis.__pinefetchUi.commands
+                            .slice(after)
+                            .filter(call =>
+                                ['get_config', 'check_youtube_cookie_access', 'get_link_dump_overview'].includes(
+                                    call.command
+                                )
+                            ),
+                    beforeImport
+                ),
+                []
+            );
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.failBrowserAccess = false;
+            });
+            await page.getByRole('button', { name: 'Connect Browser', exact: true }).click();
+            await page.waitForFunction(() =>
+                globalThis.document.getElementById('browserAuthStatus').textContent.includes('enabled for chrome')
+            );
+            await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
+            await page.waitForFunction(
+                () =>
+                    globalThis.document.getElementById('browserAuthStatus').textContent ===
+                    'Browser authentication is off.'
+            );
+            assert(await page.locator('#disconnectBrowserAuthBtn').isDisabled());
+            await page.screenshot({ path: `/tmp/pinefetch-browser-authentication-${engine.name()}.png` });
             const modelTrigger = page.locator('#fasterWhisperModelTrigger');
             const modelMenu = page.locator('#fasterWhisperModelMenu');
             const modelValue = page.locator('#fasterWhisperModelValue');

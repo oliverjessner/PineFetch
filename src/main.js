@@ -52,11 +52,11 @@ const els = Object.seal({
     downloadVideoWithTranscript: document.getElementById('downloadVideoWithTranscript'),
     ytDlpInstalledVersion: document.getElementById('ytDlpInstalledVersion'),
     ytDlpLatestVersion: document.getElementById('ytDlpLatestVersion'),
-    youtubeCookieBrowser: document.getElementById('youtubeCookieBrowser'),
-    syncYoutubeCookiesBtn: document.getElementById('syncYoutubeCookiesBtn'),
-    disconnectYoutubeCookiesBtn: document.getElementById('disconnectYoutubeCookiesBtn'),
-    youtubeCookieStatus: document.getElementById('youtubeCookieStatus'),
-    youtubeCookiePermissionHelp: document.getElementById('youtubeCookiePermissionHelp'),
+    browserAuthBrowser: document.getElementById('browserAuthBrowser'),
+    connectBrowserAuthBtn: document.getElementById('connectBrowserAuthBtn'),
+    disconnectBrowserAuthBtn: document.getElementById('disconnectBrowserAuthBtn'),
+    browserAuthStatus: document.getElementById('browserAuthStatus'),
+    browserAuthPermissionHelp: document.getElementById('browserAuthPermissionHelp'),
     linkDumpServerStatusBadge: document.getElementById('linkDumpServerStatusBadge'),
     linkDumpServerHint: document.getElementById('linkDumpServerHint'),
     linkDumpServerUrl: document.getElementById('linkDumpServerUrl'),
@@ -524,6 +524,7 @@ const setActiveView = view => {
         runAfterViewPaint(() => {
             settingsLogRenderReady = true;
             renderLogs();
+            void settings.loadBrowserAuthentication();
             if (settings.getConfig()) void settings.refreshYtDlpVersionsOnce();
         });
     }

@@ -1,4 +1,5 @@
 import { createDropdownChoice } from './dropdown-choice.js';
+import { createBrowserAuthentication } from './browser-authentication.js';
 
 export const createSettingsView = ({
     els,
@@ -9,6 +10,7 @@ export const createSettingsView = ({
     updateDownloadOptionHints,
     isActive,
 }) => {
+    const browserAuthentication = createBrowserAuthentication({ els, api });
     const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
     const defaultFasterWhisperModel = 'base';
     const fasterWhisperModelChoice = createDropdownChoice({
@@ -125,6 +127,7 @@ export const createSettingsView = ({
     const syncConfig = async () => {
         try {
             config = await api.getConfig();
+            await browserAuthentication.load(config);
             els.notificationsEnabled.checked = config.notifications_enabled ?? false;
             els.saveCaptions.checked = config.save_captions ?? false;
             els.saveThumbnails.checked = config.save_thumbnails ?? false;
@@ -241,6 +244,7 @@ export const createSettingsView = ({
     };
 
     const bindEvents = () => {
+        browserAuthentication.bindEvents();
         els.magicImportEnabled.addEventListener('change', () => {
             void saveSettings({ magic_import_enabled: els.magicImportEnabled.checked });
         });
@@ -286,6 +290,8 @@ export const createSettingsView = ({
         cacheLastDownloadedUrl,
         getConfig: () => config,
         isMagicImportEnabled,
+        loadBrowserAuthentication: () =>
+            browserAuthentication.isLoaded() ? Promise.resolve() : browserAuthentication.load(),
         persistSelectedPresetKey,
         refreshYtDlpVersionsOnce,
         save: saveSettings,

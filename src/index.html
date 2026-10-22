@@ -277,6 +277,55 @@
                                 <input id="saveThumbnails" type="checkbox" role="switch" />
                                 <span class="oj-switch-track" aria-hidden="true"></span>
                             </label>
+
+                            <section
+                                id="browserAuthentication"
+                                class="oj-panel oj-panel-compact oj-stack"
+                                aria-labelledby="browserAuthenticationTitle"
+                            >
+                                <h4 id="browserAuthenticationTitle" class="oj-heading-3">Browser Authentication</h4>
+                                <p class="oj-helper">
+                                    Use your browser's YouTube login for downloads, playlists, and video details.
+                                </p>
+                                <label class="oj-field" for="browserAuthBrowser">
+                                    <span class="oj-label">Browser</span>
+                                    <select
+                                        id="browserAuthBrowser"
+                                        class="oj-select"
+                                        aria-describedby="browserAuthHelp browserAuthPermissionHelp"
+                                    >
+                                        <option value="brave">Brave</option>
+                                        <option value="chrome">Chrome</option>
+                                        <option value="chromium">Chromium</option>
+                                        <option value="edge">Edge</option>
+                                        <option value="firefox">Firefox</option>
+                                        <option value="opera">Opera</option>
+                                        <option value="safari">Safari</option>
+                                        <option value="vivaldi">Vivaldi</option>
+                                    </select>
+                                </label>
+                                <div class="oj-cluster">
+                                    <button id="connectBrowserAuthBtn" class="oj-button" type="button" disabled>
+                                        Connect Browser
+                                    </button>
+                                    <button
+                                        id="disconnectBrowserAuthBtn"
+                                        class="oj-button oj-button-ghost"
+                                        type="button"
+                                        disabled
+                                    >
+                                        Disconnect
+                                    </button>
+                                </div>
+                                <p id="browserAuthHelp" class="oj-helper">
+                                    Sign in to YouTube in this browser first. Connect Browser checks access without
+                                    downloading a video. Cookies are read from the most recently used profile for each
+                                    request; only your browser selection is saved. Authentication does not guarantee
+                                    avoiding rate limits.
+                                </p>
+                                <p id="browserAuthPermissionHelp" class="oj-helper"></p>
+                                <p id="browserAuthStatus" class="oj-status" role="status" aria-live="polite"></p>
+                            </section>
                         </section>
 
                         <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsTranscriptionTitle">
@@ -400,55 +449,6 @@
                     </div>
 
                     <div id="linkDumpView" class="pinefetch-panel-view oj-stack" hidden>
-                        <section class="oj-panel oj-panel-compact pinefetch-link-dump-section">
-                            <header class="oj-section-header">
-                                <div class="pinefetch-panel-heading">
-                                    <h3 class="oj-heading-3">YouTube Cookie Sync</h3>
-                                    <p class="oj-caption">
-                                        Use the YouTube account signed in to your browser. Cookies refresh from that
-                                        browser for each YouTube download, playlist, and metadata request.
-                                    </p>
-                                </div>
-                            </header>
-                            <label class="oj-field" for="youtubeCookieBrowser">
-                                <span class="oj-label">Browser</span>
-                                <select id="youtubeCookieBrowser" class="oj-input">
-                                    <option value="brave">Brave</option>
-                                    <option value="chrome">Chrome</option>
-                                    <option value="chromium">Chromium</option>
-                                    <option value="edge">Edge</option>
-                                    <option value="firefox">Firefox</option>
-                                    <option value="opera">Opera</option>
-                                    <option value="safari">Safari</option>
-                                    <option value="vivaldi">Vivaldi</option>
-                                </select>
-                            </label>
-                            <div class="oj-cluster">
-                                <button id="syncYoutubeCookiesBtn" class="oj-button" type="button" disabled>
-                                    Enable Cookie Sync
-                                </button>
-                                <button
-                                    id="disconnectYoutubeCookiesBtn"
-                                    class="oj-button oj-button-ghost"
-                                    type="button"
-                                    disabled
-                                >
-                                    Disconnect
-                                </button>
-                            </div>
-                            <p class="oj-helper">
-                                Sign in to YouTube in the selected browser first. Sync uses the most recently used
-                                browser profile and does not guarantee avoiding rate limits. If access fails, close the
-                                browser and retry the request.
-                            </p>
-                            <p class="oj-helper">
-                                Enable Cookie Sync checks browser access now with a YouTube metadata request. No video
-                                is downloaded. Complete any system permission prompt to continue.
-                            </p>
-                            <p id="youtubeCookiePermissionHelp" class="oj-helper"></p>
-                            <p id="youtubeCookieStatus" class="oj-status" role="status" aria-live="polite"></p>
-                        </section>
-
                         <section class="oj-panel oj-panel-compact pinefetch-link-dump-section" id="linkDumpServerPanel">
                             <header class="oj-section-header">
                                 <div class="pinefetch-panel-heading">

@@ -1,5 +1,10 @@
 const timestampParamNames = new Set(['t', 'start', 'start_time', 'time_continue']);
 
+const normalizeVideoInput = value => {
+    const input = `${value || ''}`.trim();
+    return /^[A-Za-z0-9_-]{11}$/.test(input) ? `https://www.youtube.com/watch?v=${input}` : input;
+};
+
 const normalizeYouTubePlaylistUrl = input => {
     if (!isValidHttpUrl(input) || detectPlatform(input) !== 'youtube') return null;
     try {
@@ -313,6 +318,7 @@ export {
     detectPlatform,
     extractUrlStartTimestamp,
     isValidHttpUrl,
+    normalizeVideoInput,
     normalizeTxtImportUrl,
     normalizeYouTubePlaylistUrl,
     parseTxtImportLinks,

@@ -20,6 +20,7 @@ import {
     detectPlatform,
     extractUrlStartTimestamp,
     isValidHttpUrl,
+    normalizeVideoInput,
     normalizeTxtImportUrl,
     normalizeYouTubePlaylistUrl,
     parseTxtImportLinks,
@@ -631,7 +632,7 @@ const updateDownloadOptionHints = () => {
     const transcriptionOptions = document.getElementById('transcriptionOptions');
     if (transcriptionOptions) transcriptionOptions.hidden = !isTranscription;
 
-    const captionPlatform = detectPlatform(els.urlInput.value.trim());
+    const captionPlatform = detectPlatform(normalizeVideoInput(els.urlInput.value));
     const captionPlatformNames = {
         youtube: 'YouTube',
         tiktok: 'TikTok',
@@ -1036,7 +1037,7 @@ let loadInfoRequestId = 0;
 const canLoadInfoForUrl = url => isValidHttpUrl(url) && Boolean(detectPlatform(url));
 
 const loadInfo = async () => {
-    const url = els.urlInput.value.trim();
+    const url = normalizeVideoInput(els.urlInput.value);
     if (!url) return;
     if (!isValidHttpUrl(url)) {
         shakeUrlInput();
@@ -1060,7 +1061,7 @@ const loadInfo = async () => {
     setInfoBadge('Loading...');
     try {
         const info = await api.loadInfo({ url: requestUrl });
-        if (requestId !== loadInfoRequestId || els.urlInput.value.trim() !== requestUrl) {
+        if (requestId !== loadInfoRequestId || normalizeVideoInput(els.urlInput.value) !== requestUrl) {
             loadInfoPending = true;
             return;
         }
@@ -1069,7 +1070,7 @@ const loadInfo = async () => {
         renderInfo();
         setInfoBadge('Ready');
     } catch (err) {
-        if (requestId !== loadInfoRequestId || els.urlInput.value.trim() !== requestUrl) return;
+        if (requestId !== loadInfoRequestId || normalizeVideoInput(els.urlInput.value) !== requestUrl) return;
         if (`${err || ''}`.includes('URL must start with')) {
             shakeUrlInput();
         }
@@ -1084,7 +1085,7 @@ const loadInfo = async () => {
         els.loadInfoBtn.removeAttribute('aria-busy');
         els.loadInfoBtn.disabled = playlistImports.size > 0;
 
-        const nextUrl = els.urlInput.value.trim();
+        const nextUrl = normalizeVideoInput(els.urlInput.value);
         const inputChanged = nextUrl !== requestUrl;
         const shouldReload = (loadInfoPending || inputChanged) && canLoadInfoForUrl(nextUrl);
         loadInfoPending = false;
@@ -1140,7 +1141,7 @@ const enqueuePlaylistForUrl = (url, presetKey, options = {}) => {
         els.playlistImportStatus.classList.toggle('oj-status-error', error);
     };
     showStatus('Loading YouTube playlist…');
-    if (els.urlInput.value.trim() === url) {
+    if (normalizeVideoInput(els.urlInput.value) === url) {
         state.info = null;
         state.infoUrl = null;
         renderInfo();
@@ -1184,7 +1185,7 @@ const enqueuePlaylistForUrl = (url, presetKey, options = {}) => {
             appendLog(`[playlist] ${message}`, count === 0);
             if (count) {
                 void settings.cacheLastDownloadedUrl(url);
-                if (!options.preserveComposerState && els.urlInput.value.trim() === url) {
+                if (!options.preserveComposerState && normalizeVideoInput(els.urlInput.value) === url) {
                     els.urlInput.value = '';
                     state.info = null;
                     state.infoUrl = null;
@@ -1336,7 +1337,7 @@ const removeJobFromQueue = async job => {
 };
 
 const enqueueDownload = async () => {
-    const url = els.urlInput.value.trim();
+    const url = normalizeVideoInput(els.urlInput.value);
     await initialization;
     const presetKey = getSelectedPresetKey();
     await enqueueDownloadForUrl(url, presetKey);
@@ -1612,7 +1613,7 @@ const bindEvents = () => {
             clearTimeout(urlInputDebounceTimer);
             urlInputDebounceTimer = null;
         }
-        const url = els.urlInput.value.trim();
+        const url = normalizeVideoInput(els.urlInput.value);
         updateDownloadOptionHints();
         if (!canLoadInfoForUrl(url)) {
             loadInfoRequestId += 1;
@@ -1625,8 +1626,8 @@ const bindEvents = () => {
         }
         urlInputDebounceTimer = setTimeout(() => {
             urlInputDebounceTimer = null;
-            if (!canLoadInfoForUrl(els.urlInput.value.trim())) return;
-            if (normalizeYouTubePlaylistUrl(els.urlInput.value.trim())) {
+            if (!canLoadInfoForUrl(normalizeVideoInput(els.urlInput.value))) return;
+            if (normalizeYouTubePlaylistUrl(normalizeVideoInput(els.urlInput.value))) {
                 void enqueueDownload();
                 return;
             }
@@ -1638,13 +1639,13 @@ const bindEvents = () => {
     els.urlInput.addEventListener('keydown', event => {
         const key = event.key.toLowerCase();
         if (event.metaKey && !event.ctrlKey && !event.altKey && key === 'i') {
-            if (!els.urlInput.value.trim()) return;
+            if (!normalizeVideoInput(els.urlInput.value)) return;
             event.preventDefault();
             void loadInfo();
             return;
         }
         if (key === 'enter' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-            if (!els.urlInput.value.trim()) return;
+            if (!normalizeVideoInput(els.urlInput.value)) return;
             event.preventDefault();
             void enqueueDownload();
             return;

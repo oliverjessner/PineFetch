@@ -5,11 +5,36 @@ import {
     detectPlatform,
     extractUrlStartTimestamp,
     isValidHttpUrl,
+    normalizeVideoInput,
     normalizeTxtImportUrl,
     normalizeYouTubePlaylistUrl,
     parseTxtImportLinks,
     resolveYouTubeThumbnail,
 } from '../src/url-utils.js';
+
+test('bare YouTube IDs resolve to watch URLs without changing full URLs', () => {
+    for (const id of ['dQw4w9WgXcQ', '_-012345678', '12345678901']) {
+        const url = normalizeVideoInput(`  ${id}\n`);
+        assert.equal(url, `https://www.youtube.com/watch?v=${id}`);
+        assert.equal(isValidHttpUrl(url), true);
+        assert.equal(detectPlatform(url), 'youtube');
+        assert.equal(resolveYouTubeThumbnail(url), `https://i.ytimg.com/vi/${id}/mqdefault.jpg`);
+    }
+    for (const value of [
+        'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30',
+        'https://youtu.be/dQw4w9WgXcQ?list=PL123',
+        'https://www.tiktok.com/@example/video/1234567890',
+        '',
+        'short',
+        'dQw4w9WgXcQx',
+        'dQw4w9WgXc!',
+        'dQw4 w9WgXc',
+        'file:///tmp/video',
+    ]) {
+        assert.equal(normalizeVideoInput(value), value);
+    }
+    assert.equal(normalizeVideoInput(null), '');
+});
 
 test('YouTube playlist links match the native import boundary and drop video-specific parameters', () => {
     const cases = JSON.parse(readFileSync(new URL('./fixtures/youtube-playlists.json', import.meta.url), 'utf8'));

@@ -130,6 +130,7 @@ fn job(id: &str, root: &Path, transcript: bool) -> DownloadJob {
         download_video_with_transcript: false,
         save_captions: false,
         save_thumbnails: false,
+        save_creator_subtitles: false,
         title: Some("Grüße 🌲".into()),
         uploader: None,
         thumbnail: None,
@@ -579,7 +580,7 @@ fn version_one_upgrade_and_sql_failure_roll_back_entire_section_and_retry() {
     // Construct the version-1 baseline using the implemented adoption step,
     // then fail version 2. Version 1 is an internal baseline, not an old app.
     conn.execute_batch(
-        "DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; DROP TABLE job_completions; DROP TABLE legacy_imports; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; PRAGMA user_version=1;",
+        "DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; DROP TABLE job_completions; DROP TABLE legacy_imports; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=1;",
     )
     .unwrap();
     let before = schema(&conn);
@@ -1732,7 +1733,7 @@ fn abrupt_process_kill_rolls_back_migration_and_completion_and_allows_safe_retry
 fn integration_cookie_settings_migration_rolls_back_and_preserves_existing_settings() {
     let fixture = Fixture::new();
     let conn = fixture.db();
-    conn.execute_batch("ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; PRAGMA user_version=6; UPDATE app_config SET yt_dlp_path='/synthetic/yt-dlp', save_captions=1;").unwrap();
+    conn.execute_batch("ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=6; UPDATE app_config SET yt_dlp_path='/synthetic/yt-dlp', save_captions=1;").unwrap();
     let before = schema(&conn);
     let error = database::initialize_with_hook(&conn, |point| {
         if point == MigrationPoint::BrowserCookies {

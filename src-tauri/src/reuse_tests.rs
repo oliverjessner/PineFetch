@@ -343,3 +343,64 @@ fn history_list_and_detail_share_all_column_mapping_and_normalization() {
         .unwrap_err()
         .starts_with("History details read failed:"));
 }
+
+#[test]
+fn creator_subtitles_are_opt_in_and_do_not_enable_automatic_captions() {
+    let mut config = AppConfig::default();
+    for enabled in [false, true] {
+        config.save_creator_subtitles = enabled;
+        let request = request_from_preset(
+            download_preset_for_key(Some("audio_opus")),
+            "https://www.youtube.com/watch?v=synthetic".into(),
+            false,
+        );
+        let job = prepare_download_job(
+            request,
+            DownloadOptions::from(&config),
+            "/synthetic".into(),
+            "subtitles".into(),
+        );
+        assert_eq!(job.save_creator_subtitles, enabled);
+        let args = build_download_args(
+            &job,
+            "/synthetic/clip.%(ext)s".into(),
+            Some("/ffmpeg"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(args.iter().any(|arg| arg == "--write-subs"), enabled);
+        assert!(!args.iter().any(|arg| arg == "--write-auto-subs"));
+        if enabled {
+            assert!(args.iter().any(|arg| arg == "--no-write-auto-subs"));
+            assert!(args
+                .windows(2)
+                .any(|pair| pair == ["--sub-langs", "all,-live_chat"]));
+            assert!(args.windows(2).any(|pair| pair == ["--sub-format", "best"]));
+        }
+        let probe = build_filename_probe_args(&job, "/synthetic/clip.%(ext)s", None);
+        assert!(!probe.iter().any(|arg| arg == "--write-subs"));
+    }
+}
+
+#[test]
+fn integration_creator_subtitles_migration_preserves_config_and_defaults_to_disabled() {
+    let conn = Connection::open_in_memory().unwrap();
+    database::initialize(&conn).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=7;",
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE app_config SET default_output_dir='/synthetic/existing',save_captions=1",
+        [],
+    )
+    .unwrap();
+    database::initialize(&conn).unwrap();
+    let config = crate::config::load_config_from_db(&conn).unwrap();
+    assert!(!config.save_creator_subtitles);
+    assert!(config.save_captions);
+    assert_eq!(
+        config.default_output_dir.as_deref(),
+        Some("/synthetic/existing")
+    );
+}

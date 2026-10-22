@@ -80,6 +80,27 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
         failDuplicateRemoval: false,
         failNextModelSave: false,
         failBrowserAccess: false,
+        holdSubtitle: false,
+        releaseSubtitle: null,
+        failNextSubtitle: false,
+        subtitleTracks: [
+            {
+                path: '/fixture/video.en.vtt',
+                language: 'en',
+                format: 'vtt',
+                file_available: false,
+                source_start_seconds: 0,
+                text: 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nCreator <img src=x onerror="alert(1)"> 🌲',
+            },
+            {
+                path: '/fixture/video.de.srt',
+                language: 'de',
+                format: 'srt',
+                file_available: true,
+                source_start_seconds: 61,
+                text: '1\n00:00:01,000 --> 00:00:02,000\nGrüße aus dem Original',
+            },
+        ],
         holdPlaylist: false,
         releasePlaylist: null,
         failNextPlaylist: false,
@@ -193,7 +214,31 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             const details = await invoke(command, args);
             if (args.id === 'history-2')
                 return { ...details, entry: { ...details.entry, thumbnail: null }, transcript: null, captions: [] };
-            return details;
+            return {
+                ...details,
+                subtitles: ui.subtitleTracks.map(
+                    ({ path, language, format, file_available, source_start_seconds }) => ({
+                        path,
+                        language,
+                        format,
+                        file_available,
+                        source_start_seconds,
+                    })
+                ),
+            };
+        }
+        if (command === 'get_history_subtitle') {
+            if (ui.holdSubtitle) {
+                ui.holdSubtitle = false;
+                await new Promise(resolve => {
+                    ui.releaseSubtitle = resolve;
+                });
+            }
+            if (ui.failNextSubtitle) {
+                ui.failNextSubtitle = false;
+                throw new Error('Synthetic private subtitle error');
+            }
+            return ui.subtitleTracks.find(track => track.path === args.path) || null;
         }
         const ocrPage = request => {
             const content = structuredClone(ui.ocrRecords[request.id] || null);
@@ -1182,6 +1227,41 @@ try {
             await page.locator('#historyCaptionText').waitFor();
             await page.locator('#historyTranscriptTab').focus();
             await page.keyboard.press('ArrowRight');
+            assert.equal(await page.locator('#historySubtitlesTab').getAttribute('aria-selected'), 'true');
+            await page.locator('#historySubtitleText').waitFor();
+            assert((await page.locator('#historySubtitleTrackSelect').boundingBox()).height >= 32);
+            assert.match(await page.locator('#historySubtitleText').textContent(), /Creator <img/);
+            assert.equal(await page.locator('#historySubtitleText img').count(), 0);
+            assert.match(await page.locator('#historySubtitleNotice').textContent(), /file is missing/);
+            await page.locator('#historySubtitleCopyBtn').click();
+            await page.waitForFunction(() => globalThis.__pinefetchUi.copied.startsWith('WEBVTT'));
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.failNextSubtitle = true;
+            });
+            await page.locator('#historySubtitleTrackSelect').selectOption('/fixture/video.de.srt');
+            await page.waitForFunction(() =>
+                globalThis.document.getElementById('historySubtitleStatus').textContent.includes('could not be loaded')
+            );
+            assert.doesNotMatch(await page.locator('#historySubtitleStatus').textContent(), /Synthetic private/);
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.holdSubtitle = true;
+            });
+            await page.locator('#historySubtitleRetryBtn').click();
+            await page.waitForFunction(() => typeof globalThis.__pinefetchUi.releaseSubtitle === 'function');
+            await page.locator('#historySubtitleTrackSelect').selectOption('/fixture/video.en.vtt');
+            await page.locator('#historySubtitleText').waitFor();
+            await page.evaluate(async () => {
+                globalThis.__pinefetchUi.releaseSubtitle();
+                await new Promise(resolve => setTimeout(resolve, 0));
+            });
+            assert.match(await page.locator('#historySubtitleText').textContent(), /Creator <img/);
+            await page.locator('#historySubtitleTrackSelect').selectOption('/fixture/video.de.srt');
+            await page.locator('#historySubtitleText').waitFor();
+            assert.match(await page.locator('#historySubtitleText').textContent(), /Grüße/);
+            assert.match(await page.locator('#historySubtitleNotice').textContent(), /starts at 61s/);
+            await page.screenshot({ path: `/tmp/pinefetch-subtitles-${engine.name()}.png` });
+            await page.locator('#historySubtitlesTab').focus();
+            await page.keyboard.press('ArrowRight');
             assert.equal(await page.locator('#historyOcrTab').getAttribute('aria-selected'), 'true');
             await page.keyboard.press('Home');
             await page.keyboard.press('ArrowRight');
@@ -1212,6 +1292,10 @@ try {
                 await page.locator('#historyTranscriptStatus').textContent(),
                 'No transcript is saved for this video.'
             );
+            await page.locator('#historySubtitlesTab').click();
+            assert.match(await page.locator('#historySubtitleStatus').textContent(), /No creator subtitles/);
+            assert(await page.locator('#historySubtitleCopyBtn').isDisabled());
+            assert(await page.locator('#historySubtitleTrackField').isHidden());
             await page.locator('#historyDetailsHistoryBtn').click();
             await page.locator('#historyDetailsView').waitFor({ state: 'hidden' });
 
@@ -3033,6 +3117,22 @@ try {
             );
             await page.waitForFunction(() => !globalThis.document.getElementById('saveCaptions').disabled);
             assert.equal(await setting.isChecked(), false);
+
+            const creatorSubtitles = page.locator('#saveCreatorSubtitles');
+            assert.equal(await creatorSubtitles.isChecked(), false);
+            await creatorSubtitles.focus();
+            await page.keyboard.press('Space');
+            await page.waitForFunction(() =>
+                globalThis.__pinefetchUi.commands.some(
+                    call => call.command === 'patch_config' && call.args.changes.save_creator_subtitles === true
+                )
+            );
+            await page.waitForFunction(
+                () =>
+                    globalThis.document.getElementById('settingsSaveStatus').textContent ===
+                    'Changes saved. They apply to new downloads.'
+            );
+            assert.equal(await creatorSubtitles.isChecked(), true);
 
             // Playlist paste/import expands into independent jobs without requiring Queue.
             await page.locator('#viewDownloadBtn').click();

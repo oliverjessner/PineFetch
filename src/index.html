@@ -269,6 +269,19 @@
                                 <span class="oj-switch-track" aria-hidden="true"></span>
                             </label>
 
+                            <label class="oj-switch" for="saveCreatorSubtitles">
+                                <span class="pinefetch-switch-copy">
+                                    <span class="pinefetch-switch-title">Save creator subtitles</span>
+                                    <span class="oj-helper"
+                                        >Save available creator-provided subtitles in all languages beside downloads.
+                                        Original format and timing are preserved; automatic captions are excluded. If
+                                        unavailable, the download continues without subtitles.</span
+                                    >
+                                </span>
+                                <input id="saveCreatorSubtitles" type="checkbox" role="switch" />
+                                <span class="oj-switch-track" aria-hidden="true"></span>
+                            </label>
+
                             <label class="oj-switch" for="saveThumbnails">
                                 <span class="pinefetch-switch-copy">
                                     <span class="pinefetch-switch-title">Save thumbnails</span>
@@ -919,6 +932,16 @@
                                 </button>
 
                                 <button
+                                    id="historySubtitlesTab"
+                                    class="oj-tab"
+                                    type="button"
+                                    role="tab"
+                                    aria-selected="false"
+                                    aria-controls="historySubtitlesPanel"
+                                >
+                                    Subtitles
+                                </button>
+                                <button
                                     id="historyOcrTab"
                                     class="oj-tab"
                                     type="button"
@@ -1271,6 +1294,57 @@
                                         </div>
                                     </section>
                                 </div>
+                            </section>
+
+                            <section
+                                id="historySubtitlesPanel"
+                                class="oj-tab-panel pinefetch-history-details-panel"
+                                role="tabpanel"
+                                aria-labelledby="historySubtitlesTab"
+                                hidden
+                            >
+                                <h3 class="oj-heading-3">Creator subtitles</h3>
+                                <p class="oj-helper">
+                                    Original subtitle tracks, separate from post captions and Whisper transcripts.
+                                </p>
+                                <div class="pinefetch-history-content-toolbar">
+                                    <label
+                                        id="historySubtitleTrackField"
+                                        class="oj-field pinefetch-history-caption-track"
+                                        for="historySubtitleTrackSelect"
+                                        hidden
+                                    >
+                                        <span class="oj-label">Subtitle track</span>
+                                        <select id="historySubtitleTrackSelect" class="oj-select"></select>
+                                    </label>
+                                    <div class="oj-cluster">
+                                        <button
+                                            id="historySubtitleRetryBtn"
+                                            class="oj-button oj-button-ghost"
+                                            type="button"
+                                            hidden
+                                        >
+                                            Retry
+                                        </button>
+                                        <button
+                                            id="historySubtitleCopyBtn"
+                                            class="oj-button oj-button-ghost"
+                                            type="button"
+                                            disabled
+                                        >
+                                            Copy
+                                        </button>
+                                    </div>
+                                </div>
+                                <p id="historySubtitleMeta" class="oj-muted"></p>
+                                <p id="historySubtitleNotice" class="oj-helper" hidden></p>
+                                <p id="historySubtitleStatus" class="oj-status" role="status" aria-live="polite"></p>
+                                <pre
+                                    id="historySubtitleText"
+                                    class="oj-code-block pinefetch-history-text-viewer"
+                                    tabindex="0"
+                                    hidden
+                                ></pre>
                             </section>
 
                             <section

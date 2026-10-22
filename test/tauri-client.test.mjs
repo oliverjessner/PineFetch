@@ -18,6 +18,7 @@ const commands = {
     loadHistoryAccountVideos: 'load_history_account_videos',
     getHistory: 'get_history',
     getHistoryCaption: 'get_history_caption',
+    getHistorySubtitle: 'get_history_subtitle',
     getHistoryDetails: 'get_history_details',
     getHistoryKeywords: 'get_history_keywords',
     getHistorySocialInsights: 'get_history_social_insights',

@@ -1,5 +1,8 @@
 # 2.5.2
 
+- Added opt-in creator subtitle downloads in original languages and formats, with a Subtitles tab in Video Details, stored text, track selection, copying and original-timing notices for timestamp cuts.
+- Integrated subtitle settings as schema 8 while preserving schema-7 browser authentication and existing settings.
+
 - Moved YouTube browser authentication to Settings → Download and separated it from Browser Import and Link Dump initialization.
 
 - updated deps

@@ -27,6 +27,7 @@ fn require_output(path: Option<&str>) -> Result<&str, String> {
     Ok(path)
 }
 
+#[cfg(test)]
 pub(super) fn complete(
     state: &crate::database::Database,
     job: &DownloadJob,
@@ -38,6 +39,7 @@ pub(super) fn complete(
     complete_with_hook(state, job, path, info, captions, language, |_| Ok(()))
 }
 
+#[cfg(test)]
 pub(super) fn complete_with_hook(
     state: &crate::database::Database,
     job: &DownloadJob,
@@ -47,6 +49,41 @@ pub(super) fn complete_with_hook(
     language: Option<&str>,
     hook: impl FnMut(CompletionPoint) -> Result<(), String>,
 ) -> Result<(), String> {
+    complete_files_with_hook(
+        state,
+        job,
+        CompletionFiles {
+            path,
+            info,
+            captions,
+            subtitles: &[],
+            language,
+        },
+        hook,
+    )
+}
+
+pub(crate) struct CompletionFiles<'a> {
+    pub(crate) path: Option<&'a str>,
+    pub(crate) info: Option<&'a InfoResponse>,
+    pub(crate) captions: &'a [SavedCaption],
+    pub(crate) subtitles: &'a [crate::subtitles::SavedSubtitle],
+    pub(crate) language: Option<&'a str>,
+}
+
+pub(super) fn complete_files_with_hook(
+    state: &crate::database::Database,
+    job: &DownloadJob,
+    files: CompletionFiles<'_>,
+    hook: impl FnMut(CompletionPoint) -> Result<(), String>,
+) -> Result<(), String> {
+    let CompletionFiles {
+        path,
+        info,
+        captions,
+        subtitles,
+        language,
+    } = files;
     let result = (|| -> Result<(), String> {
         let path = require_output(path)?;
         output_ready(state, job, Some(path))?;
@@ -73,6 +110,11 @@ pub(super) fn complete_with_hook(
                 return Err("Produced caption changed before persistence".into());
             }
         }
+        for subtitle in subtitles {
+            if crate::subtitles::read_text(Path::new(&subtitle.path))? != subtitle.text {
+                return Err("Produced subtitles changed before persistence".into());
+            }
+        }
         let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
         crate::completion_store::commit(
             &conn,
@@ -81,6 +123,7 @@ pub(super) fn complete_with_hook(
                 path,
                 entry: &entry,
                 captions,
+                subtitles,
                 transcript: transcript
                     .as_ref()
                     .map(|(text, language)| (text.as_str(), *language)),

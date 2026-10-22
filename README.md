@@ -18,12 +18,14 @@ Paste a link, choose a preset and a download folder, then start the queue. Add a
 
 - Download videos from YouTube, TikTok, Instagram and other supported platforms.
 - Extract MP3 or Opus audio and create local transcripts with optional timestamps.
-- Save available post captions and thumbnail images beside downloads.
+- Save available post captions, creator subtitles and thumbnail images beside downloads.
 - Queue individual links, YouTube playlists and TXT imports.
 - Search saved downloads, transcripts and captions in History.
 - Recognize on-screen text in videos and find recurring keywords in saved text.
 - Browse creators' saved downloads and discover public profile videos.
 - Load public video and account metrics on demand and keep snapshots for offline reference.
+
+Enable **Save creator subtitles** in **Settings → Download** to keep original subtitle tracks. Open a saved video in **History → Video Details → Subtitles** to select a language, read the original timed text or copy it.
 
 See the [video and caption compatibility list](docs/COMPATIBILITY.md) for accepted links and caption behavior.
 

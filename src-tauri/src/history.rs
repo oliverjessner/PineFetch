@@ -279,6 +279,7 @@ pub(super) fn get_history_details_from_db(
         file_extension,
         transcript,
         captions,
+        subtitles: crate::subtitles::summaries(&conn, id)?,
     }))
 }
 

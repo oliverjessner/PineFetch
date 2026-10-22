@@ -42,6 +42,7 @@ pub(crate) struct ConfigPatch {
     #[serde(alias = "save_instagram_captions")]
     pub(crate) save_captions: Option<bool>,
     pub(crate) save_thumbnails: Option<bool>,
+    pub(crate) save_creator_subtitles: Option<bool>,
     pub(crate) magic_import_enabled: Option<bool>,
     pub(crate) cut_at_timestamp_enabled: Option<bool>,
     pub(crate) notifications_enabled: Option<bool>,
@@ -77,6 +78,9 @@ pub(crate) fn apply_config_patch(config: &mut AppConfig, changes: ConfigPatch) {
     }
     if let Some(value) = changes.save_captions {
         config.save_captions = value;
+    }
+    if let Some(value) = changes.save_creator_subtitles {
+        config.save_creator_subtitles = value;
     }
     if let Some(value) = changes.save_thumbnails {
         config.save_thumbnails = value;

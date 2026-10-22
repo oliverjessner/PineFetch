@@ -3,6 +3,7 @@ import { initTabs, toast } from './vendor/oj/index.js';
 import { createHistoryOcrView } from './history-ocr-view.js';
 import { createHistorySocialInsightsView } from './history-social-insights-view.js';
 import { createHistoryKeywordsView } from './history-keywords-view.js';
+import { createHistorySubtitlesView } from './history-subtitles-view.js';
 
 export const createHistoryDetailsView = ({
     els,
@@ -31,6 +32,7 @@ export const createHistoryDetailsView = ({
     };
     const ocrView = createHistoryOcrView({ els, api, appendLog, jobs });
     const socialView = createHistorySocialInsightsView({ els, api, appendLog });
+    const subtitlesView = createHistorySubtitlesView({ els, api, appendLog });
     const keywordsView = createHistoryKeywordsView({ els, api, appendLog });
 
     const formatDateTime = timestamp => {
@@ -161,6 +163,12 @@ export const createHistoryDetailsView = ({
         addOverviewRow('SHA-256', entry.sha256, null, 'oj-mono');
         addOverviewRow('Thumbnail', entry.thumbnail ? 'Available' : null);
         addOverviewRow('Transcript', transcriptLabel);
+        addOverviewRow(
+            'Subtitles',
+            details.subtitles?.length
+                ? `${details.subtitles.length} ${details.subtitles.length === 1 ? 'track' : 'tracks'}`
+                : null
+        );
         addOverviewRow('Captions', captionCount ? `${captionCount} ${captionCount === 1 ? 'track' : 'tracks'}` : null);
         addOverviewRow('PineFetch version', entry.pinefetch_version);
     };
@@ -313,6 +321,7 @@ export const createHistoryDetailsView = ({
         state.details = null;
         state.transcript = undefined;
         state.captions.clear();
+        subtitlesView.reset();
         const requestId = ++state.detailsRequestId;
         els.historyDetailsContent.hidden = true;
         els.historyOverviewTab.click();
@@ -372,6 +381,7 @@ export const createHistoryDetailsView = ({
             els.historyDetailsTabs.hidden = false;
             renderOverview(details);
             renderCaptionOptions(details.captions || []);
+            subtitlesView.reset(entryId, details.subtitles || []);
             els.historyDetailsContent.hidden = false;
             if (ocr || jobs.get(entryId)?.status === 'running') els.historyOcrTab.click();
         } catch (err) {
@@ -398,6 +408,7 @@ export const createHistoryDetailsView = ({
         ocrView.bindEvents();
         socialView.bindEvents();
         keywordsView.bindEvents();
+        subtitlesView.bindEvents();
         const cleanupTabs = initTabs(els.historyDetailsContent);
         window.addEventListener('pagehide', cleanupTabs, { once: true });
 
@@ -524,6 +535,8 @@ export const createHistoryDetailsView = ({
                 void loadTranscript();
                 void loadSelectedCaption();
             }
+            if (event.detail.tab === els.historySubtitlesTab) void subtitlesView.load();
+            else subtitlesView.deactivate();
             if (event.detail.tab === els.historyOcrTab) void ocrView.load();
             else ocrView.deactivate();
             if (event.detail.tab === els.historySocialTab) void socialView.load();
@@ -551,6 +564,7 @@ export const createHistoryDetailsView = ({
         leave: () => {
             state.entryId = null;
             state.detailsRequestId += 1;
+            subtitlesView.deactivate();
             ocrView.deactivate();
             socialView.reset(null);
             keywordsView.reset(null);

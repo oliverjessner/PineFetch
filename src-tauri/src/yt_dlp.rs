@@ -39,6 +39,23 @@ pub(crate) fn build_download_args(
         );
     }
 
+    if job.save_creator_subtitles {
+        args.extend([
+            "--print".into(),
+            "after_move:pinefetch_subtitles:%(.{filepath,requested_subtitles})j".into(),
+        ]);
+        // Keep creator-provided tracks in their original format and languages.
+        // Explicitly exclude automatic captions and YouTube live-chat exports.
+        args.extend([
+            "--write-subs".into(),
+            "--no-write-auto-subs".into(),
+            "--sub-langs".into(),
+            "all,-live_chat".into(),
+            "--sub-format".into(),
+            "best".into(),
+        ]);
+    }
+
     if job.save_thumbnails {
         args.push("--write-thumbnail".to_string());
     }
@@ -128,7 +145,7 @@ pub(super) fn parse_caption_line(line: &str, reddit: bool) -> Option<(String, St
 
 pub(super) fn parse_yt_dlp_filepath(line: &str) -> Option<String> {
     let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with("pinefetch_caption:") {
+    if trimmed.is_empty() || trimmed.starts_with("pinefetch_") {
         return None;
     }
 

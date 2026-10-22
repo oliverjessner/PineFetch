@@ -235,6 +235,19 @@ pub(crate) fn get_history_transcript(
 }
 
 #[tauri::command]
+pub(crate) fn get_history_subtitle(
+    state: State<AppState>,
+    id: String,
+    path: String,
+) -> Result<Option<crate::subtitles::SubtitleContent>, String> {
+    crate::subtitles::content(
+        &*state.db.lock().map_err(|_| "SQLite lock poisoned")?,
+        &id,
+        &path,
+    )
+}
+
+#[tauri::command]
 pub(crate) fn get_history_caption(
     state: State<AppState>,
     id: String,

@@ -7,9 +7,7 @@ use crate::models::DownloadJob;
 use crate::models::DownloadRequest;
 use crate::models::DownloadState;
 use crate::models::DownloadStateEvent;
-use crate::models::InfoResponse;
 use crate::models::LogEvent;
-use crate::models::SavedCaption;
 use crate::process::terminate_child_process_tree;
 use crate::queue::is_queue_auto_start_enabled;
 use crate::queue::next_worker_job;
@@ -217,12 +215,9 @@ fn persist_job_completion(
     app: &AppHandle,
     state: &AppState,
     job: &DownloadJob,
-    path: Option<&str>,
-    info: Option<&InfoResponse>,
-    captions: &[SavedCaption],
-    language: Option<&str>,
+    files: completion::CompletionFiles<'_>,
 ) -> Result<(), String> {
-    completion::complete(&state.db, job, path, info, captions, language)?;
+    completion::complete_files_with_hook(&state.db, job, files, |_| Ok(()))?;
     let _ = app.emit(crate::events::HISTORY_CHANGED, ());
     Ok(())
 }
@@ -432,10 +427,13 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                             &app_handle,
                                             &state_handle,
                                             &job,
-                                            Some(&transcript_path),
-                                            run_result.info.as_ref(),
-                                            &run_result.captions,
-                                            Some(&transcription.language),
+                                            completion::CompletionFiles {
+                                                path: Some(&transcript_path),
+                                                info: run_result.info.as_ref(),
+                                                captions: &run_result.captions,
+                                                subtitles: &run_result.subtitles,
+                                                language: Some(&transcription.language),
+                                            },
                                         )
                                     },
                                 ) {
@@ -471,10 +469,13 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                 &app_handle,
                                 &state_handle,
                                 &job,
-                                run_result.output_path.as_deref(),
-                                run_result.info.as_ref(),
-                                &run_result.captions,
-                                None,
+                                completion::CompletionFiles {
+                                    path: run_result.output_path.as_deref(),
+                                    info: run_result.info.as_ref(),
+                                    captions: &run_result.captions,
+                                    subtitles: &run_result.subtitles,
+                                    language: None,
+                                },
                             )
                         },
                     ) {

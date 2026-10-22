@@ -119,6 +119,8 @@ pub(super) fn run_download_job(
     let progress_re =
         Regex::new(crate::yt_dlp::PROGRESS_PATTERN).map_err(|e| format!("Regex error: {e}"))?;
     let output_path_capture: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let subtitle_capture: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let subtitles_for_stdout = subtitle_capture.clone();
     let caption_capture: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
     let metadata_capture: Arc<Mutex<Vec<(String, InfoResponse)>>> =
         Arc::new(Mutex::new(Vec::new()));
@@ -134,6 +136,14 @@ pub(super) fn run_download_job(
         if let Some(out) = stdout {
             let reader = BufReader::new(out);
             for line in reader.lines().map_while(Result::ok) {
+                if line.starts_with("pinefetch_subtitles:") {
+                    if let Ok(mut lines) = subtitles_for_stdout.lock() {
+                        if lines.len() < 16 && line.len() <= 4 * 1024 * 1024 {
+                            lines.push(line.clone());
+                        }
+                    }
+                    continue;
+                }
                 if !line.starts_with("pinefetch_caption:")
                     && !line.starts_with("pinefetch_metadata:")
                 {
@@ -219,6 +229,7 @@ pub(super) fn run_download_job(
         .and_then(|guard| select_existing_output_path(&guard));
     let mut info = None;
     let mut saved_captions = Vec::new();
+    let mut saved_subtitles = Vec::new();
 
     if status.success() {
         if output_path.is_none() {
@@ -243,6 +254,26 @@ pub(super) fn run_download_job(
             format!("Downloaded output receipt failed: {e}; any produced file preserved")
         })?;
 
+        if job.save_creator_subtitles {
+            if let Some(media) = output_path.as_deref() {
+                for line in subtitle_capture
+                    .lock()
+                    .map_err(|_| "Subtitle capture lock poisoned")?
+                    .iter()
+                {
+                    match crate::subtitles::collect(line, Path::new(media), job.cut_start_time.unwrap_or(0.0)) {
+                        Ok(tracks) => {
+                            for track in tracks {
+                                if !saved_subtitles.iter().any(|existing: &crate::subtitles::SavedSubtitle| existing.path == track.path) {
+                                    saved_subtitles.push(track);
+                                }
+                            }
+                        },
+                        Err(_) => emit_log(app, LogEvent { id: job.id.clone(), line: "[subtitles] Some subtitle files could not be saved to History; downloaded files are preserved.".into(), is_error: true }),
+                    }
+                }
+            }
+        }
         let original_output_path = output_path.clone();
         if let Some(cut_start_time) = job.cut_start_time {
             let trimmed_path = trim_downloaded_file(
@@ -303,6 +334,7 @@ pub(super) fn run_download_job(
         error: error_capture.lock().ok().and_then(|reason| reason.clone()),
         info,
         captions: saved_captions,
+        subtitles: saved_subtitles,
     })
 }
 

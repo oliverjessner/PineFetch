@@ -33,6 +33,8 @@ pub(crate) struct AppConfig {
     pub(crate) save_captions: bool,
     #[serde(default)]
     pub(crate) save_thumbnails: bool,
+    #[serde(default)]
+    pub(crate) save_creator_subtitles: bool,
     #[serde(default = "default_magic_import_enabled")]
     pub(crate) magic_import_enabled: bool,
     #[serde(default = "default_cut_at_timestamp_enabled")]
@@ -54,6 +56,7 @@ impl Default for AppConfig {
             download_video_with_transcript: false,
             save_captions: false,
             save_thumbnails: false,
+            save_creator_subtitles: false,
             magic_import_enabled: default_magic_import_enabled(),
             cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
@@ -108,6 +111,8 @@ pub(crate) struct DownloadJob {
     pub(crate) save_captions: bool,
     #[serde(default)]
     pub(crate) save_thumbnails: bool,
+    #[serde(default)]
+    pub(crate) save_creator_subtitles: bool,
     pub(crate) title: Option<String>,
     pub(crate) uploader: Option<String>,
     pub(crate) thumbnail: Option<String>,
@@ -227,6 +232,7 @@ pub(crate) struct HistoryDetails {
     pub(crate) file_extension: Option<String>,
     pub(crate) transcript: Option<HistoryTranscriptSummary>,
     pub(crate) captions: Vec<HistoryCaptionSummary>,
+    pub(crate) subtitles: Vec<crate::subtitles::SubtitleSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -406,6 +412,7 @@ pub(crate) struct DownloadRunResult {
     pub(crate) error: Option<String>,
     pub(crate) info: Option<InfoResponse>,
     pub(crate) captions: Vec<SavedCaption>,
+    pub(crate) subtitles: Vec<crate::subtitles::SavedSubtitle>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -28,7 +28,7 @@ pub(super) fn update_config(
 
 pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
     conn.query_row(
-        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions, save_thumbnails, youtube_cookie_browser
+        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions, save_thumbnails, youtube_cookie_browser, save_creator_subtitles
          FROM app_config
          WHERE id = 1",
         [],
@@ -46,6 +46,7 @@ pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<Ap
                 notifications_enabled: row.get::<_, i64>(8)? != 0,
                 save_captions: row.get::<_, i64>(9)? != 0,
                 save_thumbnails: row.get::<_, i64>(10)? != 0,
+                save_creator_subtitles: row.get::<_, i64>(12)? != 0,
             }))
         },
     )
@@ -75,6 +76,7 @@ pub(super) fn upsert_app_config_in_conn(
             save_captions,
             save_thumbnails,
             youtube_cookie_browser,
+            save_creator_subtitles,
             created_at,
             updated_at
         ) VALUES (
@@ -91,6 +93,7 @@ pub(super) fn upsert_app_config_in_conn(
             ?10,
             ?11,
             ?12,
+            ?13,
             datetime('now'),
             datetime('now')
         )
@@ -107,6 +110,7 @@ pub(super) fn upsert_app_config_in_conn(
             save_captions = excluded.save_captions,
             save_thumbnails = excluded.save_thumbnails,
             youtube_cookie_browser = excluded.youtube_cookie_browser,
+            save_creator_subtitles = excluded.save_creator_subtitles,
             updated_at = datetime('now')",
         params![
             config.yt_dlp_path,
@@ -129,6 +133,7 @@ pub(super) fn upsert_app_config_in_conn(
             config.save_captions,
             config.save_thumbnails,
             config.youtube_cookie_browser,
+            config.save_creator_subtitles,
         ],
     )?;
     Ok(())
@@ -163,6 +168,7 @@ pub(super) fn import_legacy_config(conn: &Connection, path: &Path) -> Result<(),
                 "save_captions",
                 "save_instagram_captions",
                 "save_thumbnails",
+                "save_creator_subtitles",
             ];
             if !value
                 .as_object()
@@ -251,7 +257,8 @@ mod tests {
         let state = AppState::new(initial, conn);
         let changes: ConfigPatch = serde_json::from_value(json!({
             "yt_dlp_path": null,
-            "notifications_enabled": true
+            "notifications_enabled": true,
+            "save_creator_subtitles": true
         }))
         .unwrap();
 
@@ -270,6 +277,8 @@ mod tests {
             Some("https://example.com/new")
         );
         assert!(updated.notifications_enabled);
+        assert!(updated.save_creator_subtitles);
+        assert!(persisted.save_creator_subtitles);
         assert_eq!(persisted.last_download_url, updated.last_download_url);
         assert_eq!(persisted.selected_preset_key, updated.selected_preset_key);
         assert_eq!(persisted.yt_dlp_path, None);

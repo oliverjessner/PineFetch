@@ -62,6 +62,7 @@ mod runtime_failure_tests;
 mod social_insights;
 mod startup;
 mod state;
+mod subtitles;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
@@ -164,6 +165,7 @@ fn main() {
             commands::load_history_social_insights,
             commands::get_history_transcript,
             commands::get_history_caption,
+            commands::get_history_subtitle,
             commands::start_history_ocr,
             commands::cancel_history_ocr,
             commands::get_history_ocr,

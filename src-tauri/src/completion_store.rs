@@ -15,6 +15,7 @@ pub(super) enum CompletionPoint {
     History,
     Transcript,
     Captions,
+    Subtitles,
     BeforeCommit,
 }
 
@@ -84,6 +85,7 @@ pub(crate) struct CompletionData<'a> {
     pub(crate) path: &'a str,
     pub(crate) entry: &'a HistoryEntry,
     pub(crate) captions: &'a [SavedCaption],
+    pub(crate) subtitles: &'a [crate::subtitles::SavedSubtitle],
     pub(crate) transcript: Option<(&'a str, &'a str)>,
 }
 pub(crate) fn commit(
@@ -148,6 +150,8 @@ pub(crate) fn commit(
     hook(CompletionPoint::Transcript)?;
     insert_captions_in_conn(&tx, &job.id, captions)?;
     hook(CompletionPoint::Captions)?;
+    crate::subtitles::insert(&tx, &job.id, data.subtitles)?;
+    hook(CompletionPoint::Subtitles)?;
     tx.execute("UPDATE job_completions SET state='complete',history_entry_id=?1,updated_at=?2 WHERE job_id=?1",
         params![job.id, millis_to_i64(current_timestamp_millis())]).map_err(|e| format!("Completion marker failed: {e}"))?;
     hook(CompletionPoint::BeforeCommit)?;

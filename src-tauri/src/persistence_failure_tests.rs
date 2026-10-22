@@ -31,6 +31,7 @@ fn job(root: &TempRoot, id: &str, transcript: bool) -> DownloadJob {
         download_video_with_transcript: false,
         save_captions: false,
         save_thumbnails: false,
+        save_creator_subtitles: false,
         title: Some("Synthetic Grüße 🌲".into()),
         uploader: None,
         thumbnail: None,

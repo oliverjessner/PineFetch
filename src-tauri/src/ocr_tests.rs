@@ -553,7 +553,7 @@ fn repeated_frame_storage_hits_the_existing_limit_before_exceeding_it() {
 
 fn schema_three(path: &std::path::Path) -> Connection {
     let conn = database::open(path).unwrap();
-    conn.execute_batch("DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames;
+    conn.execute_batch("ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames;
         ALTER TABLE history_ocr DROP COLUMN result_revision;
         ALTER TABLE history_ocr DROP COLUMN result_format;
         PRAGMA user_version=3;
@@ -1120,7 +1120,7 @@ fn integration_schema_two_upgrade_failure_rolls_back_and_retry_preserves_rows() 
     let root = TempRoot::new("ocr-migration");
     let path = root.path("state.sqlite");
     let conn = database::open(&path).unwrap();
-    conn.execute_batch("DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; PRAGMA user_version=2;
+    conn.execute_batch("ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; PRAGMA user_version=2;
         INSERT INTO history_entries (id,url,title,created_at) VALUES ('video','https://example.com','Grüße 🌲',123);").unwrap();
     let before: Vec<u8> = fs::read(&path).unwrap();
     drop(conn);

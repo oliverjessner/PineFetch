@@ -201,6 +201,7 @@ pub(crate) struct DownloadOptions {
     download_video_with_transcript: bool,
     save_captions: bool,
     save_thumbnails: bool,
+    save_creator_subtitles: bool,
 }
 
 impl From<&crate::models::AppConfig> for DownloadOptions {
@@ -210,6 +211,7 @@ impl From<&crate::models::AppConfig> for DownloadOptions {
             download_video_with_transcript: config.download_video_with_transcript,
             save_captions: config.save_captions,
             save_thumbnails: config.save_thumbnails,
+            save_creator_subtitles: config.save_creator_subtitles,
         }
     }
 }
@@ -238,6 +240,7 @@ pub(crate) fn prepare_download_job(
         download_video_with_transcript: options.download_video_with_transcript,
         save_captions: options.save_captions,
         save_thumbnails: options.save_thumbnails,
+        save_creator_subtitles: options.save_creator_subtitles,
         title: request.title,
         uploader: request.uploader,
         thumbnail: request.thumbnail,

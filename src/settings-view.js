@@ -127,6 +127,7 @@ export const createSettingsView = ({
             config = await api.getConfig();
             els.notificationsEnabled.checked = config.notifications_enabled ?? false;
             els.saveCaptions.checked = config.save_captions ?? false;
+            els.saveCreatorSubtitles.checked = config.save_creator_subtitles ?? false;
             els.saveThumbnails.checked = config.save_thumbnails ?? false;
             els.outputDir.value = config.default_output_dir || '';
             els.ytDlpPath.value = config.yt_dlp_path || '';
@@ -246,6 +247,9 @@ export const createSettingsView = ({
         });
         els.saveCaptions.addEventListener('change', () => {
             void persistCaptionSetting();
+        });
+        els.saveCreatorSubtitles.addEventListener('change', () => {
+            void saveSettings({ save_creator_subtitles: els.saveCreatorSubtitles.checked });
         });
         els.saveThumbnails.addEventListener('change', () => {
             void saveSettings({ save_thumbnails: els.saveThumbnails.checked });

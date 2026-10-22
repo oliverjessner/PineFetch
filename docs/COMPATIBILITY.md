@@ -20,3 +20,7 @@ Here are our first class citizen listed:
 - \* Captions are saved when **Save post captions** is enabled and post text is available. Reddit uses the title and optional self-text.
 
 check [PineFetch-Link-Dump](https://github.com/oliverjessner/PineFetch-Link-Dump) to see which platforms are supported by import text and sending urls via browser
+
+## Creator subtitles
+
+Enable **Save creator subtitles** in Settings → Download to save available creator-provided subtitle tracks beside video or audio downloads. All available languages are saved in the best original format, with their original timing. Automatic captions and live-chat exports are excluded. When no creator subtitles are available, the media download continues without them. This option is separate from post descriptions and local Whisper transcripts. Timestamp cuts leave the subtitle tracks unchanged, so their timing still refers to the full video.

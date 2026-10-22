@@ -2965,6 +2965,22 @@ try {
             await page.waitForFunction(() => !globalThis.document.getElementById('saveCaptions').disabled);
             assert.equal(await setting.isChecked(), false);
 
+            const creatorSubtitles = page.locator('#saveCreatorSubtitles');
+            assert.equal(await creatorSubtitles.isChecked(), false);
+            await creatorSubtitles.focus();
+            await page.keyboard.press('Space');
+            await page.waitForFunction(() =>
+                globalThis.__pinefetchUi.commands.some(
+                    call => call.command === 'patch_config' && call.args.changes.save_creator_subtitles === true
+                )
+            );
+            await page.waitForFunction(
+                () =>
+                    globalThis.document.getElementById('settingsSaveStatus').textContent ===
+                    'Changes saved. They apply to new downloads.'
+            );
+            assert.equal(await creatorSubtitles.isChecked(), true);
+
             // Playlist paste/import expands into independent jobs without requiring Queue.
             await page.locator('#viewDownloadBtn').click();
             await selectPreset('audio_opus', 'Audio only (opus)', false);

@@ -39,6 +39,19 @@ pub(crate) fn build_download_args(
         );
     }
 
+    if job.save_creator_subtitles {
+        // Keep creator-provided tracks in their original format and languages.
+        // Explicitly exclude automatic captions and YouTube live-chat exports.
+        args.extend([
+            "--write-subs".into(),
+            "--no-write-auto-subs".into(),
+            "--sub-langs".into(),
+            "all,-live_chat".into(),
+            "--sub-format".into(),
+            "best".into(),
+        ]);
+    }
+
     if job.save_thumbnails {
         args.push("--write-thumbnail".to_string());
     }

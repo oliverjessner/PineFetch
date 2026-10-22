@@ -31,6 +31,8 @@ pub(crate) struct AppConfig {
     pub(crate) save_captions: bool,
     #[serde(default)]
     pub(crate) save_thumbnails: bool,
+    #[serde(default)]
+    pub(crate) save_creator_subtitles: bool,
     #[serde(default = "default_magic_import_enabled")]
     pub(crate) magic_import_enabled: bool,
     #[serde(default = "default_cut_at_timestamp_enabled")]
@@ -51,6 +53,7 @@ impl Default for AppConfig {
             download_video_with_transcript: false,
             save_captions: false,
             save_thumbnails: false,
+            save_creator_subtitles: false,
             magic_import_enabled: default_magic_import_enabled(),
             cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
@@ -105,6 +108,8 @@ pub(crate) struct DownloadJob {
     pub(crate) save_captions: bool,
     #[serde(default)]
     pub(crate) save_thumbnails: bool,
+    #[serde(default)]
+    pub(crate) save_creator_subtitles: bool,
     pub(crate) title: Option<String>,
     pub(crate) uploader: Option<String>,
     pub(crate) thumbnail: Option<String>,

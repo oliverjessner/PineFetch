@@ -41,6 +41,7 @@ const els = Object.seal({
     settingsSaveStatus: document.getElementById('settingsSaveStatus'),
     notificationsEnabled: document.getElementById('notificationsEnabled'),
     saveCaptions: document.getElementById('saveCaptions'),
+    saveCreatorSubtitles: document.getElementById('saveCreatorSubtitles'),
     saveThumbnails: document.getElementById('saveThumbnails'),
     openFolderBtn: document.getElementById('openFolderBtn'),
     outputDir: document.getElementById('outputDir'),

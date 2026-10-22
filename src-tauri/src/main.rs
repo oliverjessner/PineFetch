@@ -16,6 +16,7 @@ mod completion;
 mod completion_store;
 mod config;
 mod config_rules;
+mod cookie_sync;
 mod database;
 #[cfg(target_os = "macos")]
 mod dock_menu;
@@ -142,6 +143,7 @@ fn main() {
             commands::read_clipboard_text,
             commands::load_info,
             commands::get_yt_dlp_installed_version,
+            commands::check_youtube_cookie_access,
             commands::get_queue_status,
             commands::get_queue,
             commands::set_queue_auto_start,

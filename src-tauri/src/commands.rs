@@ -152,10 +152,33 @@ pub(crate) async fn load_info(
     let app_handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app_handle.state::<AppState>();
-        load_info_with_yt_dlp(yt_dlp, deno, url, &state.processes)
+        let browser = state
+            .config
+            .lock()
+            .map_err(|_| "Config lock poisoned")?
+            .youtube_cookie_browser
+            .clone();
+        load_info_with_yt_dlp(yt_dlp, deno, url, &state.processes, browser.as_deref())
     })
     .await
     .map_err(|e| format!("Info task failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn check_youtube_cookie_access(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    browser: String,
+) -> Result<(), String> {
+    let yt_dlp =
+        resolve_yt_dlp(&app, &state.config).map_err(|_| "YT_DLP_UNAVAILABLE".to_string())?;
+    let deno = resolve_deno_executable(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        crate::cookie_sync::check_access(&yt_dlp, deno.as_deref(), &browser, &state.processes)
+    })
+    .await
+    .map_err(|_| "COOKIE_ACCESS_FAILED".to_string())?
 }
 
 #[tauri::command]
@@ -508,6 +531,7 @@ pub(crate) async fn enqueue_playlist(
             deno.as_deref(),
             &url,
             &state.processes,
+            config.youtube_cookie_browser.as_deref(),
         )?;
         let result = crate::youtube_playlist::build_jobs(request, playlist, &config, output_dir);
         crate::worker::enqueue_download_jobs(&app, &state, result.jobs.clone())?;

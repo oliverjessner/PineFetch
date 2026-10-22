@@ -579,7 +579,7 @@ fn version_one_upgrade_and_sql_failure_roll_back_entire_section_and_retry() {
     // Construct the version-1 baseline using the implemented adoption step,
     // then fail version 2. Version 1 is an internal baseline, not an old app.
     conn.execute_batch(
-        "DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; DROP TABLE job_completions; DROP TABLE legacy_imports; PRAGMA user_version=1;",
+        "DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; DROP TABLE job_completions; DROP TABLE legacy_imports; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; PRAGMA user_version=1;",
     )
     .unwrap();
     let before = schema(&conn);
@@ -1726,4 +1726,28 @@ fn abrupt_process_kill_rolls_back_migration_and_completion_and_allows_safe_retry
             assert_eq!(count(&conn, "history_entries"), 4);
         }
     }
+}
+
+#[test]
+fn integration_cookie_settings_migration_rolls_back_and_preserves_existing_settings() {
+    let fixture = Fixture::new();
+    let conn = fixture.db();
+    conn.execute_batch("ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; PRAGMA user_version=6; UPDATE app_config SET yt_dlp_path='/synthetic/yt-dlp', save_captions=1;").unwrap();
+    let before = schema(&conn);
+    let error = database::initialize_with_hook(&conn, |point| {
+        if point == MigrationPoint::BrowserCookies {
+            return Err("synthetic cookie migration failure".into());
+        }
+        Ok(())
+    })
+    .unwrap_err();
+    assert!(error.contains("synthetic cookie migration failure"));
+    assert_eq!(version(&conn), 6);
+    assert_eq!(schema(&conn), before);
+    database::initialize(&conn).unwrap();
+    let config = load_config_from_db(&conn).unwrap();
+    assert_eq!(config.youtube_cookie_browser, None);
+    assert_eq!(config.yt_dlp_path.as_deref(), Some("/synthetic/yt-dlp"));
+    assert!(config.save_captions);
+    database::initialize(&conn).unwrap();
 }

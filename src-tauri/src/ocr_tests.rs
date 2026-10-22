@@ -556,6 +556,7 @@ fn schema_three(path: &std::path::Path) -> Connection {
     conn.execute_batch("DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames;
         ALTER TABLE history_ocr DROP COLUMN result_revision;
         ALTER TABLE history_ocr DROP COLUMN result_format;
+        ALTER TABLE app_config DROP COLUMN youtube_cookie_browser;
         PRAGMA user_version=3;
         INSERT INTO history_entries (id,url,created_at) VALUES ('video','https://example.com/video',1);").unwrap();
     conn
@@ -1120,7 +1121,7 @@ fn integration_schema_two_upgrade_failure_rolls_back_and_retry_preserves_rows() 
     let root = TempRoot::new("ocr-migration");
     let path = root.path("state.sqlite");
     let conn = database::open(&path).unwrap();
-    conn.execute_batch("DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; PRAGMA user_version=2;
+    conn.execute_batch("DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; PRAGMA user_version=2;
         INSERT INTO history_entries (id,url,title,created_at) VALUES ('video','https://example.com','Grüße 🌲',123);").unwrap();
     let before: Vec<u8> = fs::read(&path).unwrap();
     drop(conn);

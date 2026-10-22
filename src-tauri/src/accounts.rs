@@ -218,7 +218,15 @@ fn resolve_profile(
         }
     }
     crate::url_rules::validate_download_url(&ctx.url).map_err(|e| e.to_string())?;
-    let raw = crate::metadata::load_raw_info(yt_dlp, deno, &ctx.url, processes)?;
+    let config =
+        crate::config::load_config_from_db(&*db.lock().map_err(|_| "SQLite lock poisoned")?)?;
+    let raw = crate::metadata::load_raw_info(
+        yt_dlp,
+        deno,
+        &ctx.url,
+        processes,
+        config.youtube_cookie_browser.as_deref(),
+    )?;
     let data: Value = serde_json::from_str(&raw).map_err(|_| "Invalid account metadata.")?;
     // TikTok's channel_url contains the internal secUid, while uploader_url
     // contains the public handle that Fetchary can verify against the page.
@@ -328,6 +336,13 @@ pub(crate) fn fetch_videos(
         target,
     ]);
     let mut command = Command::new(yt_dlp);
+    let config =
+        crate::config::load_config_from_db(&*db.lock().map_err(|_| "SQLite lock poisoned")?)?;
+    crate::yt_dlp::apply_browser_cookies(
+        &mut command,
+        &profile_url,
+        config.youtube_cookie_browser.as_deref(),
+    );
     command.args(args);
     let output = crate::process::run_command_output(
         command,
@@ -590,7 +605,7 @@ mod tests {
         let root = TempRoot::new("account-migration");
         let path = root.path("history.sqlite");
         let conn = database::open(&path).unwrap();
-        conn.execute_batch("DROP TABLE history_account_insights; DROP INDEX idx_history_account_lookup; PRAGMA user_version=5; INSERT INTO history_entries(id,url,source,uploader,title,created_at) VALUES ('one','https://www.youtube.com/watch?v=abcdefghijk','youtube','Creator','Original',1)").unwrap();
+        conn.execute_batch("DROP TABLE history_account_insights; DROP INDEX idx_history_account_lookup; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; PRAGMA user_version=5; INSERT INTO history_entries(id,url,source,uploader,title,created_at) VALUES ('one','https://www.youtube.com/watch?v=abcdefghijk','youtube','Creator','Original',1)").unwrap();
         drop(conn);
         let before = fs::read(&path).unwrap();
         assert!(database::open_with_hook(&path, |point| {

@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 6;
+pub(super) const SCHEMA_VERSION: i64 = 7;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(3);
 // The reported upgraded layout retains this stronger, compatible constraint.
 const LEGACY_HISTORY_VERSION: &str = "2.1.0";
@@ -212,6 +212,7 @@ pub(super) enum MigrationPoint {
     OcrFrames,
     SocialInsights,
     AccountInsights,
+    BrowserCookies,
 }
 
 pub(super) fn initialize_with_hook(
@@ -308,6 +309,13 @@ pub(super) fn initialize_with_hook(
         tx.pragma_update(None, "user_version", 6)
             .map_err(|e| e.to_string())?;
         hook(MigrationPoint::AccountInsights)?;
+    }
+    if version < 7 {
+        tx.execute_batch("ALTER TABLE app_config ADD COLUMN youtube_cookie_browser TEXT;")
+            .map_err(|e| format!("SQLite migration 7 failed: {e}"))?;
+        tx.pragma_update(None, "user_version", 7)
+            .map_err(|e| e.to_string())?;
+        hook(MigrationPoint::BrowserCookies)?;
     }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
@@ -486,6 +494,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
     if version >= 6 {
         reference
             .execute_batch(ACCOUNT_INSIGHTS_SQL)
+            .map_err(|e| e.to_string())?;
+    }
+    if version >= 7 {
+        reference
+            .execute_batch("ALTER TABLE app_config ADD COLUMN youtube_cookie_browser TEXT;")
             .map_err(|e| e.to_string())?;
     }
     reference

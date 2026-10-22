@@ -435,6 +435,7 @@ fn app_config_is_stored_in_sqlite() {
     let conn = Connection::open_in_memory().unwrap();
     run_link_dump_migrations(&conn).unwrap();
     let config = AppConfig {
+        youtube_cookie_browser: None,
         yt_dlp_path: Some("/opt/pinefetch/yt-dlp".to_string()),
         default_output_dir: Some("/Users/example/Downloads".to_string()),
         selected_preset_key: Some("audio_mp3".to_string()),

@@ -20,6 +20,8 @@ pub(crate) const FASTER_WHISPER_MODELS: [&str; 4] = ["base", "small", "medium", 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct AppConfig {
     pub(crate) yt_dlp_path: Option<String>,
+    #[serde(default)]
+    pub(crate) youtube_cookie_browser: Option<String>,
     pub(crate) default_output_dir: Option<String>,
     #[serde(default)]
     pub(crate) selected_preset_key: Option<String>,
@@ -45,6 +47,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             yt_dlp_path: None,
+            youtube_cookie_browser: None,
             default_output_dir: None,
             selected_preset_key: Some(DEFAULT_DOWNLOAD_PRESET_KEY.to_string()),
             faster_whisper_model: default_faster_whisper_model(),

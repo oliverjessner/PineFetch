@@ -9,6 +9,12 @@ pub(crate) fn normalize_app_config(mut config: AppConfig) -> AppConfig {
         config.selected_preset_key.as_deref(),
     ));
     config.faster_whisper_model = normalize_faster_whisper_model(&config.faster_whisper_model);
+    config.youtube_cookie_browser = config.youtube_cookie_browser.filter(|browser| {
+        matches!(
+            browser.as_str(),
+            "brave" | "chrome" | "chromium" | "edge" | "firefox" | "opera" | "safari" | "vivaldi"
+        )
+    });
     config
 }
 
@@ -26,6 +32,8 @@ pub(crate) fn normalize_faster_whisper_model(model: &str) -> String {
 pub(crate) struct ConfigPatch {
     #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     pub(crate) yt_dlp_path: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    pub(crate) youtube_cookie_browser: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     pub(crate) default_output_dir: Option<Option<String>>,
     pub(crate) selected_preset_key: Option<String>,
@@ -51,6 +59,9 @@ where
 pub(crate) fn apply_config_patch(config: &mut AppConfig, changes: ConfigPatch) {
     if let Some(value) = changes.yt_dlp_path {
         config.yt_dlp_path = value;
+    }
+    if let Some(value) = changes.youtube_cookie_browser {
+        config.youtube_cookie_browser = value;
     }
     if let Some(value) = changes.default_output_dir {
         config.default_output_dir = value;

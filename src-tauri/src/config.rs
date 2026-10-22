@@ -28,13 +28,14 @@ pub(super) fn update_config(
 
 pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
     conn.query_row(
-        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions, save_thumbnails
+        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions, save_thumbnails, youtube_cookie_browser
          FROM app_config
          WHERE id = 1",
         [],
         |row| {
             Ok(normalize_app_config(AppConfig {
                 yt_dlp_path: row.get(0)?,
+                youtube_cookie_browser: row.get(11)?,
                 default_output_dir: row.get(1)?,
                 selected_preset_key: row.get(2)?,
                 faster_whisper_model: row.get(3)?,
@@ -73,6 +74,7 @@ pub(super) fn upsert_app_config_in_conn(
             notifications_enabled,
             save_captions,
             save_thumbnails,
+            youtube_cookie_browser,
             created_at,
             updated_at
         ) VALUES (
@@ -88,6 +90,7 @@ pub(super) fn upsert_app_config_in_conn(
             ?9,
             ?10,
             ?11,
+            ?12,
             datetime('now'),
             datetime('now')
         )
@@ -103,6 +106,7 @@ pub(super) fn upsert_app_config_in_conn(
             notifications_enabled = excluded.notifications_enabled,
             save_captions = excluded.save_captions,
             save_thumbnails = excluded.save_thumbnails,
+            youtube_cookie_browser = excluded.youtube_cookie_browser,
             updated_at = datetime('now')",
         params![
             config.yt_dlp_path,
@@ -124,6 +128,7 @@ pub(super) fn upsert_app_config_in_conn(
             config.notifications_enabled,
             config.save_captions,
             config.save_thumbnails,
+            config.youtube_cookie_browser,
         ],
     )?;
     Ok(())
@@ -280,5 +285,34 @@ mod tests {
             updated.last_download_url.as_deref(),
             Some("https://example.com/new")
         );
+    }
+    #[test]
+    fn youtube_cookie_browser_persists_and_disconnect_preserves_other_settings() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_link_dump_migrations(&conn).unwrap();
+        let initial = AppConfig {
+            yt_dlp_path: Some("/tools/yt-dlp".into()),
+            ..AppConfig::default()
+        };
+        upsert_app_config_in_conn(&conn, &initial).unwrap();
+        let state = AppState::new(initial, conn);
+        for browser in [
+            json!("brave"),
+            json!(null),
+            json!("chrome:untrusted-profile"),
+        ] {
+            let patch = serde_json::from_value(json!({"youtube_cookie_browser": browser})).unwrap();
+            let updated =
+                update_config(&state.config, |config| apply_config_patch(config, patch)).unwrap();
+            let persisted = load_config_from_db(&state.db.lock().unwrap()).unwrap();
+            let expected = if browser == json!("brave") {
+                Some("brave")
+            } else {
+                None
+            };
+            assert_eq!(updated.youtube_cookie_browser.as_deref(), expected);
+            assert_eq!(persisted.youtube_cookie_browser.as_deref(), expected);
+            assert_eq!(persisted.yt_dlp_path.as_deref(), Some("/tools/yt-dlp"));
+        }
     }
 }

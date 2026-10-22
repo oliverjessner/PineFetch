@@ -1,8 +1,10 @@
 import { confirmDialog, toast } from './vendor/oj/index.js';
+import { createYoutubeCookieSync } from './youtube-cookie-sync.js';
 import { formatLocalDateTime } from './formatters.js';
 export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }) => {
     const linkDumpExtensionRepoUrl = 'https://github.com/oliverjessner/PineFetch-Link-Dump';
     const state = { linkDump: null, generatedLinkDumpSecret: null };
+    const cookieSync = createYoutubeCookieSync({ els, api });
     let linkDumpSyncPromise = null;
     const pendingConnectionActions = new Set();
 
@@ -147,6 +149,7 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
 
         linkDumpSyncPromise = (async () => {
             try {
+                await cookieSync.load();
                 renderLinkDumpOverview(await api.getLinkDumpOverview());
             } catch (err) {
                 setLinkDumpStatusText(`Link Dump settings unavailable: ${err}`, true);
@@ -281,6 +284,7 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
     };
 
     const bindEvents = () => {
+        cookieSync.bindEvents();
         els.saveLinkDumpServerBtn.addEventListener('click', () => {
             void saveLinkDumpServer();
         });
@@ -301,7 +305,7 @@ export const createBrowserImportView = ({ els, api, appendLog, appendTextSpans }
     return Object.freeze({
         applyLinkDumpServerStatus,
         bindEvents,
-        hasOverview: () => Boolean(state.linkDump),
+        hasOverview: () => Boolean(state.linkDump) && cookieSync.isLoaded(),
         syncLinkDumpOverview,
     });
 };

@@ -89,6 +89,13 @@ pub(super) fn run_download_job(
     }
 
     let mut command = Command::new(&yt_dlp);
+    let browser = state
+        .config
+        .lock()
+        .map_err(|_| "Config lock poisoned")?
+        .youtube_cookie_browser
+        .clone();
+    crate::yt_dlp::apply_browser_cookies(&mut command, &job.url, browser.as_deref());
     command.args(args);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     configure_child_process_group(&mut command);
@@ -529,6 +536,13 @@ pub(super) fn probe_expected_output_filename(
     output_template: &str,
 ) -> Result<Option<String>, String> {
     let mut command = Command::new(yt_dlp);
+    let browser = state
+        .config
+        .lock()
+        .map_err(|_| "Config lock poisoned")?
+        .youtube_cookie_browser
+        .clone();
+    crate::yt_dlp::apply_browser_cookies(&mut command, &job.url, browser.as_deref());
     command.args(build_filename_probe_args(job, output_template, deno_path));
 
     let output = run_command_output(command, Some(&state.processes), None, Some(INFO_TIMEOUT))

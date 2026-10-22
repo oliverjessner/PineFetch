@@ -320,3 +320,69 @@ fn append_job_args(args: &mut Vec<String>, job: &DownloadJob, platform: Option<P
     }
     args.push(job.url.clone());
 }
+
+/// Read fresh browser cookies only for YouTube requests. No cookie values enter
+/// PineFetch settings, UI payloads, or logs.
+pub(crate) fn apply_browser_cookies(
+    command: &mut std::process::Command,
+    url: &str,
+    browser: Option<&str>,
+) {
+    if Platform::from_url(url) == Some(Platform::YouTube) {
+        if let Some(browser) = browser.filter(|browser| {
+            matches!(
+                *browser,
+                "brave"
+                    | "chrome"
+                    | "chromium"
+                    | "edge"
+                    | "firefox"
+                    | "opera"
+                    | "safari"
+                    | "vivaldi"
+            )
+        }) {
+            command.args(["--cookies-from-browser", browser]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::apply_browser_cookies;
+    use std::process::Command;
+
+    #[test]
+    fn cookies_are_opt_in_and_scoped_to_youtube() {
+        for (url, browser, expected) in [
+            (
+                "https://youtube.com/watch?v=test",
+                Some("brave"),
+                vec!["--cookies-from-browser", "brave"],
+            ),
+            (
+                "https://youtu.be/test",
+                Some("firefox"),
+                vec!["--cookies-from-browser", "firefox"],
+            ),
+            ("https://youtube.com/playlist?list=test", None, vec![]),
+            ("https://youtube.com.evil.test/watch", Some("brave"), vec![]),
+            ("https://instagram.com/test", Some("brave"), vec![]),
+            (
+                "https://youtube.com/watch?v=test",
+                Some("chrome:arbitrary-path"),
+                vec![],
+            ),
+        ] {
+            let mut command = Command::new("synthetic-yt-dlp");
+            apply_browser_cookies(&mut command, url, browser);
+            assert_eq!(
+                command
+                    .get_args()
+                    .map(|a| a.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+}

@@ -434,7 +434,7 @@ mod tests {
         let root = TempRoot::new("social-migration");
         let path = root.path("history.sqlite");
         let conn = database::open(&path).unwrap();
-        conn.execute_batch("DROP TABLE history_account_insights; DROP INDEX idx_history_account_lookup; DROP TABLE history_social_insights; PRAGMA user_version=4; INSERT INTO history_entries(id,url,title,created_at) VALUES ('video','https://example.com/video','Original title',123);").unwrap();
+        conn.execute_batch("DROP TABLE history_account_insights; DROP INDEX idx_history_account_lookup; DROP TABLE history_social_insights; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; PRAGMA user_version=4; INSERT INTO history_entries(id,url,title,created_at) VALUES ('video','https://example.com/video','Original title',123);").unwrap();
         drop(conn);
         let before = fs::read(&path).unwrap();
         assert!(database::open_with_hook(&path, |point| {

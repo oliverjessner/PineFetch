@@ -216,6 +216,11 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
                 return { ...details, entry: { ...details.entry, thumbnail: null }, transcript: null, captions: [] };
             return {
                 ...details,
+                entry: { ...details.entry, source: ui.detailSource || details.entry.source },
+                captions: [
+                    ...details.captions,
+                    { media_path: '/fixture/alternate.mp4', caption_path: '/fixture/alternate.caption.txt' },
+                ].slice(0, ui.detailCaptionCount ?? 2),
                 subtitles: ui.subtitleTracks.map(
                     ({ path, language, format, file_available, source_start_seconds }) => ({
                         path,
@@ -561,11 +566,22 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
                 language: 'de',
                 transcription_type: 'text',
                 file_available: true,
-                text: 'Transcript <img src=x onerror="alert(1)"> stays plain text.',
+                text: 'Transcript <img src=x onerror="alert(1)"> stays plain text.\n'.repeat(60),
             };
         }
         if (command === 'get_history_caption') {
-            return { format: 'txt', file_available: true, text: 'Caption content.' };
+            return {
+                format: 'txt',
+                file_available: true,
+                caption_path: '/fixture/description <img src=x onerror="alert(1)">.txt',
+                media_path: args.mediaPath,
+                sha256: 'a'.repeat(64),
+                created_at: 1700000000000,
+                text:
+                    args.mediaPath === '/fixture/alternate.mp4'
+                        ? 'Alternate description.'
+                        : 'Caption content.\n'.repeat(60),
+            };
         }
         if (command === 'clear_history') {
             historyCleared = true;
@@ -1216,6 +1232,14 @@ try {
                     globalThis.__pinefetchUi.commands.some(call => call.command === 'open_file_path')
                 )
             );
+            // File data stays available in a closed disclosure rather than the reading flow.
+            assert(await page.locator('#historyOverviewDetails').isVisible());
+            assert.equal(await page.locator('#historyOverviewDetails').getAttribute('open'), null);
+            assert.doesNotMatch(await page.locator('#historyOverviewList').textContent(), /Filename|SHA-256/);
+            await page.locator('#historyOverviewDetails summary').click();
+            assert(await page.locator('#historyOverviewMeta').isVisible());
+            assert.match(await page.locator('#historyOverviewMeta').textContent(), /Filename/);
+            await page.locator('#historyOverviewDetails summary').click();
             await page.locator('#historyOverviewTab').focus();
             await page.keyboard.press('ArrowRight');
             await page.locator('#historyTranscriptText').waitFor();
@@ -1225,11 +1249,111 @@ try {
             await page.locator('.oj-toast').first().waitFor();
             assert.match(await page.evaluate(() => globalThis.__pinefetchUi.copied), /^Transcript <img/);
             await page.locator('#historyCaptionText').waitFor();
+            assert.equal(await page.locator('#historyTranscriptTitle').textContent(), 'AI transcript');
+            assert.equal(await page.locator('#historyCaptionTitle').textContent(), 'Video description');
+            assert.equal(await page.locator('#historyTranscriptDetails').getAttribute('open'), null);
+            assert.equal(await page.locator('#historyCaptionDetails').getAttribute('open'), null);
+            assert(await page.locator('#historyCaptionMeta').isHidden());
+            assert.doesNotMatch(await page.locator('#historyCaptionTrackSelect').textContent(), /\.mp4|\.txt/);
+            await page.locator('#historyCaptionCopyBtn').click();
+            assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.copied), 'Caption content.\n'.repeat(60));
+            await page.locator('#historyCaptionDetails summary').click();
+            assert.match(await page.locator('#historyCaptionMeta').textContent(), /a{64}/);
+            assert.match(await page.locator('#historyCaptionMeta').textContent(), /description <img/);
+            assert.equal(await page.locator('#historyCaptionMeta img').count(), 0);
+            await page.locator('#historyCaptionTrackSelect').selectOption('/fixture/alternate.mp4');
+            await page.waitForFunction(
+                () => globalThis.document.getElementById('historyCaptionText').textContent === 'Alternate description.'
+            );
+            assert.equal(await page.locator('#historyCaptionDetails').getAttribute('open'), null);
+            await page.locator('#historyCaptionCopyBtn').click();
+            assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.copied), 'Alternate description.');
+            await page.locator('#historyCaptionTrackSelect').selectOption({ index: 0 });
+            await page.waitForFunction(() =>
+                globalThis.document.getElementById('historyCaptionText').textContent.startsWith('Caption content.')
+            );
+            await page.evaluate(() => {
+                for (const button of globalThis.document.querySelectorAll('.oj-toast button')) button.click();
+            });
+            await page.locator('.oj-toast').first().waitFor({ state: 'hidden' });
+            for (const viewport of [
+                { width: 1400, height: 960 },
+                { width: 1000, height: 720 },
+                { width: 600, height: 720 },
+            ]) {
+                await page.setViewportSize(viewport);
+                for (const prefix of ['historyTranscript', 'historyCaption']) {
+                    const section = page.locator(`#${prefix}Text`).locator('..');
+                    await section.locator('.pinefetch-history-section-header').scrollIntoViewIfNeeded();
+                    const layout = await section.evaluate(element => {
+                        const header = element.querySelector('header').getBoundingClientRect();
+                        const title = element.querySelector('h3').getBoundingClientRect();
+                        const button = element.querySelector('header button').getBoundingClientRect();
+                        const text = element.querySelector('pre');
+                        const helper = element.querySelector('.oj-helper').getBoundingClientRect();
+                        let previous = text.previousElementSibling;
+                        while (previous && !previous.getBoundingClientRect().height)
+                            previous = previous.previousElementSibling;
+                        return {
+                            header,
+                            title,
+                            button,
+                            text: text.getBoundingClientRect(),
+                            helper,
+                            previous: previous.getBoundingClientRect(),
+                            scrollHeight: text.scrollHeight,
+                            clientHeight: text.clientHeight,
+                            overflow: globalThis.getComputedStyle(text).overflowY,
+                            pageWidth: globalThis.document.documentElement.scrollWidth,
+                        };
+                    });
+                    assert(
+                        Math.abs(
+                            layout.title.y + layout.title.height / 2 - layout.button.y - layout.button.height / 2
+                        ) <= 2,
+                        JSON.stringify(layout)
+                    );
+                    assert(layout.button.x >= layout.title.right, JSON.stringify(layout));
+                    assert(layout.helper.y - layout.header.bottom <= 9, JSON.stringify(layout));
+                    assert(layout.text.y - layout.previous.bottom <= 9, JSON.stringify(layout));
+                    assert.equal(layout.overflow, 'auto');
+                    assert(layout.scrollHeight > layout.clientHeight);
+                    assert(layout.text.height <= viewport.height * 0.36 + 1, JSON.stringify(layout));
+                    assert(layout.pageWidth <= viewport.width);
+                    await section.locator('pre').evaluate(element => {
+                        element.scrollTop = element.scrollHeight;
+                    });
+                    assert(await section.locator('pre').evaluate(element => element.scrollTop > 0));
+                    await section.locator('details summary').click();
+                    assert(await section.locator('dl').evaluate(element => element.scrollWidth <= element.clientWidth));
+                    await section.locator('details summary').click();
+                    await section.locator('pre').evaluate(element => {
+                        element.scrollTop = 0;
+                    });
+                }
+                // Return to the beginning of each section for a useful visual review.
+                await page.locator('#historyTranscriptPanel').evaluate(element => {
+                    element.scrollTop = 0;
+                    globalThis.document.scrollingElement.scrollTop = 0;
+                });
+                await page.screenshot({ path: `/tmp/pinefetch-history-text-${viewport.width}-${engine.name()}.png` });
+            }
+            await page.setViewportSize({ width: 1400, height: 960 });
             await page.locator('#historyTranscriptTab').focus();
             await page.keyboard.press('ArrowRight');
             assert.equal(await page.locator('#historySubtitlesTab').getAttribute('aria-selected'), 'true');
             await page.locator('#historySubtitleText').waitFor();
             assert((await page.locator('#historySubtitleTrackSelect').boundingBox()).height >= 32);
+            assert.equal(await page.locator('#historySubtitleDetails').getAttribute('open'), null);
+            await page.locator('#historySubtitleDetails summary').click();
+            assert.match(await page.locator('#historySubtitleMeta').textContent(), /video.en.vtt/);
+            await page.locator('#historySubtitleDetails summary').click();
+            const subtitleHeader = await page.locator('#historySubtitleTitle').boundingBox();
+            const subtitleCopy = await page.locator('#historySubtitleCopyBtn').boundingBox();
+            assert(
+                Math.abs(subtitleHeader.y + subtitleHeader.height / 2 - subtitleCopy.y - subtitleCopy.height / 2) <= 2
+            );
+
             assert.match(await page.locator('#historySubtitleText').textContent(), /Creator <img/);
             assert.equal(await page.locator('#historySubtitleText img').count(), 0);
             assert.match(await page.locator('#historySubtitleNotice').textContent(), /file is missing/);
@@ -1280,6 +1404,28 @@ try {
                     globalThis.document.querySelector('.pinefetch-history-open-btn') ===
                     globalThis.document.activeElement
             );
+            // The same saved text layout uses post terminology outside video-description sources.
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.detailSource = 'tiktok';
+                globalThis.__pinefetchUi.detailCaptionCount = 1;
+            });
+            await page.locator('.pinefetch-history-open-btn').first().focus();
+            await page.keyboard.press('Shift+F10');
+            await page.locator('#historyShowMoreDataBtn').click();
+            await page.locator('#historyDetailsContent').waitFor();
+            await page.locator('#historyTranscriptTab').click();
+            await page.locator('#historyCaptionText').waitFor();
+            assert.equal(await page.locator('#historyCaptionTitle').textContent(), 'Post caption');
+            assert.equal(await page.locator('#historyCaptionCopyBtn').getAttribute('aria-label'), 'Copy post caption');
+            assert(await page.locator('#historyCaptionTrackField').isHidden());
+            assert.equal(await page.locator('#historyCaptionDetails').getAttribute('open'), null);
+            await page.locator('#historyCaptionCopyBtn').click();
+            assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.copied), 'Caption content.\n'.repeat(60));
+            await page.locator('#historyDetailsHistoryBtn').click();
+            await page.evaluate(() => {
+                delete globalThis.__pinefetchUi.detailSource;
+                delete globalThis.__pinefetchUi.detailCaptionCount;
+            });
             await page.locator('.pinefetch-history-open-btn').nth(1).focus();
             await page.keyboard.press('Shift+F10');
             await page.locator('#historyShowMoreDataBtn').click();
@@ -1292,6 +1438,8 @@ try {
                 await page.locator('#historyTranscriptStatus').textContent(),
                 'No transcript is saved for this video.'
             );
+            assert(await page.locator('#historyTranscriptDetails').isHidden());
+            assert(await page.locator('#historyCaptionsPanel').isHidden());
             await page.locator('#historySubtitlesTab').click();
             assert.match(await page.locator('#historySubtitleStatus').textContent(), /No creator subtitles/);
             assert(await page.locator('#historySubtitleCopyBtn').isDisabled());

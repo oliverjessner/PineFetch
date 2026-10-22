@@ -4,6 +4,7 @@ import { createHistoryOcrView } from './history-ocr-view.js';
 import { createHistorySocialInsightsView } from './history-social-insights-view.js';
 import { createHistoryKeywordsView } from './history-keywords-view.js';
 import { createHistorySubtitlesView } from './history-subtitles-view.js';
+import { renderContentDetails } from './history-content-details.js';
 
 export const createHistoryDetailsView = ({
     els,
@@ -40,8 +41,6 @@ export const createHistoryDetailsView = ({
         if (!Number.isFinite(Number(timestamp)) || Number.isNaN(date.getTime())) return null;
         return formatLocalDateTime(date);
     };
-
-    const basename = path => `${path || ''}`.split(/[\\/]/).filter(Boolean).pop() || '';
 
     const hideContextMenu = ({ restoreFocus = false } = {}) => {
         const returnFocus = state.contextReturnFocus;
@@ -85,14 +84,13 @@ export const createHistoryDetailsView = ({
         });
     };
 
-    const addOverviewRow = (label, value, title = null, className = null) => {
+    const addOverviewRow = (label, value, title = null) => {
         if (value === null || value === undefined || value === '') return;
         const term = document.createElement('dt');
         term.textContent = label;
         const description = document.createElement('dd');
         description.textContent = `${value}`;
         if (title) description.title = title;
-        if (className) description.className = className;
         els.historyOverviewList.append(term, description);
     };
 
@@ -107,11 +105,7 @@ export const createHistoryDetailsView = ({
         const downloaded = formatDateTime(entry.completed_at || entry.created_at);
         const transcript = details.transcript;
         const transcriptLabel = transcript
-            ? [
-                  transcript.language?.toUpperCase(),
-                  transcript.transcription_type,
-                  transcript.file_available ? null : 'file missing',
-              ]
+            ? ['Saved', transcript.language?.toUpperCase(), transcript.file_available ? null : 'media file missing']
                   .filter(Boolean)
                   .join(' · ')
             : null;
@@ -147,35 +141,34 @@ export const createHistoryDetailsView = ({
                 : null
         );
         addOverviewRow('Media type', entry.medium);
-        addOverviewRow('Filename', entry.filename, null, 'oj-mono');
-        addOverviewRow('File path', entry.output_path, entry.output_path, 'oj-path');
-        addOverviewRow(
-            'File status',
-            entry.output_path ? (details.output_file_available ? 'Available' : 'Missing') : null
-        );
-        addOverviewRow('Extension', details.file_extension?.toUpperCase());
-        addOverviewRow(
-            'File size',
-            entry.file_size_bytes !== null && entry.file_size_bytes !== undefined && Number(entry.file_size_bytes) >= 0
-                ? formatFileSize(entry.file_size_bytes)
-                : null
-        );
-        addOverviewRow('SHA-256', entry.sha256, null, 'oj-mono');
+        renderContentDetails(els.historyOverviewDetails, [
+            ['Filename', entry.filename],
+            ['File path', entry.output_path],
+            ['File status', entry.output_path ? (details.output_file_available ? 'Available' : 'Missing') : null],
+            ['Extension', details.file_extension?.toUpperCase()],
+            [
+                'File size',
+                entry.file_size_bytes != null && Number(entry.file_size_bytes) >= 0
+                    ? formatFileSize(entry.file_size_bytes)
+                    : null,
+            ],
+            ['SHA-256', entry.sha256],
+            ['PineFetch version', entry.pinefetch_version],
+        ]);
         addOverviewRow('Thumbnail', entry.thumbnail ? 'Available' : null);
-        addOverviewRow('Transcript', transcriptLabel);
+        addOverviewRow('AI transcript', transcriptLabel);
         addOverviewRow(
-            'Subtitles',
+            'Creator subtitles',
             details.subtitles?.length
                 ? `${details.subtitles.length} ${details.subtitles.length === 1 ? 'track' : 'tracks'}`
                 : null
         );
-        addOverviewRow('Captions', captionCount ? `${captionCount} ${captionCount === 1 ? 'track' : 'tracks'}` : null);
-        addOverviewRow('PineFetch version', entry.pinefetch_version);
+        addOverviewRow(captionTitle(), captionCount ? `${captionCount} saved` : null);
     };
 
     const renderTranscript = content => {
         els.historyTranscriptStatus.textContent = '';
-        els.historyTranscriptMeta.textContent = '';
+        renderContentDetails(els.historyTranscriptDetails, []);
         els.historyTranscriptNotice.hidden = true;
         els.historyTranscriptText.hidden = true;
         els.historyTranscriptCopyBtn.disabled = true;
@@ -184,12 +177,13 @@ export const createHistoryDetailsView = ({
             return;
         }
 
-        els.historyTranscriptMeta.textContent = [content.language?.toUpperCase(), content.transcription_type]
-            .filter(Boolean)
-            .join(' · ');
+        renderContentDetails(els.historyTranscriptDetails, [
+            ['Language', content.language?.toUpperCase()],
+            ['Transcript format', content.transcription_type],
+        ]);
         if (!content.file_available) {
             els.historyTranscriptNotice.textContent =
-                'Transcript file is no longer available. Stored transcript text is shown below.';
+                'The downloaded file is missing. The saved AI transcript is still available.';
             els.historyTranscriptNotice.hidden = false;
         }
         if (!content.text) {
@@ -234,15 +228,17 @@ export const createHistoryDetailsView = ({
         }
     };
 
-    const captionLabel = (caption, index) =>
-        basename(caption.media_path) || basename(caption.caption_path) || `Caption ${index + 1}`;
+    const captionTitle = () =>
+        ['youtube', 'vimeo'].includes(state.details?.entry?.source || detectPlatform(state.details?.entry?.url))
+            ? 'Video description'
+            : 'Post caption';
 
     const renderCaptionOptions = captions => {
         const fragment = document.createDocumentFragment();
         captions.forEach((caption, index) => {
             const option = document.createElement('option');
             option.value = caption.media_path;
-            option.textContent = captionLabel(caption, index);
+            option.textContent = `${captionTitle()} ${index + 1}`;
             fragment.appendChild(option);
         });
         els.historyCaptionTrackSelect.replaceChildren(fragment);
@@ -251,28 +247,30 @@ export const createHistoryDetailsView = ({
 
     const renderCaption = content => {
         els.historyCaptionStatus.textContent = '';
-        els.historyCaptionMeta.textContent = '';
+        renderContentDetails(els.historyCaptionDetails, []);
         els.historyCaptionNotice.hidden = true;
         els.historyCaptionText.hidden = true;
         els.historyCaptionCopyBtn.disabled = true;
         if (!content) {
-            els.historyCaptionStatus.textContent = 'Captions are no longer available.';
+            els.historyCaptionStatus.textContent = 'Saved post text is no longer available.';
             return;
         }
 
-        const metadata = [
-            content.format?.toUpperCase(),
-            basename(content.caption_path),
-            content.sha256 ? `SHA-256: ${content.sha256}` : null,
-        ].filter(Boolean);
-        els.historyCaptionMeta.textContent = metadata.join(' · ');
+        renderContentDetails(els.historyCaptionDetails, [
+            ['Filename', content.caption_path?.split(/[\\/]/).pop()],
+            ['File path', content.caption_path],
+            ['Media path', content.media_path],
+            ['Format', content.format?.toUpperCase()],
+            ['SHA-256', content.sha256],
+            ['Saved', content.created_at ? formatDateTime(content.created_at) : null],
+        ]);
         if (!content.file_available) {
             els.historyCaptionNotice.textContent =
-                'Caption file is no longer available. Stored caption text is shown below.';
+                'The saved text file is missing. The stored text is still available.';
             els.historyCaptionNotice.hidden = false;
         }
         if (!content.text) {
-            els.historyCaptionStatus.textContent = 'The stored caption is empty.';
+            els.historyCaptionStatus.textContent = 'The saved text is empty.';
             return;
         }
         els.historyCaptionText.textContent = content.text;
@@ -289,7 +287,8 @@ export const createHistoryDetailsView = ({
             renderCaption(state.captions.get(mediaPath));
             return;
         }
-        els.historyCaptionStatus.textContent = 'Loading captions...';
+        renderCaption(null);
+        els.historyCaptionStatus.textContent = 'Loading saved text...';
         els.historyCaptionText.hidden = true;
         els.historyCaptionCopyBtn.disabled = true;
         try {
@@ -310,7 +309,7 @@ export const createHistoryDetailsView = ({
                 state.entryId === entryId &&
                 els.historyCaptionTrackSelect.value === mediaPath
             ) {
-                els.historyCaptionStatus.textContent = 'Captions could not be loaded.';
+                els.historyCaptionStatus.textContent = 'Saved text could not be loaded.';
             }
         }
     };
@@ -379,6 +378,14 @@ export const createHistoryDetailsView = ({
             els.historyTranscriptText.hidden = true;
             els.historyTranscriptCopyBtn.disabled = true;
             els.historyDetailsTabs.hidden = false;
+            els.historyCaptionTitle.textContent = captionTitle();
+            els.historyCaptionCopyBtn.setAttribute('aria-label', `Copy ${captionTitle().toLowerCase()}`);
+            els.historyCaptionDescription.textContent =
+                captionTitle() === 'Video description'
+                    ? 'Original video description saved with this download.'
+                    : 'Original post text saved with this download.';
+            renderTranscript(null);
+            renderCaption(null);
             renderOverview(details);
             renderCaptionOptions(details.captions || []);
             subtitlesView.reset(entryId, details.subtitles || []);
@@ -545,11 +552,11 @@ export const createHistoryDetailsView = ({
         els.historyCaptionTrackSelect.addEventListener('change', () => void loadSelectedCaption());
         els.historyTranscriptCopyBtn.addEventListener(
             'click',
-            () => void copyContent(state.transcript, els.historyTranscriptStatus, 'Transcript')
+            () => void copyContent(state.transcript, els.historyTranscriptStatus, 'AI transcript')
         );
         els.historyCaptionCopyBtn.addEventListener('click', () => {
             const content = state.captions.get(els.historyCaptionTrackSelect.value);
-            void copyContent(content, els.historyCaptionStatus, 'Caption');
+            void copyContent(content, els.historyCaptionStatus, captionTitle());
         });
     };
 

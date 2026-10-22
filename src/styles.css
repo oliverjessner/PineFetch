@@ -325,7 +325,8 @@ body {
 }
 
 #browserAuthBrowser,
-#historySubtitleTrackSelect {
+#historySubtitleTrackSelect,
+#historyCaptionTrackSelect {
     block-size: var(--oj-control-height);
 }
 
@@ -795,14 +796,6 @@ body {
     user-select: text;
 }
 
-.pinefetch-history-content-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--oj-space-3);
-}
-
 .pinefetch-history-details-content {
     flex: 1;
     min-height: 0;
@@ -839,14 +832,8 @@ body {
     user-select: text;
 }
 
-.pinefetch-history-content-toolbar {
-    margin-bottom: var(--oj-space-3);
-}
-
-.pinefetch-history-content-toolbar .oj-muted,
 #historyOcrPreparing,
 #historyOcrProgressText,
-.pinefetch-history-caption-track + .oj-button,
 .pinefetch-history-caption-track {
     margin: 0;
 }
@@ -875,21 +862,76 @@ body {
     width: var(--pinefetch-ocr-frame-width, 1ch);
 }
 
-#historyCaptionMeta {
-    overflow-wrap: anywhere;
-    font-size: var(--oj-text-xs);
+.pinefetch-history-caption-track {
+    width: min(100%, 360px);
+    min-width: 0;
 }
 
-.pinefetch-history-caption-track {
-    min-width: min(360px, 70%);
+.pinefetch-history-text-section {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: var(--oj-space-2);
+    min-width: 0;
+}
+
+.pinefetch-history-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--oj-space-3);
+}
+
+.pinefetch-history-section-header .oj-heading-3,
+.pinefetch-history-text-section > p {
+    margin: 0;
+}
+
+.pinefetch-history-text-section > .oj-status:empty {
+    position: absolute;
+}
+
+.pinefetch-history-section-header .oj-button {
+    flex: none;
+}
+
+.pinefetch-history-text-section > .oj-button {
+    align-self: flex-start;
 }
 
 .pinefetch-history-text-viewer {
-    max-height: 48vh;
-    margin: var(--oj-space-3) 0 0;
+    flex: none;
+    max-height: 36vh;
+    margin: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     user-select: text;
+}
+
+#historyTranscriptText,
+#historyCaptionText {
+    font-family: var(--oj-font-sans);
+    line-height: var(--oj-leading-relaxed);
+}
+
+.pinefetch-history-file-details {
+    flex: none;
+    min-width: 0;
+    color: var(--oj-text-muted);
+}
+
+.pinefetch-history-file-details summary {
+    font-weight: var(--oj-weight-normal);
+}
+
+.pinefetch-history-file-details dl {
+    font-size: var(--oj-text-xs);
+}
+
+.pinefetch-history-file-details dd {
+    margin: 0;
+    font-family: var(--oj-font-mono);
+    overflow-wrap: anywhere;
 }
 
 .pinefetch-queue-header {
@@ -1159,13 +1201,7 @@ body {
         gap: 0;
     }
 
-    .pinefetch-history-content-toolbar {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .pinefetch-history-caption-track,
-    .pinefetch-history-content-toolbar .oj-button {
+    .pinefetch-history-caption-track {
         width: 100%;
         max-width: none;
     }

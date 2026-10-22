@@ -1119,6 +1119,17 @@
                                     id="historyOverviewList"
                                     class="oj-definition-list pinefetch-history-overview-list"
                                 ></dl>
+                                <details
+                                    id="historyOverviewDetails"
+                                    class="oj-accordion pinefetch-history-file-details"
+                                    hidden
+                                >
+                                    <summary>Technical details</summary>
+                                    <dl
+                                        id="historyOverviewMeta"
+                                        class="oj-accordion-body oj-definition-list pinefetch-history-overview-list"
+                                    ></dl>
+                                </details>
                             </section>
 
                             <section
@@ -1303,11 +1314,26 @@
                                 aria-labelledby="historySubtitlesTab"
                                 hidden
                             >
-                                <h3 class="oj-heading-3">Creator subtitles</h3>
-                                <p class="oj-helper">
-                                    Original subtitle tracks, separate from post captions and Whisper transcripts.
-                                </p>
-                                <div class="pinefetch-history-content-toolbar">
+                                <section
+                                    class="oj-panel oj-panel-compact pinefetch-history-text-section"
+                                    aria-labelledby="historySubtitleTitle"
+                                >
+                                    <header class="pinefetch-history-section-header">
+                                        <h3 id="historySubtitleTitle" class="oj-heading-3">Creator subtitles</h3>
+                                        <button
+                                            id="historySubtitleCopyBtn"
+                                            class="oj-button oj-button-ghost oj-button-compact"
+                                            type="button"
+                                            aria-label="Copy creator subtitles"
+                                            disabled
+                                        >
+                                            Copy
+                                        </button>
+                                    </header>
+                                    <p class="oj-helper">
+                                        Original subtitles supplied by the creator, with their original timing.
+                                        Automatically generated captions are excluded.
+                                    </p>
                                     <label
                                         id="historySubtitleTrackField"
                                         class="oj-field pinefetch-history-caption-track"
@@ -1317,36 +1343,41 @@
                                         <span class="oj-label">Subtitle track</span>
                                         <select id="historySubtitleTrackSelect" class="oj-select"></select>
                                     </label>
-                                    <div class="oj-cluster">
-                                        <button
-                                            id="historySubtitleRetryBtn"
-                                            class="oj-button oj-button-ghost"
-                                            type="button"
-                                            hidden
-                                        >
-                                            Retry
-                                        </button>
-                                        <button
-                                            id="historySubtitleCopyBtn"
-                                            class="oj-button oj-button-ghost"
-                                            type="button"
-                                            disabled
-                                        >
-                                            Copy
-                                        </button>
-                                    </div>
-                                </div>
-                                <p id="historySubtitleMeta" class="oj-muted"></p>
-                                <p id="historySubtitleNotice" class="oj-helper" hidden></p>
-                                <p id="historySubtitleStatus" class="oj-status" role="status" aria-live="polite"></p>
-                                <pre
-                                    id="historySubtitleText"
-                                    class="oj-code-block pinefetch-history-text-viewer"
-                                    tabindex="0"
-                                    hidden
-                                ></pre>
+                                    <p id="historySubtitleNotice" class="oj-helper" hidden></p>
+                                    <p
+                                        id="historySubtitleStatus"
+                                        class="oj-status"
+                                        role="status"
+                                        aria-live="polite"
+                                    ></p>
+                                    <pre
+                                        id="historySubtitleText"
+                                        class="oj-code-block pinefetch-history-text-viewer"
+                                        aria-labelledby="historySubtitleTitle"
+                                        tabindex="0"
+                                        hidden
+                                    ></pre>
+                                    <details
+                                        id="historySubtitleDetails"
+                                        class="oj-accordion pinefetch-history-file-details"
+                                        hidden
+                                    >
+                                        <summary>Technical details</summary>
+                                        <dl
+                                            id="historySubtitleMeta"
+                                            class="oj-accordion-body oj-definition-list pinefetch-history-overview-list"
+                                        ></dl>
+                                    </details>
+                                    <button
+                                        id="historySubtitleRetryBtn"
+                                        class="oj-button oj-button-secondary oj-button-compact"
+                                        type="button"
+                                        hidden
+                                    >
+                                        Retry
+                                    </button>
+                                </section>
                             </section>
-
                             <section
                                 id="historyTranscriptPanel"
                                 class="oj-tab-panel pinefetch-history-details-panel"
@@ -1354,56 +1385,100 @@
                                 aria-labelledby="historyTranscriptTab"
                                 hidden
                             >
-                                <div class="pinefetch-history-content-toolbar">
-                                    <p id="historyTranscriptMeta" class="oj-muted"></p>
-                                    <button
-                                        id="historyTranscriptCopyBtn"
-                                        class="oj-button oj-button-ghost"
-                                        type="button"
-                                        disabled
-                                    >
-                                        Copy
-                                    </button>
-                                </div>
-                                <p id="historyTranscriptNotice" class="oj-helper" hidden></p>
-                                <p id="historyTranscriptStatus" class="oj-status" role="status" aria-live="polite"></p>
-                                <pre
-                                    id="historyTranscriptText"
-                                    class="oj-code-block pinefetch-history-text-viewer"
-                                    tabindex="0"
-                                    hidden
-                                ></pre>
-                                <div id="historyCaptionsPanel" class="oj-stack" hidden>
-                                    <h3 class="oj-heading-3">Saved captions</h3>
-                                    <div class="pinefetch-history-content-toolbar">
-                                        <label
-                                            id="historyCaptionTrackField"
-                                            class="oj-field pinefetch-history-caption-track"
-                                            for="historyCaptionTrackSelect"
-                                            hidden
-                                        >
-                                            <span class="oj-label">Caption track</span>
-                                            <select id="historyCaptionTrackSelect" class="oj-select"></select>
-                                        </label>
+                                <section
+                                    class="oj-panel oj-panel-compact pinefetch-history-text-section"
+                                    aria-labelledby="historyTranscriptTitle"
+                                >
+                                    <header class="pinefetch-history-section-header">
+                                        <h3 id="historyTranscriptTitle" class="oj-heading-3">AI transcript</h3>
                                         <button
-                                            id="historyCaptionCopyBtn"
-                                            class="oj-button oj-button-ghost"
+                                            id="historyTranscriptCopyBtn"
+                                            class="oj-button oj-button-ghost oj-button-compact"
                                             type="button"
+                                            aria-label="Copy AI transcript"
                                             disabled
                                         >
                                             Copy
                                         </button>
-                                    </div>
-                                    <p id="historyCaptionMeta" class="oj-muted"></p>
+                                    </header>
+                                    <p class="oj-helper">Speech transcribed locally with Whisper.</p>
+                                    <p id="historyTranscriptNotice" class="oj-helper" hidden></p>
+                                    <p
+                                        id="historyTranscriptStatus"
+                                        class="oj-status"
+                                        role="status"
+                                        aria-live="polite"
+                                    ></p>
+                                    <pre
+                                        id="historyTranscriptText"
+                                        class="oj-code-block pinefetch-history-text-viewer"
+                                        aria-labelledby="historyTranscriptTitle"
+                                        tabindex="0"
+                                        hidden
+                                    ></pre>
+                                    <details
+                                        id="historyTranscriptDetails"
+                                        class="oj-accordion pinefetch-history-file-details"
+                                        hidden
+                                    >
+                                        <summary>Technical details</summary>
+                                        <dl
+                                            id="historyTranscriptMeta"
+                                            class="oj-accordion-body oj-definition-list pinefetch-history-overview-list"
+                                        ></dl>
+                                    </details>
+                                </section>
+                                <section
+                                    id="historyCaptionsPanel"
+                                    class="oj-panel oj-panel-compact pinefetch-history-text-section"
+                                    aria-labelledby="historyCaptionTitle"
+                                    hidden
+                                >
+                                    <header class="pinefetch-history-section-header">
+                                        <h3 id="historyCaptionTitle" class="oj-heading-3">Post caption</h3>
+                                        <button
+                                            id="historyCaptionCopyBtn"
+                                            class="oj-button oj-button-ghost oj-button-compact"
+                                            type="button"
+                                            aria-label="Copy post caption"
+                                            disabled
+                                        >
+                                            Copy
+                                        </button>
+                                    </header>
+                                    <p id="historyCaptionDescription" class="oj-helper">
+                                        Original post text saved with this download.
+                                    </p>
+                                    <label
+                                        id="historyCaptionTrackField"
+                                        class="oj-field pinefetch-history-caption-track"
+                                        for="historyCaptionTrackSelect"
+                                        hidden
+                                    >
+                                        <span class="oj-label">Saved text</span>
+                                        <select id="historyCaptionTrackSelect" class="oj-select"></select>
+                                    </label>
                                     <p id="historyCaptionNotice" class="oj-helper" hidden></p>
                                     <p id="historyCaptionStatus" class="oj-status" role="status" aria-live="polite"></p>
                                     <pre
                                         id="historyCaptionText"
                                         class="oj-code-block pinefetch-history-text-viewer"
+                                        aria-labelledby="historyCaptionTitle"
                                         tabindex="0"
                                         hidden
                                     ></pre>
-                                </div>
+                                    <details
+                                        id="historyCaptionDetails"
+                                        class="oj-accordion pinefetch-history-file-details"
+                                        hidden
+                                    >
+                                        <summary>Technical details</summary>
+                                        <dl
+                                            id="historyCaptionMeta"
+                                            class="oj-accordion-body oj-definition-list pinefetch-history-overview-list"
+                                        ></dl>
+                                    </details>
+                                </section>
                             </section>
                         </div>
                     </div>

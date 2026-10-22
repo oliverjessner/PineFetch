@@ -1,3 +1,5 @@
+import { renderContentDetails } from './history-content-details.js';
+
 export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
     let entryId = null;
     let tracks = [];
@@ -10,7 +12,16 @@ export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
         els.historySubtitleCopyBtn.disabled = !content?.text;
         els.historySubtitleText.hidden = !content?.text;
         els.historySubtitleText.textContent = content?.text || '';
-        els.historySubtitleMeta.textContent = content ? `${content.language} · ${content.format.toUpperCase()}` : '';
+        renderContentDetails(
+            els.historySubtitleDetails,
+            content
+                ? [
+                      ['File path', content.path],
+                      ['Language', content.language],
+                      ['Format', content.format.toUpperCase()],
+                  ]
+                : []
+        );
         const notices = [];
         if (content && !content.file_available)
             notices.push('The subtitle file is missing. Saved text is shown below.');
@@ -30,7 +41,7 @@ export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
         els.historySubtitleStatus.classList.remove('oj-status-error');
         if (!entryId || !tracks.length) {
             els.historySubtitleStatus.textContent =
-                'No creator subtitles are saved for this video. Enable Save creator subtitles in Settings → Download for future downloads.';
+                'No creator subtitles were saved for this video. Automatically generated captions are excluded from Save creator subtitles.';
             return;
         }
         els.historySubtitleStatus.textContent = 'Loading subtitles…';

@@ -245,7 +245,7 @@ pub(crate) struct HistoryTranscriptSummary {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct HistoryCaptionSummary {
     pub(crate) media_path: String,
-    pub(crate) caption_path: String,
+    pub(crate) caption_path: Option<String>,
     pub(crate) format: Option<String>,
     pub(crate) sha256: Option<String>,
     pub(crate) created_at: u64,
@@ -263,7 +263,7 @@ pub(crate) struct HistoryTranscriptContent {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(crate) struct HistoryCaptionContent {
     pub(crate) media_path: String,
-    pub(crate) caption_path: String,
+    pub(crate) caption_path: Option<String>,
     pub(crate) format: Option<String>,
     pub(crate) sha256: Option<String>,
     pub(crate) created_at: u64,
@@ -424,7 +424,7 @@ pub(crate) struct TranscriptionRunResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SavedCaption {
     pub(crate) media_path: String,
-    pub(crate) caption_path: String,
+    pub(crate) caption_path: Option<String>,
     pub(crate) text: String,
 }
 

@@ -61,7 +61,7 @@ See the [CLI documentation](docs/CLI.md) for all commands and options.
 
 ## Video, audio and local transcripts
 
-Choose the best available video, video up to 1080p, MP3, Opus or a transcript with optional timestamps. Adjust transcription quality in Settings, keep the video alongside its transcript and optionally save post captions and thumbnails.
+Choose the best available video, video up to 1080p, MP3, Opus or a transcript with optional timestamps. Adjust transcription quality in Settings, keep the video alongside its transcript and optionally export caption TXT files and save thumbnails. Available captions and video descriptions are always stored in History.
 
 ![PineFetch Settings with transcription quality, caption saving and thumbnail options](src/images/mockups/settings.webp)
 

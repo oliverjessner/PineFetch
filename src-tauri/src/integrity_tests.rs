@@ -579,6 +579,7 @@ fn version_one_upgrade_and_sql_failure_roll_back_entire_section_and_retry() {
     assert_eq!(version(&conn), SCHEMA_VERSION);
     // Construct the version-1 baseline using the implemented adoption step,
     // then fail version 2. Version 1 is an internal baseline, not an old app.
+    crate::database::restore_schema8_caption_fixture(&conn);
     conn.execute_batch(
         "DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; DROP TABLE job_completions; DROP TABLE legacy_imports; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=1;",
     )
@@ -1005,7 +1006,7 @@ fn completion_db_failure_preserves_output_and_rolls_back_related_metadata_then_r
     let caption = write_caption_sidecar(&media, "Caption 🌲").unwrap();
     let captions = vec![SavedCaption {
         media_path: media.to_string_lossy().into_owned(),
-        caption_path: caption.to_string_lossy().into_owned(),
+        caption_path: Some(caption.to_string_lossy().into_owned()),
         text: "Caption 🌲".into(),
     }];
     completion::begin(&state.db, &job).unwrap();
@@ -1588,6 +1589,9 @@ fn abrupt_process_kill_rolls_back_migration_and_completion_and_allows_safe_retry
             serde_json::to_vec(&vec![imported, entry("legacy-crash-two")]).unwrap(),
         )
         .unwrap();
+        // Table rebuilding can leave free pages. SQLite does not journal their
+        // unused contents; compact this byte-for-byte recovery fixture first.
+        conn.execute_batch("VACUUM;").unwrap();
         let before = schema(&conn);
         drop(conn);
         let committed_bytes = fs::read(f.path("pinefetch.sqlite3")).unwrap();
@@ -1733,6 +1737,7 @@ fn abrupt_process_kill_rolls_back_migration_and_completion_and_allows_safe_retry
 fn integration_cookie_settings_migration_rolls_back_and_preserves_existing_settings() {
     let fixture = Fixture::new();
     let conn = fixture.db();
+    crate::database::restore_schema8_caption_fixture(&conn);
     conn.execute_batch("ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=6; UPDATE app_config SET yt_dlp_path='/synthetic/yt-dlp', save_captions=1;").unwrap();
     let before = schema(&conn);
     let error = database::initialize_with_hook(&conn, |point| {
@@ -1751,4 +1756,48 @@ fn integration_cookie_settings_migration_rolls_back_and_preserves_existing_setti
     assert_eq!(config.yt_dlp_path.as_deref(), Some("/synthetic/yt-dlp"));
     assert!(config.save_captions);
     database::initialize(&conn).unwrap();
+}
+
+#[test]
+fn integration_optional_caption_file_migration_preserves_rows_settings_and_rolls_back() {
+    let fixture = Fixture::new();
+    let conn = fixture.db();
+    crate::database::restore_schema8_caption_fixture(&conn);
+    conn.execute_batch("PRAGMA user_version=8;
+        UPDATE app_config SET youtube_cookie_browser='chrome', save_captions=1, save_creator_subtitles=1;
+        INSERT INTO history_entries(id,url,created_at) VALUES ('existing','https://www.youtube.com/watch?v=synthetic',1);
+        INSERT INTO captions(history_entry_id,media_path,caption_path,text,sha256,created_at) VALUES ('existing','/synthetic/media.mp4','/synthetic/media.caption.txt','Grüße 🌲','existing-hash',123);").unwrap();
+    let before = schema(&conn);
+    assert!(database::initialize_with_hook(&conn, |point| {
+        if point == MigrationPoint::OptionalCaptionFiles {
+            Err("synthetic caption migration failure".into())
+        } else {
+            Ok(())
+        }
+    })
+    .unwrap_err()
+    .contains("synthetic caption migration failure"));
+    assert_eq!(version(&conn), 8);
+    assert_eq!(schema(&conn), before);
+    database::initialize(&conn).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let config = load_config_from_db(&conn).unwrap();
+    assert_eq!(config.youtube_cookie_browser.as_deref(), Some("chrome"));
+    assert!(config.save_captions && config.save_creator_subtitles);
+    let row: (String, String, String, i64) = conn.query_row("SELECT caption_path,text,sha256,created_at FROM captions WHERE history_entry_id='existing'", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+    assert_eq!(
+        row,
+        (
+            "/synthetic/media.caption.txt".into(),
+            "Grüße 🌲".into(),
+            "existing-hash".into(),
+            123
+        )
+    );
+    conn.execute("INSERT INTO captions(history_entry_id,media_path,caption_path,text,created_at) VALUES ('existing','/synthetic/other.mp4',NULL,'Database only',124)", []).unwrap();
+    database::initialize(&conn).unwrap();
+    conn.execute("DELETE FROM history_entries WHERE id='existing'", [])
+        .unwrap();
+    assert_eq!(count(&conn, "captions"), 0);
+    assert!(!fixture.backups().is_empty());
 }

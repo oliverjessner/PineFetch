@@ -35,6 +35,7 @@ try {
         JSON.stringify({
             id: 'fixture',
             title: 'Creator subtitles',
+            description: 'Original description 🌲\nSecond line',
             extractor: 'generic',
             extractor_key: 'Generic',
             url: `${origin}/video.mp4`,
@@ -71,6 +72,8 @@ try {
                     join(directory, template),
                     '--print',
                     'after_move:pinefetch_subtitles:%(.{filepath,requested_subtitles})j',
+                    '--print',
+                    'after_move:pinefetch_caption:%(.{filepath,description,alt_title,title})j',
                 ],
                 { timeout: 20000 }
             );
@@ -92,6 +95,12 @@ try {
     assert(line, 'yt-dlp must emit subtitle metadata after moving sidecars');
     const metadata = JSON.parse(line.slice('pinefetch_subtitles:'.length));
     assert.equal(metadata.filepath, media);
+    const captionLine = output.split('\n').find(line => line.startsWith('pinefetch_caption:'));
+    assert(captionLine, 'post text must be captured without a TXT export');
+    const caption = JSON.parse(captionLine.slice('pinefetch_caption:'.length));
+    assert.equal(caption.filepath, media);
+    assert.equal(caption.description, 'Original description 🌲\nSecond line');
+    assert(!(await readdir(directory)).some(name => name.endsWith('.caption.txt')));
     assert.deepEqual(Object.keys(metadata.requested_subtitles), ['en']);
     assert.equal(metadata.requested_subtitles.en.ext, 'vtt');
     assert.equal(await readFile(join(directory, 'clip.en.vtt'), 'utf8'), original);
@@ -108,7 +117,7 @@ try {
     assert(absentOutput.includes('pinefetch_subtitles:'));
     assert(!requests.some(path => /automatic|chat/.test(path)));
     console.log(
-        '[test:creator-subtitles] Real yt-dlp preserved original timing/text, excluded automatic captions/live chat, and reported reusable subtitle sidecars.'
+        '[test:creator-subtitles] Real yt-dlp preserved original timing/text, excluded automatic captions/live chat, reported reusable subtitle sidecars, and captured the description without a caption TXT export.'
     );
 } finally {
     await new Promise(resolve => server.close(resolve));

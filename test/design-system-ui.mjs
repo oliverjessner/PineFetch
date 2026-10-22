@@ -572,8 +572,8 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
         if (command === 'get_history_caption') {
             return {
                 format: 'txt',
-                file_available: true,
-                caption_path: '/fixture/description <img src=x onerror="alert(1)">.txt',
+                file_available: false,
+                caption_path: args.mediaPath === '/fixture/alternate.mp4' ? '/fixture/missing.caption.txt' : null,
                 media_path: args.mediaPath,
                 sha256: 'a'.repeat(64),
                 created_at: 1700000000000,
@@ -1251,21 +1251,16 @@ try {
             await page.locator('#historyCaptionText').waitFor();
             assert.equal(await page.locator('#historyTranscriptTitle').textContent(), 'AI transcript');
             assert.equal(await page.locator('#historyCaptionTitle').textContent(), 'Video description');
-            assert.equal(await page.locator('#historyTranscriptDetails').getAttribute('open'), null);
-            assert.equal(await page.locator('#historyCaptionDetails').getAttribute('open'), null);
-            assert(await page.locator('#historyCaptionMeta').isHidden());
+            assert.equal(await page.locator('#historyTranscriptPanel details').count(), 0);
+            assert(await page.locator('#historyCaptionNotice').isHidden());
             assert.doesNotMatch(await page.locator('#historyCaptionTrackSelect').textContent(), /\.mp4|\.txt/);
             await page.locator('#historyCaptionCopyBtn').click();
             assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.copied), 'Caption content.\n'.repeat(60));
-            await page.locator('#historyCaptionDetails summary').click();
-            assert.match(await page.locator('#historyCaptionMeta').textContent(), /a{64}/);
-            assert.match(await page.locator('#historyCaptionMeta').textContent(), /description <img/);
-            assert.equal(await page.locator('#historyCaptionMeta img').count(), 0);
             await page.locator('#historyCaptionTrackSelect').selectOption('/fixture/alternate.mp4');
             await page.waitForFunction(
                 () => globalThis.document.getElementById('historyCaptionText').textContent === 'Alternate description.'
             );
-            assert.equal(await page.locator('#historyCaptionDetails').getAttribute('open'), null);
+            assert(await page.locator('#historyCaptionNotice').isVisible());
             await page.locator('#historyCaptionCopyBtn').click();
             assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.copied), 'Alternate description.');
             await page.locator('#historyCaptionTrackSelect').selectOption({ index: 0 });
@@ -1324,9 +1319,6 @@ try {
                         element.scrollTop = element.scrollHeight;
                     });
                     assert(await section.locator('pre').evaluate(element => element.scrollTop > 0));
-                    await section.locator('details summary').click();
-                    assert(await section.locator('dl').evaluate(element => element.scrollWidth <= element.clientWidth));
-                    await section.locator('details summary').click();
                     await section.locator('pre').evaluate(element => {
                         element.scrollTop = 0;
                     });
@@ -1344,10 +1336,9 @@ try {
             assert.equal(await page.locator('#historySubtitlesTab').getAttribute('aria-selected'), 'true');
             await page.locator('#historySubtitleText').waitFor();
             assert((await page.locator('#historySubtitleTrackSelect').boundingBox()).height >= 32);
-            assert.equal(await page.locator('#historySubtitleDetails').getAttribute('open'), null);
-            await page.locator('#historySubtitleDetails summary').click();
+            assert.equal(await page.locator('#historySubtitlesPanel details').count(), 0);
+            assert(await page.locator('#historySubtitleMeta').isVisible());
             assert.match(await page.locator('#historySubtitleMeta').textContent(), /video.en.vtt/);
-            await page.locator('#historySubtitleDetails summary').click();
             const subtitleHeader = await page.locator('#historySubtitleTitle').boundingBox();
             const subtitleCopy = await page.locator('#historySubtitleCopyBtn').boundingBox();
             assert(
@@ -1383,6 +1374,29 @@ try {
             await page.locator('#historySubtitleText').waitFor();
             assert.match(await page.locator('#historySubtitleText').textContent(), /Grüße/);
             assert.match(await page.locator('#historySubtitleNotice').textContent(), /starts at 61s/);
+            const subtitleHeights = [];
+            for (const viewport of [
+                { width: 1400, height: 960 },
+                { width: 1400, height: 1200 },
+                { width: 1000, height: 720 },
+            ]) {
+                await page.setViewportSize(viewport);
+                const layout = await page.locator('#historySubtitlesPanel').evaluate(panel => {
+                    const text = globalThis.document.getElementById('historySubtitleText').getBoundingClientRect();
+                    const meta = globalThis.document.getElementById('historySubtitleMeta').getBoundingClientRect();
+                    return { text, meta, panel: panel.getBoundingClientRect() };
+                });
+                assert(layout.meta.y >= layout.text.bottom, JSON.stringify(layout));
+                assert(layout.meta.y - layout.text.bottom <= 9, JSON.stringify(layout));
+                assert(layout.meta.bottom <= layout.panel.bottom + 1, JSON.stringify(layout));
+                subtitleHeights.push(layout.text.height);
+                await page.screenshot({
+                    path: `/tmp/pinefetch-subtitles-${viewport.width}x${viewport.height}-${engine.name()}.png`,
+                });
+            }
+            assert(subtitleHeights[1] > subtitleHeights[0] + 150, JSON.stringify(subtitleHeights));
+            assert(subtitleHeights[2] < subtitleHeights[0], JSON.stringify(subtitleHeights));
+            await page.setViewportSize({ width: 1400, height: 960 });
             await page.screenshot({ path: `/tmp/pinefetch-subtitles-${engine.name()}.png` });
             await page.locator('#historySubtitlesTab').focus();
             await page.keyboard.press('ArrowRight');
@@ -1418,7 +1432,6 @@ try {
             assert.equal(await page.locator('#historyCaptionTitle').textContent(), 'Post caption');
             assert.equal(await page.locator('#historyCaptionCopyBtn').getAttribute('aria-label'), 'Copy post caption');
             assert(await page.locator('#historyCaptionTrackField').isHidden());
-            assert.equal(await page.locator('#historyCaptionDetails').getAttribute('open'), null);
             await page.locator('#historyCaptionCopyBtn').click();
             assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.copied), 'Caption content.\n'.repeat(60));
             await page.locator('#historyDetailsHistoryBtn').click();
@@ -1438,7 +1451,6 @@ try {
                 await page.locator('#historyTranscriptStatus').textContent(),
                 'No transcript is saved for this video.'
             );
-            assert(await page.locator('#historyTranscriptDetails').isHidden());
             assert(await page.locator('#historyCaptionsPanel').isHidden());
             await page.locator('#historySubtitlesTab').click();
             assert.match(await page.locator('#historySubtitleStatus').textContent(), /No creator subtitles/);

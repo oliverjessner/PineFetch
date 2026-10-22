@@ -257,12 +257,14 @@ pub(super) fn get_history_details_from_db(
         .map_err(|e| format!("History details read failed: {e}"))?;
     let rows = statement
         .query_map(params![id], |row| {
-            let caption_path: String = row.get(1)?;
+            let caption_path: Option<String> = row.get(1)?;
             let created_at: i64 = row.get(3)?;
             Ok(HistoryCaptionSummary {
                 media_path: row.get(0)?,
-                format: path_extension(&caption_path),
-                file_available: Path::new(&caption_path).is_file(),
+                format: caption_path.as_deref().and_then(path_extension),
+                file_available: caption_path
+                    .as_deref()
+                    .is_some_and(|path| Path::new(path).is_file()),
                 caption_path,
                 sha256: row.get(2)?,
                 created_at: i64_to_millis(created_at),
@@ -321,12 +323,14 @@ pub(super) fn get_history_caption_from_db(
          FROM captions WHERE history_entry_id = ?1 AND media_path = ?2",
         params![id, media_path],
         |row| {
-            let caption_path: String = row.get(1)?;
+            let caption_path: Option<String> = row.get(1)?;
             let created_at: i64 = row.get(4)?;
             Ok(HistoryCaptionContent {
                 media_path: row.get(0)?,
-                format: path_extension(&caption_path),
-                file_available: Path::new(&caption_path).is_file(),
+                format: caption_path.as_deref().and_then(path_extension),
+                file_available: caption_path
+                    .as_deref()
+                    .is_some_and(|path| Path::new(path).is_file()),
                 caption_path,
                 text: row.get(2)?,
                 sha256: row.get(3)?,

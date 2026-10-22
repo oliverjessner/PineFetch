@@ -346,6 +346,7 @@ mod tests {
     {
         let conn = Connection::open_in_memory().unwrap();
         crate::database::initialize(&conn).unwrap();
+        crate::database::restore_schema8_caption_fixture(&conn);
         conn.execute_batch("DROP TABLE history_subtitles; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; PRAGMA user_version=7; UPDATE app_config SET youtube_cookie_browser='chrome',save_captions=1;").unwrap();
         assert!(crate::database::initialize_with_hook(&conn, |point| {
             if point == crate::database::MigrationPoint::CreatorSubtitles {

@@ -14,7 +14,7 @@ pub(crate) fn build_download_args(
     deno_path: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let platform = Platform::from_url(&job.url);
-    let save_captions = job.save_captions && platform.is_some_and(Platform::supports_captions);
+    let capture_captions = platform.is_some_and(Platform::supports_captions);
     let mut args = vec![
         "--no-playlist".to_string(),
         "--newline".to_string(),
@@ -32,7 +32,7 @@ pub(crate) fn build_download_args(
         output_template,
     ];
 
-    if save_captions {
+    if capture_captions {
         args.push("--print".to_string());
         args.push(
             "after_move:pinefetch_caption:%(.{filepath,description,alt_title,title})j".to_string(),

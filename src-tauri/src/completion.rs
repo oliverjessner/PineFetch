@@ -104,10 +104,12 @@ pub(super) fn complete_files_with_hook(
         };
         for caption in captions {
             require_output(Some(&caption.media_path))?;
-            let text = fs::read_to_string(&caption.caption_path)
-                .map_err(|e| format!("Produced caption read failed: {e}"))?;
-            if text != caption.text {
-                return Err("Produced caption changed before persistence".into());
+            if let Some(caption_path) = &caption.caption_path {
+                let text = fs::read_to_string(caption_path)
+                    .map_err(|e| format!("Produced caption read failed: {e}"))?;
+                if text != caption.text {
+                    return Err("Produced caption changed before persistence".into());
+                }
             }
         }
         for subtitle in subtitles {

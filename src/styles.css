@@ -908,6 +908,33 @@ body {
     user-select: text;
 }
 
+#historySubtitlesPanel > .pinefetch-history-text-section {
+    flex: 1;
+    min-height: 0;
+}
+
+#historySubtitleText {
+    flex: 1 1 auto;
+    min-height: 8rem;
+    max-height: none;
+}
+
+.pinefetch-history-subtitle-meta {
+    display: grid;
+    flex: none;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--oj-space-1) var(--oj-space-3);
+    margin: 0;
+    color: var(--oj-text-muted);
+    font-size: var(--oj-text-xs);
+}
+
+.pinefetch-history-subtitle-meta dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
 #historyTranscriptText,
 #historyCaptionText {
     font-family: var(--oj-font-sans);

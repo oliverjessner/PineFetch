@@ -17,7 +17,7 @@ Here are our first class citizen listed:
 | Pinterest          | `pinterest.com/pin/...`         | No         |
 | LinkedIn           | `linkedin.com/posts/...`        | No         |
 
-- \* Captions are saved when **Save post captions** is enabled and post text is available. Reddit uses the title and optional self-text.
+- \* Available captions and video descriptions are always stored in History. **Save caption TXT files** additionally exports `.caption.txt` files beside downloads. Reddit uses the title and optional self-text.
 
 check [PineFetch-Link-Dump](https://github.com/oliverjessner/PineFetch-Link-Dump) to see which platforms are supported by import text and sending urls via browser
 

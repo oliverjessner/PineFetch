@@ -1,4 +1,4 @@
-import { renderContentDetails } from './history-content-details.js';
+import { renderContentMetadata } from './history-content-details.js';
 
 export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
     let entryId = null;
@@ -12,8 +12,8 @@ export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
         els.historySubtitleCopyBtn.disabled = !content?.text;
         els.historySubtitleText.hidden = !content?.text;
         els.historySubtitleText.textContent = content?.text || '';
-        renderContentDetails(
-            els.historySubtitleDetails,
+        renderContentMetadata(
+            els.historySubtitleMeta,
             content
                 ? [
                       ['File path', content.path],

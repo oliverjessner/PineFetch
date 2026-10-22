@@ -238,7 +238,7 @@ const els = Object.seal({
     historySubtitleCopyBtn: document.getElementById('historySubtitleCopyBtn'),
     historySubtitleRetryBtn: document.getElementById('historySubtitleRetryBtn'),
     historySubtitleText: document.getElementById('historySubtitleText'),
-    historySubtitleDetails: document.getElementById('historySubtitleDetails'),
+    historySubtitleMeta: document.getElementById('historySubtitleMeta'),
     historySubtitleNotice: document.getElementById('historySubtitleNotice'),
     historySubtitleStatus: document.getElementById('historySubtitleStatus'),
     historyOverviewPanel: document.getElementById('historyOverviewPanel'),
@@ -248,7 +248,6 @@ const els = Object.seal({
     historyCaptionTitle: document.getElementById('historyCaptionTitle'),
     historyCaptionDescription: document.getElementById('historyCaptionDescription'),
     historyOverviewList: document.getElementById('historyOverviewList'),
-    historyTranscriptDetails: document.getElementById('historyTranscriptDetails'),
     historyTranscriptCopyBtn: document.getElementById('historyTranscriptCopyBtn'),
     historyTranscriptNotice: document.getElementById('historyTranscriptNotice'),
     historyTranscriptStatus: document.getElementById('historyTranscriptStatus'),
@@ -256,7 +255,6 @@ const els = Object.seal({
     historyCaptionTrackField: document.getElementById('historyCaptionTrackField'),
     historyCaptionTrackSelect: document.getElementById('historyCaptionTrackSelect'),
     historyCaptionCopyBtn: document.getElementById('historyCaptionCopyBtn'),
-    historyCaptionDetails: document.getElementById('historyCaptionDetails'),
     historyCaptionNotice: document.getElementById('historyCaptionNotice'),
     historyCaptionStatus: document.getElementById('historyCaptionStatus'),
     historyCaptionText: document.getElementById('historyCaptionText'),
@@ -663,8 +661,8 @@ const updateDownloadOptionHints = () => {
     els.captionHint.hidden = !captionPlatformName;
     if (captionPlatformName) {
         els.captionHint.textContent = els.saveCaptions.checked
-            ? `${captionPlatformName} caption: saved as .caption.txt when available.`
-            : `${captionPlatformName} caption: enable Save post captions in Settings.`;
+            ? `${captionPlatformName} post text: saved in History and as .caption.txt when available.`
+            : `${captionPlatformName} post text: saved in History when available.`;
     }
 };
 

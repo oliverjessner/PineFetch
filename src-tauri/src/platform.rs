@@ -74,10 +74,7 @@ pub(super) fn detect_platform(url: &str) -> Option<String> {
     Platform::from_url(url).map(|platform| platform.as_str().to_string())
 }
 
-pub(super) fn caption_platform(url: &str, enabled: bool) -> Option<String> {
-    if !enabled {
-        return None;
-    }
+pub(super) fn caption_platform(url: &str) -> Option<String> {
     Platform::from_url(url)
         .filter(|platform| platform.supports_captions())
         .map(|platform| platform.as_str().to_string())

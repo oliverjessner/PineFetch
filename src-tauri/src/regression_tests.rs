@@ -261,7 +261,7 @@ fn saves_reddit_title_and_optional_selftext_as_caption() {
 }
 
 #[test]
-fn captures_post_text_only_for_enabled_caption_platforms() {
+fn captures_post_text_for_supported_platforms() {
     for (url, platform) in [
         ("https://www.youtube.com/watch?v=abc123", "youtube"),
         ("https://www.tiktok.com/@user/video/123456789", "tiktok"),
@@ -277,18 +277,14 @@ fn captures_post_text_only_for_enabled_caption_platforms() {
         ("https://old.reddit.com/comments/abc123", "reddit"),
         ("https://redd.it/abc123", "reddit"),
     ] {
-        assert_eq!(caption_platform(url, true).as_deref(), Some(platform));
-        assert_eq!(caption_platform(url, false), None);
+        assert_eq!(caption_platform(url).as_deref(), Some(platform));
     }
     assert_eq!(
-        caption_platform("https://www.twitch.tv/videos/123456", true),
+        caption_platform("https://www.twitch.tv/videos/123456"),
         None
     );
     assert_eq!(
-        caption_platform(
-            "https://reddit.com.example.org/r/videos/comments/abc123",
-            true
-        ),
+        caption_platform("https://reddit.com.example.org/r/videos/comments/abc123"),
         None
     );
 }
@@ -1217,7 +1213,7 @@ fn captions_store_unicode_newlines_and_upsert_without_duplication() {
 
     let original = SavedCaption {
         media_path: "/tmp/post.mp4".to_string(),
-        caption_path: "/tmp/post.txt".to_string(),
+        caption_path: Some("/tmp/post.txt".to_string()),
         text: "Grüße 🌲\nZweite Zeile".to_string(),
     };
     insert_captions_in_db(&state.db, "instagram-1", std::slice::from_ref(&original)).unwrap();
@@ -1227,7 +1223,7 @@ fn captions_store_unicode_newlines_and_upsert_without_duplication() {
         "instagram-1",
         &[SavedCaption {
             media_path: "/tmp/post.mp4".to_string(),
-            caption_path: "/tmp/post-updated.txt".to_string(),
+            caption_path: Some("/tmp/post-updated.txt".to_string()),
             text: "Aktualisiert ✨\nMehr Text".to_string(),
         }],
     )
@@ -1237,7 +1233,7 @@ fn captions_store_unicode_newlines_and_upsert_without_duplication() {
         "instagram-1",
         &[SavedCaption {
             media_path: "/tmp/post-second.jpg".to_string(),
-            caption_path: "/tmp/post-second.txt".to_string(),
+            caption_path: Some("/tmp/post-second.txt".to_string()),
             text: "Zweites Medium 🖼️".to_string(),
         }],
     )
@@ -1333,7 +1329,7 @@ fn captions_follow_history_delete_and_clear() {
             id,
             &[SavedCaption {
                 media_path: format!("/tmp/{id}.mp4"),
-                caption_path: format!("/tmp/{id}.txt"),
+                caption_path: Some(format!("/tmp/{id}.txt")),
                 text: id.to_string(),
             }],
         )
@@ -1540,12 +1536,12 @@ fn history_details_load_metadata_and_text_content_separately() {
         &[
             SavedCaption {
                 media_path: directory.join("example.mp4").to_string_lossy().into_owned(),
-                caption_path: existing_caption_path.to_string_lossy().into_owned(),
+                caption_path: Some(existing_caption_path.to_string_lossy().into_owned()),
                 text: "First caption".to_string(),
             },
             SavedCaption {
                 media_path: directory.join("missing.mp4").to_string_lossy().into_owned(),
-                caption_path: missing_caption_path.to_string_lossy().into_owned(),
+                caption_path: Some(missing_caption_path.to_string_lossy().into_owned()),
                 text: "Stored caption".to_string(),
             },
         ],
@@ -1626,7 +1622,7 @@ fn history_details_report_only_available_content_sections() {
         "captions-only",
         &[SavedCaption {
             media_path: "/tmp/captions-only.mp4".to_string(),
-            caption_path: "/tmp/captions-only.caption.txt".to_string(),
+            caption_path: Some("/tmp/captions-only.caption.txt".to_string()),
             text: "Caption".to_string(),
         }],
     )
@@ -1828,7 +1824,7 @@ fn history_search_matches_stored_transcripts_before_pagination() {
                 &id,
                 &[SavedCaption {
                     media_path: "/synthetic/post.mp4".to_string(),
-                    caption_path: "/synthetic/post.caption.txt".to_string(),
+                    caption_path: Some("/synthetic/post.caption.txt".to_string()),
                     text: "Pine needle in the caption".to_string(),
                 }],
             )
@@ -2022,7 +2018,7 @@ fn history_search_filters_by_field_and_source() {
         "instagram",
         &[SavedCaption {
             media_path: "/tmp/instagram.mp4".to_string(),
-            caption_path: "/tmp/instagram.caption.txt".to_string(),
+            caption_path: Some("/tmp/instagram.caption.txt".to_string()),
             text: "Golden sunset above the lake".to_string(),
         }],
     )

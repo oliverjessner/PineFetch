@@ -168,7 +168,6 @@ export const createHistoryDetailsView = ({
 
     const renderTranscript = content => {
         els.historyTranscriptStatus.textContent = '';
-        renderContentDetails(els.historyTranscriptDetails, []);
         els.historyTranscriptNotice.hidden = true;
         els.historyTranscriptText.hidden = true;
         els.historyTranscriptCopyBtn.disabled = true;
@@ -177,10 +176,6 @@ export const createHistoryDetailsView = ({
             return;
         }
 
-        renderContentDetails(els.historyTranscriptDetails, [
-            ['Language', content.language?.toUpperCase()],
-            ['Transcript format', content.transcription_type],
-        ]);
         if (!content.file_available) {
             els.historyTranscriptNotice.textContent =
                 'The downloaded file is missing. The saved AI transcript is still available.';
@@ -247,7 +242,6 @@ export const createHistoryDetailsView = ({
 
     const renderCaption = content => {
         els.historyCaptionStatus.textContent = '';
-        renderContentDetails(els.historyCaptionDetails, []);
         els.historyCaptionNotice.hidden = true;
         els.historyCaptionText.hidden = true;
         els.historyCaptionCopyBtn.disabled = true;
@@ -256,15 +250,7 @@ export const createHistoryDetailsView = ({
             return;
         }
 
-        renderContentDetails(els.historyCaptionDetails, [
-            ['Filename', content.caption_path?.split(/[\\/]/).pop()],
-            ['File path', content.caption_path],
-            ['Media path', content.media_path],
-            ['Format', content.format?.toUpperCase()],
-            ['SHA-256', content.sha256],
-            ['Saved', content.created_at ? formatDateTime(content.created_at) : null],
-        ]);
-        if (!content.file_available) {
+        if (content.caption_path && !content.file_available) {
             els.historyCaptionNotice.textContent =
                 'The saved text file is missing. The stored text is still available.';
             els.historyCaptionNotice.hidden = false;

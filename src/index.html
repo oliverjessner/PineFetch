@@ -259,10 +259,10 @@
 
                             <label class="oj-switch" for="saveCaptions">
                                 <span class="pinefetch-switch-copy">
-                                    <span class="pinefetch-switch-title">Save post captions</span>
+                                    <span class="pinefetch-switch-title">Save caption TXT files</span>
                                     <span class="oj-helper"
-                                        >Save post text from YouTube, TikTok, Instagram, Facebook, X and Reddit as
-                                        .caption.txt.</span
+                                        >Captions and video descriptions are always saved in History when available.
+                                        Also save .caption.txt files beside downloads.</span
                                     >
                                 </span>
                                 <input id="saveCaptions" type="checkbox" role="switch" />
@@ -1357,17 +1357,11 @@
                                         tabindex="0"
                                         hidden
                                     ></pre>
-                                    <details
-                                        id="historySubtitleDetails"
-                                        class="oj-accordion pinefetch-history-file-details"
+                                    <dl
+                                        id="historySubtitleMeta"
+                                        class="oj-definition-list pinefetch-history-subtitle-meta"
                                         hidden
-                                    >
-                                        <summary>Technical details</summary>
-                                        <dl
-                                            id="historySubtitleMeta"
-                                            class="oj-accordion-body oj-definition-list pinefetch-history-overview-list"
-                                        ></dl>
-                                    </details>
+                                    ></dl>
                                     <button
                                         id="historySubtitleRetryBtn"
                                         class="oj-button oj-button-secondary oj-button-compact"
@@ -1416,17 +1410,6 @@
                                         tabindex="0"
                                         hidden
                                     ></pre>
-                                    <details
-                                        id="historyTranscriptDetails"
-                                        class="oj-accordion pinefetch-history-file-details"
-                                        hidden
-                                    >
-                                        <summary>Technical details</summary>
-                                        <dl
-                                            id="historyTranscriptMeta"
-                                            class="oj-accordion-body oj-definition-list pinefetch-history-overview-list"
-                                        ></dl>
-                                    </details>
                                 </section>
                                 <section
                                     id="historyCaptionsPanel"
@@ -1467,17 +1450,6 @@
                                         tabindex="0"
                                         hidden
                                     ></pre>
-                                    <details
-                                        id="historyCaptionDetails"
-                                        class="oj-accordion pinefetch-history-file-details"
-                                        hidden
-                                    >
-                                        <summary>Technical details</summary>
-                                        <dl
-                                            id="historyCaptionMeta"
-                                            class="oj-accordion-body oj-definition-list pinefetch-history-overview-list"
-                                        ></dl>
-                                    </details>
                                 </section>
                             </section>
                         </div>

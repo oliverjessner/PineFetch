@@ -17,7 +17,34 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 8;
+pub(super) const SCHEMA_VERSION: i64 = 9;
+
+// A caption is stored independently of an optional exported text file.
+const OPTIONAL_CAPTION_FILES_SQL: &str = r#"
+    CREATE TABLE captions_with_optional_files (
+        history_entry_id TEXT NOT NULL,
+        media_path TEXT NOT NULL,
+        caption_path TEXT,
+        text TEXT NOT NULL,
+        sha256 TEXT,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (history_entry_id, media_path),
+        FOREIGN KEY (history_entry_id) REFERENCES history_entries(id) ON DELETE CASCADE
+    );
+    INSERT INTO captions_with_optional_files SELECT history_entry_id, media_path, caption_path, text, sha256, created_at FROM captions;
+    DROP TABLE captions;
+    ALTER TABLE captions_with_optional_files RENAME TO captions;
+    CREATE INDEX idx_captions_sha256 ON captions(sha256);
+"#;
+
+#[cfg(test)]
+pub(crate) fn restore_schema8_caption_fixture(conn: &Connection) {
+    conn.execute_batch(
+        &OPTIONAL_CAPTION_FILES_SQL.replace("caption_path TEXT,", "caption_path TEXT NOT NULL,"),
+    )
+    .unwrap();
+}
+
 const CREATOR_SUBTITLES_SQL: &str =
     "ALTER TABLE app_config ADD COLUMN save_creator_subtitles INTEGER NOT NULL DEFAULT 0;";
 const LOCK_TIMEOUT: Duration = Duration::from_secs(3);
@@ -216,6 +243,7 @@ pub(super) enum MigrationPoint {
     AccountInsights,
     BrowserCookies,
     CreatorSubtitles,
+    OptionalCaptionFiles,
 }
 
 pub(super) fn initialize_with_hook(
@@ -328,6 +356,13 @@ pub(super) fn initialize_with_hook(
         tx.pragma_update(None, "user_version", 8)
             .map_err(|e| e.to_string())?;
         hook(MigrationPoint::CreatorSubtitles)?;
+    }
+    if version < 9 {
+        tx.execute_batch(OPTIONAL_CAPTION_FILES_SQL)
+            .map_err(|e| format!("SQLite migration 9 failed: {e}"))?;
+        tx.pragma_update(None, "user_version", 9)
+            .map_err(|e| e.to_string())?;
+        hook(MigrationPoint::OptionalCaptionFiles)?;
     }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
@@ -519,6 +554,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         reference
             .execute_batch(crate::subtitles::SCHEMA_SQL)
+            .map_err(|e| e.to_string())?;
+    }
+    if version >= 9 {
+        reference
+            .execute_batch(OPTIONAL_CAPTION_FILES_SQL)
             .map_err(|e| e.to_string())?;
     }
     reference

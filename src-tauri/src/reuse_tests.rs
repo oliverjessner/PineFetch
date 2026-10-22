@@ -386,6 +386,7 @@ fn creator_subtitles_are_opt_in_and_do_not_enable_automatic_captions() {
 fn integration_creator_subtitles_migration_preserves_config_and_defaults_to_disabled() {
     let conn = Connection::open_in_memory().unwrap();
     database::initialize(&conn).unwrap();
+    crate::database::restore_schema8_caption_fixture(&conn);
     conn.execute_batch(
         "ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=7;",
     )

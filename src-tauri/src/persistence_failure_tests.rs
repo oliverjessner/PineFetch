@@ -202,7 +202,7 @@ fn integration_produced_captions_must_remain_readable_unchanged_and_attached_to_
         fs::write(&sidecar, "Caption Grüße 🌲\nSecond line").unwrap();
         let caption = SavedCaption {
             media_path: media.to_str().unwrap().into(),
-            caption_path: sidecar.to_str().unwrap().into(),
+            caption_path: Some(sidecar.to_str().unwrap().into()),
             text: "Caption Grüße 🌲\nSecond line".into(),
         };
         completion::begin(&initial.db, &job).unwrap();
@@ -410,7 +410,7 @@ fn integration_corrupted_saved_caption_and_transcript_return_controlled_errors_w
     fs::write(&sidecar, "Synthetic caption").unwrap();
     let caption = SavedCaption {
         media_path: media.to_str().unwrap().into(),
-        caption_path: sidecar.to_str().unwrap().into(),
+        caption_path: Some(sidecar.to_str().unwrap().into()),
         text: "Synthetic caption".into(),
     };
     completion::begin(&initial.db, &job).unwrap();
@@ -494,4 +494,78 @@ fn integration_corrupted_saved_caption_and_transcript_return_controlled_errors_w
         )
         .unwrap();
     assert_eq!(complete, "complete");
+}
+
+#[test]
+fn integration_captions_persist_without_txt_export_and_survive_reopening() {
+    for save_file in [false, true] {
+        let root = TempRoot::new("optional-caption-file");
+        let initial = state(&root);
+        let mut job = job(&root, "caption-export", false);
+        job.save_captions = save_file;
+        let media = root.path("Grüße 🌲 media.mp4");
+        let text = "Caption Grüße 🌲\nSecond line";
+        fs::write(&media, b"synthetic media").unwrap();
+        let caption =
+            crate::download::prepare_saved_caption(&media, text, job.save_captions).unwrap();
+        assert_eq!(caption.caption_path.is_some(), save_file);
+        assert_eq!(media.with_extension("caption.txt").exists(), save_file);
+        if let Some(path) = &caption.caption_path {
+            assert_eq!(fs::read_to_string(path).unwrap(), text);
+        }
+        completion::begin(&initial.db, &job).unwrap();
+        // Text is part of the same atomic completion, also when no sidecar exists.
+        initial.db.lock().unwrap().execute_batch("CREATE TRIGGER fail_caption BEFORE INSERT ON captions BEGIN SELECT RAISE(ABORT,'synthetic caption failure'); END;").unwrap();
+        assert!(completion::complete(
+            &initial.db,
+            &job,
+            media.to_str(),
+            None,
+            std::slice::from_ref(&caption),
+            None
+        )
+        .is_err());
+        assert_uncommitted(&initial.db.lock().unwrap(), &job.id, "output_ready");
+        initial
+            .db
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER fail_caption")
+            .unwrap();
+        for _ in 0..2 {
+            completion::complete(
+                &initial.db,
+                &job,
+                media.to_str(),
+                None,
+                std::slice::from_ref(&caption),
+                None,
+            )
+            .unwrap();
+        }
+        drop(initial);
+        let reopened = state(&root);
+        let details = get_history_details_from_db(&reopened.db, &job.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(details.captions.len(), 1);
+        assert_eq!(details.captions[0].caption_path, caption.caption_path);
+        let content = get_history_caption_from_db(&reopened.db, &job.id, media.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(content.text, text);
+        assert_eq!(content.file_available, save_file);
+        assert_eq!(
+            content.sha256.as_deref(),
+            Some(crate::hashing::sha256_hex(text.as_bytes()).as_str())
+        );
+        fs::remove_file(media).unwrap();
+        assert_eq!(
+            get_history_caption_from_db(&reopened.db, &job.id, &caption.media_path)
+                .unwrap()
+                .unwrap()
+                .text,
+            text
+        );
+    }
 }

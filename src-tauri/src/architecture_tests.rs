@@ -287,3 +287,40 @@ fn process_start_errors_are_distinct_from_timeouts_without_parsing_messages() {
         "Process output did not close after exit"
     );
 }
+
+#[test]
+fn captions_are_captured_independently_of_optional_txt_exports() {
+    for enabled in [false, true] {
+        let mut prepared = job("capture-caption");
+        prepared.save_captions = enabled;
+        for source in [
+            "https://www.youtube.com/watch?v=synthetic",
+            "https://www.instagram.com/p/synthetic/",
+            "https://www.reddit.com/comments/synthetic",
+        ] {
+            prepared.url = source.into();
+            let args = build_download_args(
+                &prepared,
+                "synthetic.%(ext)s".into(),
+                Some("/synthetic/ffmpeg"),
+                None,
+            )
+            .unwrap();
+            assert!(args
+                .iter()
+                .any(|arg| arg.starts_with("after_move:pinefetch_caption:")));
+            assert!(!args.iter().any(|arg| arg == "--write-description"));
+        }
+        prepared.url = "https://www.twitch.tv/videos/123456".into();
+        let args = build_download_args(
+            &prepared,
+            "synthetic.%(ext)s".into(),
+            Some("/synthetic/ffmpeg"),
+            None,
+        )
+        .unwrap();
+        assert!(!args
+            .iter()
+            .any(|arg| arg.starts_with("after_move:pinefetch_caption:")));
+    }
+}

@@ -67,8 +67,8 @@ pub(super) fn run_download_job(
     let deno_path = resolve_deno_executable(app);
     let output_template = build_output_template(&job.output_dir, job.filename_suffix.as_deref());
     let output_template_for_fallback = output_template.clone();
-    let caption_platform = caption_platform(&job.url, job.save_captions);
-    let save_captions = caption_platform.is_some();
+    let caption_platform = caption_platform(&job.url);
+    let capture_captions = caption_platform.is_some();
 
     let args = build_download_args(
         job,
@@ -287,7 +287,7 @@ pub(super) fn run_download_job(
             output_path = Some(trimmed_path);
         }
 
-        if save_captions {
+        if capture_captions {
             let captions = caption_capture
                 .lock()
                 .map_err(|_| "Caption capture lock poisoned")?;
@@ -310,20 +310,29 @@ pub(super) fn run_download_job(
                 } else {
                     downloaded_path
                 };
-                let caption_path = write_caption_sidecar(Path::new(final_path), caption)?;
-                saved_captions.push(SavedCaption {
-                    media_path: final_path.to_string(),
-                    caption_path: caption_path.to_string_lossy().into_owned(),
-                    text: caption.clone(),
-                });
-                emit_log(
-                    app,
-                    LogEvent {
-                        id: job.id.clone(),
-                        line: format!("[caption] saved: {}", caption_path.display()),
-                        is_error: false,
-                    },
-                );
+                let saved = match prepare_saved_caption(
+                    Path::new(final_path),
+                    caption,
+                    job.save_captions,
+                ) {
+                    Ok(saved) => saved,
+                    Err(error) if job.save_captions => {
+                        emit_log(app, LogEvent { id: job.id.clone(), line: format!("[caption] TXT export failed: {error}. Caption will be saved in History."), is_error: true });
+                        prepare_saved_caption(Path::new(final_path), caption, false)?
+                    }
+                    Err(error) => return Err(error),
+                };
+                if let Some(path) = &saved.caption_path {
+                    emit_log(
+                        app,
+                        LogEvent {
+                            id: job.id.clone(),
+                            line: format!("[caption] saved: {path}"),
+                            is_error: false,
+                        },
+                    );
+                }
+                saved_captions.push(saved);
             }
         }
     }
@@ -335,6 +344,30 @@ pub(super) fn run_download_job(
         info,
         captions: saved_captions,
         subtitles: saved_subtitles,
+    })
+}
+
+pub(super) fn prepare_saved_caption(
+    media_path: &Path,
+    caption: &str,
+    save_file: bool,
+) -> Result<SavedCaption, String> {
+    if !media_path.is_file() {
+        return Err("Caption media file not found; saved text requires downloaded media".into());
+    }
+    let caption_path = if save_file {
+        Some(
+            write_caption_sidecar(media_path, caption)?
+                .to_string_lossy()
+                .into_owned(),
+        )
+    } else {
+        None
+    };
+    Ok(SavedCaption {
+        media_path: media_path.to_string_lossy().into_owned(),
+        caption_path,
+        text: caption.to_string(),
     })
 }
 

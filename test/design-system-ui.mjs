@@ -572,7 +572,12 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             ui.emit('history:ocr', { ...progress, status: 'cancelled' });
             return;
         }
-        if (command === 'get_history_media') return ui.localVideo ? '/__history-preview.mp4' : null;
+        if (command === 'get_history_media')
+            return ui.localVideo === 'broken'
+                ? '/__history-failed.mp4'
+                : ui.localVideo
+                  ? '/__history-preview.mp4'
+                  : null;
         if (command === 'get_history_transcript') {
             return {
                 language: 'de',
@@ -620,8 +625,17 @@ try {
                 timezoneId: 'Europe/Vienna',
                 reducedMotion: 'reduce',
             });
+            let releaseFailedVideo;
+            let failedVideoReady;
+            const failedVideoRequested = new Promise(resolve => (failedVideoReady = resolve));
             await context.route('**/*', route => {
                 const url = route.request().url();
+                if (url === `${origin}/__history-failed.mp4`)
+                    return new Promise(resolve => {
+                        releaseFailedVideo = () =>
+                            resolve(route.fulfill({ contentType: 'video/mp4', body: 'Undecodable video fixture' }));
+                        failedVideoReady();
+                    });
                 if (url === `${origin}/__history-preview.mp4`) {
                     const range = route
                         .request()
@@ -2594,6 +2608,28 @@ try {
             await page.locator('#historyOcrVideo').evaluate(video => video.dispatchEvent(new Event('error')));
             await page.locator('#historyOcrFrame').waitFor();
             assert(await page.locator('#historyOcrVideo').isHidden());
+            await closeDetails();
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.localVideo = false;
+            });
+
+            // A stalled native decoder must not suppress OCR previews, and a later
+            // decode error must not cover the already displayed image with an embed.
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.localVideo = 'broken';
+            });
+            await openOcr('history-1');
+            await waitOcrPage();
+            await page.locator('#historyOcrFrame').waitFor({ timeout: 3000 });
+            assert.equal(await page.locator('#historyOcrVideo').evaluate(video => video.readyState), 0);
+            await failedVideoRequested;
+            await releaseFailedVideo();
+            await page.locator('#historyOcrVideo').waitFor({ state: 'hidden' });
+            assert(await page.locator('#historyOcrFrame').isVisible());
+            assert(await page.locator('#historyOcrPreview iframe').isHidden());
+            await page.locator('.pinefetch-ocr-select').nth(1).click();
+            await page.locator('#historyOcrFrame').waitFor();
+            assert(await page.locator('#historyOcrPreview iframe').isHidden());
             await closeDetails();
             await page.evaluate(() => {
                 globalThis.__pinefetchUi.localVideo = false;

@@ -30,37 +30,68 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {} }) => {
     let requested = false;
     let pending = 0;
     let image = '';
+    let localState = 'idle';
+    let loadTimer;
+    const clearLoadTimer = () => clearTimeout(loadTimer);
+    const renderFallback = () => {
+        // A decoded OCR frame takes precedence over an unverified remote embed.
+        const showImage = localState !== 'ready' && Boolean(image);
+        fallback.hidden = !showImage;
+        if (showImage && fallback.getAttribute('src') !== image) fallback.src = image;
+        if (showImage) {
+            embed.removeAttribute('src');
+            embed.hidden = true;
+        }
+        status.hidden = localState === 'ready' || showImage || !embed.hidden;
+    };
     const fallbackPlayer = () => {
+        clearLoadTimer();
+        localState = 'unavailable';
         video.hidden = true;
         video.pause();
-        const source = youtubeEmbedSource(entry?.url, pending);
+        video.removeAttribute('src');
+        video.load();
+        const source = !image && youtubeEmbedSource(entry?.url, pending);
         embed.hidden = !source;
         if (source) embed.src = source;
-        fallback.hidden = Boolean(source) || !image;
-        if (image) fallback.src = image;
-        status.hidden = Boolean(source) || Boolean(image);
-        status.textContent = 'No playable saved video is available for this entry.';
+        status.textContent = 'This video could not be played in the app.';
+        renderFallback();
         root.dispatchEvent(new CustomEvent('pinefetch:media-unavailable'));
     };
     const seek = seconds => {
         pending = Math.max(0, Number(seconds) || 0);
-        if (!video.hidden) {
+        if (localState === 'loading' || localState === 'ready') {
             if (video.readyState >= 1)
                 video.currentTime = Number.isFinite(video.duration) ? Math.min(pending, video.duration) : pending;
         } else if (!embed.hidden) embed.src = youtubeEmbedSource(entry?.url, pending);
     };
-    video.addEventListener('loadedmetadata', () => seek(pending));
-    video.addEventListener('timeupdate', () => {
-        if (!video.hidden) onTime(video.currentTime);
+    video.addEventListener('loadedmetadata', () => {
+        if (localState === 'loading') seek(pending);
     });
-    video.addEventListener('error', fallbackPlayer);
+    const showDecodedVideo = () => {
+        if (localState !== 'loading' || video.readyState < 2 || !video.videoWidth) return;
+        clearLoadTimer();
+        localState = 'ready';
+        renderFallback();
+    };
+    video.addEventListener('loadeddata', showDecodedVideo);
+    video.addEventListener('canplay', showDecodedVideo);
+    video.addEventListener('timeupdate', () => {
+        if (localState === 'ready') onTime(video.currentTime);
+    });
+    video.addEventListener('error', () => {
+        if (localState === 'loading' || localState === 'ready') fallbackPlayer();
+    });
     fallback.addEventListener('error', () => {
+        image = '';
         fallback.hidden = true;
         status.hidden = false;
     });
     return Object.freeze({
         setEntry: next => {
             revision++;
+            clearLoadTimer();
+            localState = 'idle';
             entry = next;
             requested = false;
             pending = 0;
@@ -81,6 +112,7 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {} }) => {
             if (requested || !entry?.id) return;
             requested = true;
             const request = revision;
+            status.hidden = false;
             status.textContent = 'Loading saved video…';
             try {
                 const path = await api.getHistoryMedia({ id: entry.id });
@@ -90,32 +122,36 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {} }) => {
                     fallbackPlayer();
                     return;
                 }
+                localState = 'loading';
                 video.hidden = false;
                 embed.hidden = true;
-                fallback.hidden = true;
-                status.hidden = true;
+                video.preload = 'auto';
+                renderFallback();
                 video.src = url;
+                // Some native decoders never emit an error for unsupported media.
+                loadTimer = setTimeout(() => {
+                    if (request === revision && localState === 'loading') fallbackPlayer();
+                }, 12000);
             } catch {
                 if (request === revision) fallbackPlayer();
             }
         },
         seek,
-        hasVideo: () => !video.hidden,
+        hasVideo: () => localState === 'ready',
         setFrame: src => {
             image = src || '';
-            if (video.hidden && image) {
-                embed.removeAttribute('src');
-                embed.hidden = true;
-                fallback.hidden = false;
-                if (fallback.getAttribute('src') !== image) fallback.src = image;
-                status.hidden = true;
-            } else if (video.hidden && embed.hidden) {
-                fallback.hidden = true;
-            }
+            renderFallback();
         },
         pause: () => {
             revision++;
-            if (video.hidden) requested = false;
+            clearLoadTimer();
+            if (localState !== 'ready') {
+                requested = false;
+                localState = 'idle';
+                video.removeAttribute('src');
+                video.load();
+                video.hidden = true;
+            }
             video.pause();
             if (!embed.hidden) {
                 embed.removeAttribute('src');

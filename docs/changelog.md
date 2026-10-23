@@ -1,5 +1,7 @@
 # 2.6.0
 
+- Fixed blank History media previews when native video decoding stalls or fails: selected OCR frames stay visible until a video frame is decoded and remain available after playback errors.
+
 - Added opt-in creator subtitle downloads in original languages and formats, with a Subtitles tab in Video Details, stored text, track selection, copying and original-timing notices for timestamp cuts.
 - Integrated subtitle settings as schema 8 while preserving schema-7 browser authentication and existing settings.
 

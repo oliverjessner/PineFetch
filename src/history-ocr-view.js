@@ -80,11 +80,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
     const renderPreview = () => {
         els.historyOcrPreview.setAttribute('aria-busy', String(state.frameLoading));
         media.setFrame(state.frameImage);
-        if (state.frameImage) {
-            if (els.historyOcrFrame.getAttribute('src') !== state.frameImage)
-                els.historyOcrFrame.src = state.frameImage;
-            els.historyOcrFrame.alt = `Saved video frame at ${timestamp(state.selected.time)}`;
-        } else els.historyOcrFrame.removeAttribute('src');
+        if (state.frameImage) els.historyOcrFrame.alt = `Saved video frame at ${timestamp(state.selected.time)}`;
         els.historyOcrFrameStatus.hidden = Boolean(state.frameImage) || media.hasVideo();
         els.historyOcrFrameStatus.textContent = state.frameLoading
             ? 'Loading selected frame…'

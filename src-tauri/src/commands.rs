@@ -218,6 +218,23 @@ pub(crate) fn get_history_stats(state: State<AppState>) -> Result<HistoryStats, 
     get_history_stats_from_db(&state.db)
 }
 
+// The asset protocol starts with an empty scope. Authorize only the exact
+// video resolved from this History ID, never a caller-supplied filesystem path.
+#[tauri::command]
+pub(crate) fn get_history_media(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    let path = crate::history::local_history_media_path(&state.db, &id)?;
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|_| "The saved video could not be opened")?;
+    path.into_os_string()
+        .into_string()
+        .map_err(|_| "The saved video path is not valid Unicode".into())
+}
+
 #[tauri::command]
 pub(crate) fn get_history_details(
     state: State<AppState>,

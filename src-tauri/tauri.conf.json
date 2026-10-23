@@ -1,7 +1,7 @@
 {
     "productName": "PineFetch",
     "mainBinaryName": "PineFetch",
-    "version": "2.5.2",
+    "version": "2.6.0",
     "identifier": "com.pinefetch.app",
     "build": {
         "beforeBuildCommand": "npm run sync:design-system && npm run prepare:social-runtime",
@@ -25,7 +25,8 @@
             }
         ],
         "security": {
-            "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data: asset: http://asset.localhost; connect-src 'self' https://api.github.com; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+            "assetProtocol": { "enable": true, "scope": [] },
+            "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data: asset: http://asset.localhost; connect-src 'self' https://api.github.com; media-src 'self' asset: http://asset.localhost https://asset.localhost; frame-src https://www.youtube-nocookie.com; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
         }
     },
     "bundle": {

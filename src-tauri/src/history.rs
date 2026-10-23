@@ -207,6 +207,16 @@ fn path_extension(path: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+pub(crate) fn local_history_media_path(
+    state: &crate::database::Database,
+    id: &str,
+) -> Result<std::path::PathBuf, String> {
+    let path = crate::ocr_store::saved_path(state, id)?;
+    let path = std::fs::canonicalize(path).map_err(|_| "The saved video is unavailable")?;
+    crate::ocr_source::validate(&path)?;
+    Ok(path)
+}
+
 pub(super) fn get_history_details_from_db(
     state: &crate::database::Database,
     id: &str,

@@ -4,7 +4,8 @@ import { createHistoryOcrView } from './history-ocr-view.js';
 import { createHistorySocialInsightsView } from './history-social-insights-view.js';
 import { createHistoryKeywordsView } from './history-keywords-view.js';
 import { createHistorySubtitlesView } from './history-subtitles-view.js';
-import { renderContentDetails } from './history-content-details.js';
+import { createTextReader } from './history-text-view.js';
+import { createHistoryMediaView } from './history-media-view.js';
 
 export const createHistoryDetailsView = ({
     els,
@@ -31,7 +32,29 @@ export const createHistoryDetailsView = ({
         entryId: null,
         returnFocus: null,
     };
-    const ocrView = createHistoryOcrView({ els, api, appendLog, jobs });
+    let transcriptReader;
+    let ocrView;
+    const transcriptMedia = createHistoryMediaView({
+        root: els.historyTranscriptPreview,
+        api,
+        onTime: seconds => transcriptReader?.sync(seconds),
+    });
+    const ocrMedia = createHistoryMediaView({
+        root: els.historyOcrPreview,
+        api,
+        onTime: seconds => ocrView?.syncTime(seconds),
+    });
+    transcriptReader = createTextReader({
+        input: els.historyTranscriptSearchInput,
+        copy: els.historyTranscriptCopyBtn,
+        status: els.historyTranscriptStatus,
+        count: els.historyTranscriptResultCount,
+        viewport: els.historyTranscriptListViewport,
+        list: els.historyTranscriptText,
+        appendLog,
+        onSelect: seconds => transcriptMedia.seek(seconds),
+    });
+    ocrView = createHistoryOcrView({ els, api, appendLog, jobs, media: ocrMedia });
     const socialView = createHistorySocialInsightsView({ els, api, appendLog });
     const subtitlesView = createHistorySubtitlesView({ els, api, appendLog });
     const keywordsView = createHistoryKeywordsView({ els, api, appendLog });
@@ -141,20 +164,7 @@ export const createHistoryDetailsView = ({
                 : null
         );
         addOverviewRow('Media type', entry.medium);
-        renderContentDetails(els.historyOverviewDetails, [
-            ['Filename', entry.filename],
-            ['File path', entry.output_path],
-            ['File status', entry.output_path ? (details.output_file_available ? 'Available' : 'Missing') : null],
-            ['Extension', details.file_extension?.toUpperCase()],
-            [
-                'File size',
-                entry.file_size_bytes != null && Number(entry.file_size_bytes) >= 0
-                    ? formatFileSize(entry.file_size_bytes)
-                    : null,
-            ],
-            ['SHA-256', entry.sha256],
-            ['PineFetch version', entry.pinefetch_version],
-        ]);
+        if (entry.file_size_bytes != null) addOverviewRow('File size', formatFileSize(entry.file_size_bytes));
         addOverviewRow('Thumbnail', entry.thumbnail ? 'Available' : null);
         addOverviewRow('AI transcript', transcriptLabel);
         addOverviewRow(
@@ -169,8 +179,7 @@ export const createHistoryDetailsView = ({
     const renderTranscript = content => {
         els.historyTranscriptStatus.textContent = '';
         els.historyTranscriptNotice.hidden = true;
-        els.historyTranscriptText.hidden = true;
-        els.historyTranscriptCopyBtn.disabled = true;
+        transcriptReader.set(content?.text);
         if (!content) {
             els.historyTranscriptStatus.textContent = 'No transcript is saved for this video.';
             return;
@@ -185,9 +194,6 @@ export const createHistoryDetailsView = ({
             els.historyTranscriptStatus.textContent = 'The stored transcript is empty.';
             return;
         }
-        els.historyTranscriptText.textContent = content.text;
-        els.historyTranscriptText.hidden = false;
-        els.historyTranscriptCopyBtn.disabled = false;
     };
 
     const loadTranscript = async () => {
@@ -246,7 +252,7 @@ export const createHistoryDetailsView = ({
         els.historyCaptionText.hidden = true;
         els.historyCaptionCopyBtn.disabled = true;
         if (!content) {
-            els.historyCaptionStatus.textContent = 'Saved post text is no longer available.';
+            els.historyCaptionStatus.textContent = `No saved ${captionTitle().toLowerCase()} is available.`;
             return;
         }
 
@@ -307,6 +313,9 @@ export const createHistoryDetailsView = ({
         state.transcript = undefined;
         state.captions.clear();
         subtitlesView.reset();
+        transcriptReader.reset();
+        transcriptMedia.setEntry(null);
+        ocrMedia.setEntry(null);
         const requestId = ++state.detailsRequestId;
         els.historyDetailsContent.hidden = true;
         els.historyOverviewTab.click();
@@ -358,9 +367,8 @@ export const createHistoryDetailsView = ({
             els.historyDetailsOpenFileBtn.disabled = !details.output_file_available;
             els.historyDetailsOpenBrowserBtn.disabled = !details.entry?.url;
             els.historyDetailsStatus.textContent = '';
-            els.historyCaptionsPanel.hidden = !details.captions?.length;
+            els.historyCaptionsPanel.hidden = false;
             els.historyTranscriptStatus.textContent = '';
-            els.historyTranscriptText.textContent = '';
             els.historyTranscriptText.hidden = true;
             els.historyTranscriptCopyBtn.disabled = true;
             els.historyDetailsTabs.hidden = false;
@@ -375,6 +383,9 @@ export const createHistoryDetailsView = ({
             renderOverview(details);
             renderCaptionOptions(details.captions || []);
             subtitlesView.reset(entryId, details.subtitles || []);
+            transcriptMedia.setEntry({ id: entryId, url: details.entry?.url, thumbnail: details.entry?.thumbnail });
+            ocrMedia.setEntry({ id: entryId, url: details.entry?.url, thumbnail: details.entry?.thumbnail });
+            if (details.captions?.length) void loadSelectedCaption();
             els.historyDetailsContent.hidden = false;
             if (ocr || jobs.get(entryId)?.status === 'running') els.historyOcrTab.click();
         } catch (err) {
@@ -524,22 +535,23 @@ export const createHistoryDetailsView = ({
         });
         els.historyDetailsContent.addEventListener('oj:change', event => {
             if (event.target !== els.historyDetailsContent) return;
+            transcriptMedia.pause();
+            ocrMedia.pause();
+            if (event.detail.tab === els.historyOverviewTab) void loadSelectedCaption();
             if (event.detail.tab === els.historyTranscriptTab) {
                 void loadTranscript();
-                void loadSelectedCaption();
-            }
+                void transcriptMedia.activate();
+            } else transcriptReader.deactivate();
             if (event.detail.tab === els.historySubtitlesTab) void subtitlesView.load();
             else subtitlesView.deactivate();
-            if (event.detail.tab === els.historyOcrTab) void ocrView.load();
-            else ocrView.deactivate();
+            if (event.detail.tab === els.historyOcrTab) {
+                void ocrView.load();
+                void ocrMedia.activate();
+            } else ocrView.deactivate();
             if (event.detail.tab === els.historySocialTab) void socialView.load();
             if (event.detail.tab === els.historyKeywordsTab) void keywordsView.load();
         });
         els.historyCaptionTrackSelect.addEventListener('change', () => void loadSelectedCaption());
-        els.historyTranscriptCopyBtn.addEventListener(
-            'click',
-            () => void copyContent(state.transcript, els.historyTranscriptStatus, 'AI transcript')
-        );
         els.historyCaptionCopyBtn.addEventListener('click', () => {
             const content = state.captions.get(els.historyCaptionTrackSelect.value);
             void copyContent(content, els.historyCaptionStatus, captionTitle());
@@ -558,6 +570,9 @@ export const createHistoryDetailsView = ({
             state.entryId = null;
             state.detailsRequestId += 1;
             subtitlesView.deactivate();
+            transcriptReader.deactivate();
+            transcriptMedia.setEntry(null);
+            ocrMedia.setEntry(null);
             ocrView.deactivate();
             socialView.reset(null);
             keywordsView.reset(null);

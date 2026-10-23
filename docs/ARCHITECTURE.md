@@ -179,8 +179,15 @@ Local OCR uses `ocr` for background orchestration and an independent process
 registry, `ocr_rules` for frame-local reading order/media/protocol validation and
 `ocr_store` for guarded SQL. `history-ocr-jobs.js` owns app-wide events and job
 state independently of navigation. `history-details-view.js` uses a full-container
-workspace with Overview, Transcript (including captions) and OCR Text tabs;
-`history-ocr-view.js` loads results lazily through the API client. History's cached
+workspace with Overview (including saved descriptions), Transcript, Subtitles, OCR Text,
+Social Insights and Keywords tabs. `history-text.js` owns timestamp parsing and literal
+search matching; `history-text-view.js` provides safe highlighting, entries, keyboard
+selection and full-text copy. OCR retains its native paging, export and revision guards.
+`history-media-view.js` provides the shared local player, timestamp seeking and playback
+selection, with an allowlisted YouTube embed or OCR frame fallback. `get_history_media`
+resolves a video by History ID using the existing retained-video resolver and grants
+that exact canonical file in an initially empty Tauri asset scope. It accepts no file
+path from the frontend. `history-ocr-view.js` loads results lazily through the API client. History's cached
 list and scroll position survive detail navigation. Compact OCR summaries travel
 with each History page using a LEFT JOIN, without result text or per-entry queries.
 `ocr_preview` verifies saved-source identity and extracts requested frames with

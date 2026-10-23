@@ -20,6 +20,7 @@ const commands = {
     getHistoryCaption: 'get_history_caption',
     getHistorySubtitle: 'get_history_subtitle',
     getHistoryDetails: 'get_history_details',
+    getHistoryMedia: 'get_history_media',
     getHistoryKeywords: 'get_history_keywords',
     getHistorySocialInsights: 'get_history_social_insights',
     loadHistorySocialInsights: 'load_history_social_insights',

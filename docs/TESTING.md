@@ -68,6 +68,25 @@ filesystem/process/CLI-transport cases. In-memory component checks stay fast.
 When adding a new Cargo integration test target, all its tests automatically
 belong to integration. This is test selection, not a coverage target.
 
+## History detail interface
+
+Run `npm run test:ui` for the production HTML/modules in Chromium and WebKit.
+The offline bridge replaces native command responses only. All six detail tabs
+are checked at 1400, 1000 and 600 pixels for fixed tools, contained scrolling,
+responsive layout and absence of nested cards. The shared reader checks include
+safe Unicode highlighting, empty searches, complete clipboard text despite filtering,
+keyboard selection and the original SRT/WebVTT/Whisper timestamp forms.
+
+`test/fixtures/history-preview.mp4` is an eight-second synthetic H.264 clip used
+only for playback tests. Its fixture HTTP response supports byte ranges, matching
+the native asset protocol. Transcript and OCR tests seek the real video element,
+check playback selection and exercise OCR's existing image fallback after a player
+error. Remote YouTube frames are intercepted by the offline test; this suite does
+not assert availability or embedding permission for a live YouTube video.
+`history-text.test.mjs` also checks literal search ranges, precise timestamps and
+spoofed/unsupported embed URLs. The Rust History media test checks ID-scoped file
+resolution, missing files and canonical-path validation.
+
 ## Inventory and error catalog
 
 The previous quality work already established strong coverage of pure rules,

@@ -160,6 +160,7 @@ fn main() {
             commands::load_history_account_insights,
             commands::load_history_account_videos,
             commands::get_history_details,
+            commands::get_history_media,
             commands::get_history_keywords,
             commands::get_history_social_insights,
             commands::load_history_social_insights,

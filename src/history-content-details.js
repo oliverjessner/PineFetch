@@ -11,10 +11,3 @@ export const renderContentMetadata = (list, rows) => {
     }
     list.hidden = !list.childElementCount;
 };
-
-export const renderContentDetails = (disclosure, rows) => {
-    const list = disclosure.querySelector('dl');
-    renderContentMetadata(list, rows);
-    disclosure.open = false;
-    disclosure.hidden = list.hidden;
-};

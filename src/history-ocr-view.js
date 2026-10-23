@@ -1,3 +1,5 @@
+import { createTextEntry, highlightText, copyAllText, bindTextSearch, revealTextEntry } from './history-text-view.js';
+import { textTimestamp as timestamp, entryAtTime } from './history-text.js';
 import { formatLocalDateTime, formatMediaTime } from './formatters.js';
 import { ocrActive, ocrErrorMessage, ocrStatus } from './history-ocr-jobs.js';
 import { confirmDialog, initTooltips, toast } from './vendor/oj/index.js';
@@ -11,13 +13,6 @@ const statusLabels = {
     interrupted: 'OCR interrupted',
 };
 
-const timestamp = ms => {
-    const value = Math.max(0, Math.round(Number(ms) || 0));
-    return `${[Math.floor(value / 3600000), Math.floor(value / 60000) % 60, Math.floor(value / 1000) % 60]
-        .map(part => String(part).padStart(2, '0'))
-        .join(':')}.${String(value % 1000).padStart(3, '0')}`;
-};
-
 export const ocrEntries = (frames, fallbackText = '') => {
     const rows = (Array.isArray(frames) ? frames : []).map(frame => ({
         id: frame.id,
@@ -28,7 +23,7 @@ export const ocrEntries = (frames, fallbackText = '') => {
     return rows;
 };
 
-export const createHistoryOcrView = ({ els, api, appendLog, jobs }) => {
+export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
     const state = {
         id: null,
         request: 0,
@@ -84,20 +79,20 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs }) => {
     };
     const renderPreview = () => {
         els.historyOcrPreview.setAttribute('aria-busy', String(state.frameLoading));
-        els.historyOcrFrame.hidden = !state.frameImage;
+        media.setFrame(state.frameImage);
         if (state.frameImage) {
             if (els.historyOcrFrame.getAttribute('src') !== state.frameImage)
                 els.historyOcrFrame.src = state.frameImage;
-            els.historyOcrFrame.alt = `Saved video frame at ${formatMediaTime(state.selected.time)}`;
+            els.historyOcrFrame.alt = `Saved video frame at ${timestamp(state.selected.time)}`;
         } else els.historyOcrFrame.removeAttribute('src');
-        els.historyOcrFrameStatus.hidden = Boolean(state.frameImage);
+        els.historyOcrFrameStatus.hidden = Boolean(state.frameImage) || media.hasVideo();
         els.historyOcrFrameStatus.textContent = state.frameLoading
             ? 'Loading selected frame…'
             : state.frameError || state.emptyMessage || 'No frame selected.';
         els.historyOcrFrameTime.textContent = state.selected
             ? state.selected.time === null
                 ? '—'
-                : formatMediaTime(state.selected.time)
+                : timestamp(state.selected.time)
             : '';
         els.historyOcrFrameTime.title =
             state.selected?.time !== null && state.selected ? timestamp(state.selected.time) : '';
@@ -123,19 +118,21 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs }) => {
     };
     const selectFrame = async row => {
         if (!visible()) return;
+        if (row.time !== null) media.seek(row.time / 1000);
         if (
             state.selected &&
             rowKey(state.selected) === rowKey(row) &&
             state.selected.revision === state.content?.result_revision &&
-            (state.frameLoading || state.frameImage)
+            (state.frameLoading || state.frameImage || media.hasVideo())
         )
             return;
         const id = state.id;
         const request = ++state.frameRequest;
         state.selected = { ...row, revision: state.content?.result_revision };
-        state.frameLoading = row.time !== null && Boolean(row.id) && Boolean(state.content?.result_revision);
+        state.frameLoading =
+            row.time !== null && Boolean(row.id) && Boolean(state.content?.result_revision) && !media.hasVideo();
         state.frameImage = '';
-        state.frameError = state.frameLoading ? '' : 'No video frame is available for this text.';
+        state.frameError = state.frameLoading || media.hasVideo() ? '' : 'No video frame is available for this text.';
         updateRowControls();
         renderPreview();
         if (!state.frameLoading) return;
@@ -261,23 +258,12 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs }) => {
             state.cleanupRows();
             state.rowElements.clear();
             for (const row of rows) {
-                const item = document.createElement('li');
-                item.className = 'pinefetch-ocr-result';
+                const { item, time, text } = createTextEntry(row, els.historyOcrSearchInput.value.trim());
+                item.classList.add('pinefetch-ocr-result');
                 item.dataset.ocrKey = rowKey(row);
-                const time = document.createElement('button');
-                time.type = 'button';
-                time.className = 'oj-button oj-button-ghost oj-button-compact oj-mono pinefetch-ocr-select';
-                time.textContent = row.time === null ? '—' : formatMediaTime(row.time);
+                time.classList.add('pinefetch-ocr-select');
                 time.disabled = row.time === null || !row.id || !state.content.result_revision;
-                time.setAttribute(
-                    'aria-label',
-                    row.id ? `Show video frame at ${timestamp(row.time)}` : 'Unmapped legacy text'
-                );
-                if (row.time !== null) time.title = timestamp(row.time);
-                const text = document.createElement('p');
-                text.className = 'oj-text';
                 text.id = `ocr-text-${rowKey(row)}`;
-                text.textContent = row.text;
                 time.setAttribute('aria-describedby', text.id);
                 const remove = document.createElement('button');
                 remove.type = 'button';
@@ -298,6 +284,8 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs }) => {
             if (focusedKey) state.rowElements.get(focusedKey)?.time.focus({ preventScroll: true });
         }
         const query = els.historyOcrSearchInput.value.trim();
+        for (const { item, row } of state.rowElements.values())
+            highlightText(item.querySelector('.oj-text'), row.text, query);
         const loaded = !state.pageLoading && state.loadedQuery === query;
         els.historyOcrResultCount.hidden = !hasResult();
         const count = query ? state.content?.matched_count : state.content?.total_count;
@@ -337,13 +325,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs }) => {
             void selectFrame(next);
         }
     };
-    const scrollRowIntoList = item => {
-        const viewport = els.historyOcrListViewport.getBoundingClientRect();
-        const row = item.getBoundingClientRect();
-        if (row.top < viewport.top || row.height > viewport.height)
-            els.historyOcrListViewport.scrollTop += row.top - viewport.top;
-        else if (row.bottom > viewport.bottom) els.historyOcrListViewport.scrollTop += row.bottom - viewport.bottom;
-    };
+    const scrollRowIntoList = item => revealTextEntry(els.historyOcrListViewport, item);
     const render = () => {
         const content = state.content;
         const progress = jobs.get(state.id);
@@ -604,6 +586,9 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs }) => {
         }
     };
     const bindEvents = () => {
+        els.historyOcrPreview.addEventListener('pinefetch:media-unavailable', () => {
+            if (visible() && state.selected) void selectFrame(state.selected);
+        });
         els.historyOcrDuplicatesBtn.addEventListener('click', () => void removeDuplicates());
         els.historyOcrStartBtn.addEventListener('click', async () => {
             const id = state.id;
@@ -645,21 +630,22 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs }) => {
             state.copying = true;
             renderResults();
             try {
-                const text = await api.getHistoryOcrText({ id, resultRevision: revision });
-                if (id !== state.id || state.content?.result_revision !== revision || state.disposed) return;
-                await navigator.clipboard.writeText(text);
-                toast('OCR text copied.', { type: 'success' });
-            } catch (error) {
-                appendLog(`[OCR copy] ${error}`, true);
-                if (id === state.id) state.actionError = 'OCR text could not be copied. Reload OCR and try again.';
+                await copyAllText({
+                    getText: () => api.getHistoryOcrText({ id, resultRevision: revision }),
+                    isCurrent: () => id === state.id && state.content?.result_revision === revision && !state.disposed,
+                    status: els.historyOcrActionNotice,
+                    appendLog,
+                });
             } finally {
                 if (id === state.id) {
                     state.copying = false;
+                    els.historyOcrActionNotice.hidden = false;
+                    state.actionError = els.historyOcrActionNotice.textContent;
                     renderResults();
                 }
             }
         });
-        els.historyOcrSearchInput.addEventListener('input', () => {
+        bindTextSearch(els.historyOcrSearchInput, () => {
             state.request += 1;
             state.loading = false;
             state.pendingSelection = null;
@@ -742,5 +728,18 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs }) => {
             { once: true }
         );
     };
-    return Object.freeze({ reset, load, deactivate, bindEvents });
+    const syncTime = seconds => {
+        const row = entryAtTime(state.rows, seconds * 1000);
+        if (!row || rowKey(row) === rowKey(state.selected || {})) return;
+        state.frameRequest++;
+        state.frameLoading = false;
+        state.frameImage = '';
+        state.frameError = '';
+        state.selected = { ...row, revision: state.content?.result_revision };
+        updateRowControls();
+        els.historyOcrFrameTime.textContent = timestamp(row.time);
+        const entry = state.rowElements.get(rowKey(row));
+        if (entry && !els.historyOcrListViewport.matches(':focus-within')) scrollRowIntoList(entry.item);
+    };
+    return Object.freeze({ reset, load, deactivate, bindEvents, syncTime });
 };

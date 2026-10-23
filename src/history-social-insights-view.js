@@ -98,7 +98,7 @@ export const createHistorySocialInsightsView = ({ els, api, appendLog, profileMe
                 continue;
             }
             const card = document.createElement('div');
-            card.className = 'oj-card pinefetch-social-metric';
+            card.className = profileMetrics ? 'oj-card pinefetch-social-metric' : 'pinefetch-social-metric';
             const heading = document.createElement('h3');
             heading.className = 'oj-label';
             heading.textContent = label;

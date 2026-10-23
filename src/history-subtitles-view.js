@@ -1,17 +1,23 @@
+import { createTextReader } from './history-text-view.js';
 import { renderContentMetadata } from './history-content-details.js';
 
 export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
     let entryId = null;
     let tracks = [];
     let revision = 0;
-    let current = null;
+    const reader = createTextReader({
+        input: els.historySubtitleSearchInput,
+        copy: els.historySubtitleCopyBtn,
+        status: els.historySubtitleStatus,
+        count: els.historySubtitleResultCount,
+        viewport: els.historySubtitleListViewport,
+        list: els.historySubtitleText,
+        appendLog,
+    });
     const cache = new Map();
 
     const render = content => {
-        current = content;
-        els.historySubtitleCopyBtn.disabled = !content?.text;
-        els.historySubtitleText.hidden = !content?.text;
-        els.historySubtitleText.textContent = content?.text || '';
+        reader.set(content?.text);
         renderContentMetadata(
             els.historySubtitleMeta,
             content
@@ -67,6 +73,7 @@ export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
         entryId = id;
         tracks = nextTracks;
         cache.clear();
+        reader.reset();
         render(null);
         els.historySubtitleRetryBtn.hidden = true;
         els.historySubtitleStatus.classList.remove('oj-status-error');
@@ -85,16 +92,14 @@ export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
     const bindEvents = () => {
         els.historySubtitleRetryBtn.addEventListener('click', () => void load());
         els.historySubtitleTrackSelect.addEventListener('change', () => void load());
-        els.historySubtitleCopyBtn.addEventListener('click', async () => {
-            if (!current?.text) return;
-            const request = revision;
-            try {
-                await navigator.clipboard.writeText(current.text);
-                if (request === revision) els.historySubtitleStatus.textContent = 'Subtitles copied.';
-            } catch {
-                if (request === revision) els.historySubtitleStatus.textContent = 'Subtitles could not be copied.';
-            }
-        });
     };
-    return Object.freeze({ reset, load, bindEvents, deactivate: () => revision++ });
+    return Object.freeze({
+        reset,
+        load,
+        bindEvents,
+        deactivate: () => {
+            revision++;
+            reader.deactivate();
+        },
+    });
 };

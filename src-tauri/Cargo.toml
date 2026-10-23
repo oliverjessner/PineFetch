@@ -1,6 +1,6 @@
 [package]
 name = "pinefetch"
-version = "2.5.2"
+version = "2.6.0"
 description = "Local yt-dlp desktop UI"
 authors = ["Oliver Jessner"]
 license = "MIT"
@@ -13,7 +13,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"

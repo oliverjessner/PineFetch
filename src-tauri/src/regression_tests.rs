@@ -2370,3 +2370,32 @@ fn link_dump_exposes_video_endpoints_only() {
     assert!(!is_link_dump_endpoint("/addYoutubeLinkToQueue/"));
     assert!(!is_link_dump_endpoint("/addYoutubeLinksToQueue/"));
 }
+
+#[test]
+fn integration_history_media_resolution_is_scoped_to_the_entry_and_validates_the_canonical_video() {
+    let root = crate::test_support::TempRoot::new("history-media");
+    let db = crate::database::Database::new(
+        crate::database::open(&root.path("pinefetch.sqlite3")).unwrap(),
+    );
+    let video = root.path("Grüße 🌲.mp4");
+    let text = root.path("secret.txt");
+    fs::write(&video, b"synthetic video fixture").unwrap();
+    fs::write(&text, b"synthetic text fixture").unwrap();
+    {
+        let conn = db.lock().unwrap();
+        conn.execute("INSERT INTO history_entries(id,url,output_path,medium,created_at) VALUES ('video','https://example.com/video',?1,'video',1), ('text','https://example.com/text',?2,'video',2)", rusqlite::params![video.to_str(), text.to_str()]).unwrap();
+    }
+    assert_eq!(
+        crate::history::local_history_media_path(&db, "video").unwrap(),
+        fs::canonicalize(&video).unwrap()
+    );
+    assert!(crate::history::local_history_media_path(&db, "text").is_err());
+    assert!(crate::history::local_history_media_path(&db, text.to_str().unwrap()).is_err());
+    fs::remove_file(&video).unwrap();
+    assert!(crate::history::local_history_media_path(&db, "video").is_err());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&text, &video).unwrap();
+        assert!(crate::history::local_history_media_path(&db, "video").is_err());
+    }
+}

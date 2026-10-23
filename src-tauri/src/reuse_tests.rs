@@ -456,7 +456,7 @@ fn integration_creator_subtitles_migration_preserves_config_and_defaults_to_disa
     database::initialize(&conn).unwrap();
     crate::database::restore_schema8_caption_fixture(&conn);
     conn.execute_batch(
-        "ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=7;",
+        "ALTER TABLE app_config DROP COLUMN id_import_enabled; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=7;",
     )
     .unwrap();
     conn.execute(

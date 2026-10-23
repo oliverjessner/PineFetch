@@ -435,7 +435,7 @@ mod tests {
         let path = root.path("history.sqlite");
         let conn = database::open(&path).unwrap();
         crate::database::restore_schema8_caption_fixture(&conn);
-        conn.execute_batch("DROP TABLE history_account_insights; DROP INDEX idx_history_account_lookup; DROP TABLE history_social_insights; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=4; INSERT INTO history_entries(id,url,title,created_at) VALUES ('video','https://example.com/video','Original title',123);").unwrap();
+        conn.execute_batch("DROP TABLE history_account_insights; DROP INDEX idx_history_account_lookup; DROP TABLE history_social_insights; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN id_import_enabled; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=4; INSERT INTO history_entries(id,url,title,created_at) VALUES ('video','https://example.com/video','Original title',123);").unwrap();
         drop(conn);
         let before = fs::read(&path).unwrap();
         assert!(database::open_with_hook(&path, |point| {
@@ -445,7 +445,8 @@ mod tests {
                 Ok(())
             }
         })
-        .is_err());
+        .unwrap_err()
+        .contains("synthetic migration interruption"));
         assert_eq!(before, fs::read(&path).unwrap());
         let conn = database::open(&path).unwrap();
         assert_eq!(

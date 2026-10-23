@@ -347,7 +347,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         crate::database::initialize(&conn).unwrap();
         crate::database::restore_schema8_caption_fixture(&conn);
-        conn.execute_batch("DROP TABLE history_subtitles; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; PRAGMA user_version=7; UPDATE app_config SET youtube_cookie_browser='chrome',save_captions=1;").unwrap();
+        conn.execute_batch("DROP TABLE history_subtitles; ALTER TABLE app_config DROP COLUMN id_import_enabled; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; PRAGMA user_version=7; UPDATE app_config SET youtube_cookie_browser='chrome',save_captions=1;").unwrap();
         assert!(crate::database::initialize_with_hook(&conn, |point| {
             if point == crate::database::MigrationPoint::CreatorSubtitles {
                 Err("synthetic failure".into())
@@ -355,7 +355,8 @@ mod tests {
                 Ok(())
             }
         })
-        .is_err());
+        .unwrap_err()
+        .contains("synthetic failure"));
         assert_eq!(
             conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),

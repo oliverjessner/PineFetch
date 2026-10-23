@@ -606,7 +606,7 @@ mod tests {
         let path = root.path("history.sqlite");
         let conn = database::open(&path).unwrap();
         crate::database::restore_schema8_caption_fixture(&conn);
-        conn.execute_batch("DROP TABLE history_account_insights; DROP INDEX idx_history_account_lookup; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=5; INSERT INTO history_entries(id,url,source,uploader,title,created_at) VALUES ('one','https://www.youtube.com/watch?v=abcdefghijk','youtube','Creator','Original',1)").unwrap();
+        conn.execute_batch("DROP TABLE history_account_insights; DROP INDEX idx_history_account_lookup; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN id_import_enabled; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=5; INSERT INTO history_entries(id,url,source,uploader,title,created_at) VALUES ('one','https://www.youtube.com/watch?v=abcdefghijk','youtube','Creator','Original',1)").unwrap();
         drop(conn);
         let before = fs::read(&path).unwrap();
         assert!(database::open_with_hook(&path, |point| {
@@ -616,7 +616,8 @@ mod tests {
                 Ok(())
             }
         })
-        .is_err());
+        .unwrap_err()
+        .contains("synthetic migration failure"));
         assert_eq!(before, fs::read(&path).unwrap());
         let db = Database::new(database::open(&path).unwrap());
         let ctx = current(&db, "one").unwrap();

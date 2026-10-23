@@ -1,5 +1,39 @@
 const timestampParamNames = new Set(['t', 'start', 'start_time', 'time_continue']);
 
+// ID import is opt-in. Resolve IDs to ordinary platform URLs before metadata,
+// queueing or TXT deduplication; never pass extractor pseudo-URLs to yt-dlp.
+const normalizeVideoInput = (value, idImportEnabled = false) => {
+    const input = `${value || ''}`.trim();
+    if (!idImportEnabled) return input;
+    if (/^[A-Za-z0-9_-]{11}$/.test(input)) return `https://www.youtube.com/watch?v=${input}`;
+    const match = /^(youtube|tiktok|instagram):(.+)$/i.exec(input);
+    if (!match) return input;
+    const [, platform, id] = match;
+    switch (platform.toLowerCase()) {
+        case 'youtube':
+            return /^[A-Za-z0-9_-]{11}$/.test(id) ? `https://www.youtube.com/watch?v=${id}` : input;
+        case 'tiktok':
+            // yt-dlp uses @_/video/<id> when no creator handle is known.
+            return /^[0-9]{6,25}$/.test(id) ? `https://www.tiktok.com/@_/video/${id}` : input;
+        case 'instagram':
+            return /^[A-Za-z0-9_-]{3,128}$/.test(id) ? `https://www.instagram.com/p/${id}/` : input;
+        default:
+            return input;
+    }
+};
+
+const videoInputError = (value, idImportEnabled = false) => {
+    const input = `${value || ''}`.trim();
+    if (!input || isValidHttpUrl(normalizeVideoInput(input, idImportEnabled))) return '';
+    if (!/^(?:[A-Za-z]+:)?[A-Za-z0-9_-]+$/.test(input)) return 'Enter a valid http:// or https:// video URL.';
+    if (!idImportEnabled) return 'Enable ID import in Settings → Download to use video IDs, or enter a full URL.';
+    if (/^youtube:/i.test(input))
+        return 'A YouTube ID must contain exactly 11 letters, numbers, underscores or hyphens.';
+    if (/^tiktok:/i.test(input)) return 'Use tiktok: followed by a numeric video ID (6–25 digits).';
+    if (/^instagram:/i.test(input)) return 'Use instagram: followed by a valid post shortcode (3–128 characters).';
+    return 'Specify the platform: youtube:<ID>, tiktok:<ID>, or instagram:<shortcode>.';
+};
+
 const normalizeYouTubePlaylistUrl = input => {
     if (!isValidHttpUrl(input) || detectPlatform(input) !== 'youtube') return null;
     try {
@@ -273,7 +307,7 @@ const normalizeInstagramUrl = value => {
 const normalizeTxtImportUrl = value =>
     normalizeYouTubeUrl(value) || normalizeTikTokUrl(value) || normalizeInstagramUrl(value);
 
-const parseTxtImportLinks = content => {
+const parseTxtImportLinks = (content, idImportEnabled = false) => {
     const rawContent = `${content || ''}`;
     const seenKeys = new Set();
     const result = {
@@ -291,7 +325,7 @@ const parseTxtImportLinks = content => {
             return;
         }
 
-        const normalized = normalizeTxtImportUrl(line);
+        const normalized = normalizeTxtImportUrl(normalizeVideoInput(line, idImportEnabled));
         if (!normalized) {
             result.invalidCount += 1;
             return;
@@ -313,8 +347,10 @@ export {
     detectPlatform,
     extractUrlStartTimestamp,
     isValidHttpUrl,
+    normalizeVideoInput,
     normalizeTxtImportUrl,
     normalizeYouTubePlaylistUrl,
     parseTxtImportLinks,
     resolveYouTubeThumbnail,
+    videoInputError,
 };

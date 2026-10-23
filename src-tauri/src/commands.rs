@@ -145,6 +145,14 @@ pub(crate) async fn load_info(
     state: State<'_, AppState>,
     url: String,
 ) -> Result<InfoResponse, String> {
+    let url = crate::url_rules::normalize_video_input(
+        &url,
+        state
+            .config
+            .lock()
+            .map_err(|_| "Config lock poisoned")?
+            .id_import_enabled,
+    );
     validate_download_url(&url).map_err(|error| error.to_string())?;
     let yt_dlp = resolve_yt_dlp(&app, &state.config)?;
     let deno = resolve_deno_executable(&app);

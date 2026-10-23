@@ -28,7 +28,7 @@ pub(super) fn update_config(
 
 pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<AppConfig> {
     conn.query_row(
-        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions, save_thumbnails, youtube_cookie_browser, save_creator_subtitles
+        "SELECT yt_dlp_path, default_output_dir, selected_preset_key, faster_whisper_model, download_video_with_transcript, magic_import_enabled, cut_at_timestamp_enabled, last_download_url, notifications_enabled, save_captions, save_thumbnails, youtube_cookie_browser, save_creator_subtitles, id_import_enabled
          FROM app_config
          WHERE id = 1",
         [],
@@ -41,6 +41,7 @@ pub(super) fn get_app_config_from_conn(conn: &Connection) -> rusqlite::Result<Ap
                 faster_whisper_model: row.get(3)?,
                 download_video_with_transcript: row.get::<_, i64>(4)? != 0,
                 magic_import_enabled: row.get::<_, i64>(5)? != 0,
+                id_import_enabled: row.get::<_, i64>(13)? != 0,
                 cut_at_timestamp_enabled: row.get::<_, i64>(6)? != 0,
                 last_download_url: row.get(7)?,
                 notifications_enabled: row.get::<_, i64>(8)? != 0,
@@ -77,6 +78,7 @@ pub(super) fn upsert_app_config_in_conn(
             save_thumbnails,
             youtube_cookie_browser,
             save_creator_subtitles,
+            id_import_enabled,
             created_at,
             updated_at
         ) VALUES (
@@ -94,6 +96,7 @@ pub(super) fn upsert_app_config_in_conn(
             ?11,
             ?12,
             ?13,
+            ?14,
             datetime('now'),
             datetime('now')
         )
@@ -111,6 +114,7 @@ pub(super) fn upsert_app_config_in_conn(
             save_thumbnails = excluded.save_thumbnails,
             youtube_cookie_browser = excluded.youtube_cookie_browser,
             save_creator_subtitles = excluded.save_creator_subtitles,
+            id_import_enabled = excluded.id_import_enabled,
             updated_at = datetime('now')",
         params![
             config.yt_dlp_path,
@@ -134,6 +138,7 @@ pub(super) fn upsert_app_config_in_conn(
             config.save_thumbnails,
             config.youtube_cookie_browser,
             config.save_creator_subtitles,
+            config.id_import_enabled,
         ],
     )?;
     Ok(())
@@ -162,6 +167,7 @@ pub(super) fn import_legacy_config(conn: &Connection, path: &Path) -> Result<(),
                 "faster_whisper_model",
                 "download_video_with_transcript",
                 "magic_import_enabled",
+                "id_import_enabled",
                 "cut_at_timestamp_enabled",
                 "last_download_url",
                 "notifications_enabled",
@@ -241,6 +247,35 @@ mod tests {
     use crate::state::AppState;
     use rusqlite::Connection;
     use serde_json::json;
+
+    #[test]
+    fn id_import_defaults_off_and_patches_persist_without_changing_other_settings() {
+        assert!(!AppConfig::default().id_import_enabled);
+        assert!(
+            !serde_json::from_value::<AppConfig>(json!({}))
+                .unwrap()
+                .id_import_enabled
+        );
+        let conn = Connection::open_in_memory().unwrap();
+        run_link_dump_migrations(&conn).unwrap();
+        let initial = AppConfig {
+            save_captions: true,
+            youtube_cookie_browser: Some("firefox".into()),
+            ..AppConfig::default()
+        };
+        upsert_app_config_in_conn(&conn, &initial).unwrap();
+        let state = AppState::new(initial, conn);
+        for enabled in [true, false] {
+            let patch = serde_json::from_value(json!({"id_import_enabled": enabled})).unwrap();
+            let updated =
+                update_config(&state.config, |config| apply_config_patch(config, patch)).unwrap();
+            let persisted = load_config_from_db(&state.db.lock().unwrap()).unwrap();
+            assert_eq!(updated.id_import_enabled, enabled);
+            assert_eq!(persisted.id_import_enabled, enabled);
+            assert!(persisted.save_captions);
+            assert_eq!(persisted.youtube_cookie_browser.as_deref(), Some("firefox"));
+        }
+    }
 
     #[test]
     fn settings_patch_preserves_newer_url_and_preset_and_clears_nullable_path() {

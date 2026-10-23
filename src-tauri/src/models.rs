@@ -37,6 +37,8 @@ pub(crate) struct AppConfig {
     pub(crate) save_creator_subtitles: bool,
     #[serde(default = "default_magic_import_enabled")]
     pub(crate) magic_import_enabled: bool,
+    #[serde(default)]
+    pub(crate) id_import_enabled: bool,
     #[serde(default = "default_cut_at_timestamp_enabled")]
     pub(crate) cut_at_timestamp_enabled: bool,
     #[serde(default)]
@@ -58,6 +60,7 @@ impl Default for AppConfig {
             save_thumbnails: false,
             save_creator_subtitles: false,
             magic_import_enabled: default_magic_import_enabled(),
+            id_import_enabled: false,
             cut_at_timestamp_enabled: default_cut_at_timestamp_enabled(),
             last_download_url: None,
             notifications_enabled: false,

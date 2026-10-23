@@ -39,14 +39,16 @@ pub(super) fn enqueue_download_request(
 
 pub(super) fn build_download_job(
     state: &crate::config::ConfigState,
-    request: DownloadRequest,
+    mut request: DownloadRequest,
 ) -> Result<DownloadJob, String> {
-    validate_download_url(&request.url).map_err(|error| error.to_string())?;
-    let output_dir = resolve_output_dir(state, request.output_dir.clone())?;
     let options = {
         let config = state.lock().map_err(|_| "Config lock poisoned")?;
+        request.url =
+            crate::url_rules::normalize_video_input(&request.url, config.id_import_enabled);
         DownloadOptions::from(&*config)
     };
+    validate_download_url(&request.url).map_err(|error| error.to_string())?;
+    let output_dir = resolve_output_dir(state, request.output_dir.clone())?;
     Ok(prepare_download_job(
         request,
         options,

@@ -44,6 +44,7 @@ pub(crate) struct ConfigPatch {
     pub(crate) save_thumbnails: Option<bool>,
     pub(crate) save_creator_subtitles: Option<bool>,
     pub(crate) magic_import_enabled: Option<bool>,
+    pub(crate) id_import_enabled: Option<bool>,
     pub(crate) cut_at_timestamp_enabled: Option<bool>,
     pub(crate) notifications_enabled: Option<bool>,
 }
@@ -87,6 +88,9 @@ pub(crate) fn apply_config_patch(config: &mut AppConfig, changes: ConfigPatch) {
     }
     if let Some(value) = changes.magic_import_enabled {
         config.magic_import_enabled = value;
+    }
+    if let Some(value) = changes.id_import_enabled {
+        config.id_import_enabled = value;
     }
     if let Some(value) = changes.cut_at_timestamp_enabled {
         config.cut_at_timestamp_enabled = value;

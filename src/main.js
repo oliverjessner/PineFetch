@@ -20,6 +20,8 @@ import {
     detectPlatform,
     extractUrlStartTimestamp,
     isValidHttpUrl,
+    normalizeVideoInput,
+    videoInputError,
     normalizeTxtImportUrl,
     normalizeYouTubePlaylistUrl,
     parseTxtImportLinks,
@@ -30,6 +32,9 @@ const state = createAppState();
 const els = Object.seal({
     brandHistoryBtn: document.getElementById('brandHistoryBtn'),
     magicImportEnabled: document.getElementById('magicImportEnabled'),
+    idImportEnabled: document.getElementById('idImportEnabled'),
+    videoInputHelp: document.getElementById('videoInputHelp'),
+    videoInputError: document.getElementById('videoInputError'),
     cutAtTimestampEnabled: document.getElementById('cutAtTimestampEnabled'),
     urlInput: document.getElementById('urlInput'),
     loadInfoBtn: document.getElementById('loadInfoBtn'),
@@ -351,6 +356,14 @@ const loadDownloadPresets = async () => {
     renderQueueContextMenu();
     updateDownloadOptionHints();
 };
+const normalizeDownloadInput = value => normalizeVideoInput(value, Boolean(els.idImportEnabled.checked));
+const showVideoInputError = value => {
+    const message = videoInputError(value, Boolean(els.idImportEnabled.checked));
+    els.videoInputError.textContent = message;
+    els.videoInputError.hidden = !message;
+    if (message) els.urlInput.setAttribute('aria-invalid', 'true');
+    else els.urlInput.removeAttribute('aria-invalid');
+};
 const maxLogLines = 500;
 let urlShakeTimer = null;
 let magicImportInFlight = false;
@@ -398,7 +411,7 @@ const shakeUrlInput = () => {
     els.urlInput.classList.add('pinefetch-invalid-shake');
     els.urlInput.focus();
     urlShakeTimer = setTimeout(() => {
-        els.urlInput.removeAttribute('aria-invalid');
+        showVideoInputError(els.urlInput.value);
         els.urlInput.classList.remove('pinefetch-invalid-shake');
         urlShakeTimer = null;
     }, 420);
@@ -425,11 +438,12 @@ const tryMagicImport = async () => {
     try {
         const clipboardText = (await readClipboardText()).trim();
         if (!settings.isMagicImportEnabled() || state.activeView !== 'download' || els.urlInput.value) return;
-        if (!isValidHttpUrl(clipboardText)) return;
-        const platform = detectPlatform(clipboardText);
+        const normalized = normalizeDownloadInput(clipboardText);
+        if (!isValidHttpUrl(normalized)) return;
+        const platform = detectPlatform(normalized);
         if (!platform) return;
         const lastDownloadedUrl = `${settings.getConfig()?.last_download_url || ''}`.trim();
-        if (lastDownloadedUrl && clipboardText === lastDownloadedUrl) return;
+        if (lastDownloadedUrl && normalized === normalizeDownloadInput(lastDownloadedUrl)) return;
 
         els.urlInput.value = clipboardText;
         updateDownloadOptionHints();
@@ -438,7 +452,7 @@ const tryMagicImport = async () => {
         renderInfo();
         setInfoBadge('Loading...');
         els.urlInput.focus();
-        if (normalizeYouTubePlaylistUrl(clipboardText)) void enqueueDownload();
+        if (normalizeYouTubePlaylistUrl(normalized)) void enqueueDownload();
         else void loadInfo();
     } catch {
         // Ignore clipboard read failures; magic import is best-effort.
@@ -649,12 +663,15 @@ const renderInfo = () => {
 };
 
 const updateDownloadOptionHints = () => {
+    els.videoInputHelp.hidden = !els.idImportEnabled.checked;
+    els.urlInput.placeholder = els.idImportEnabled.checked ? 'https://... or video ID' : 'https://...';
+    showVideoInputError(els.urlInput.value);
     const preset = presets[getSelectedPresetKey()];
     const isTranscription = Boolean(preset?.transcribeText);
     const transcriptionOptions = document.getElementById('transcriptionOptions');
     if (transcriptionOptions) transcriptionOptions.hidden = !isTranscription;
 
-    const captionPlatform = detectPlatform(els.urlInput.value.trim());
+    const captionPlatform = detectPlatform(normalizeDownloadInput(els.urlInput.value));
     const captionPlatformNames = {
         youtube: 'YouTube',
         tiktok: 'TikTok',
@@ -1059,9 +1076,12 @@ let loadInfoRequestId = 0;
 const canLoadInfoForUrl = url => isValidHttpUrl(url) && Boolean(detectPlatform(url));
 
 const loadInfo = async () => {
-    const url = els.urlInput.value.trim();
+    await initialization;
+    await settings.waitForPendingSave();
+    const url = normalizeDownloadInput(els.urlInput.value);
     if (!url) return;
     if (!isValidHttpUrl(url)) {
+        showVideoInputError(els.urlInput.value);
         shakeUrlInput();
         return;
     }
@@ -1083,7 +1103,7 @@ const loadInfo = async () => {
     setInfoBadge('Loading...');
     try {
         const info = await api.loadInfo({ url: requestUrl });
-        if (requestId !== loadInfoRequestId || els.urlInput.value.trim() !== requestUrl) {
+        if (requestId !== loadInfoRequestId || normalizeDownloadInput(els.urlInput.value) !== requestUrl) {
             loadInfoPending = true;
             return;
         }
@@ -1092,7 +1112,7 @@ const loadInfo = async () => {
         renderInfo();
         setInfoBadge('Ready');
     } catch (err) {
-        if (requestId !== loadInfoRequestId || els.urlInput.value.trim() !== requestUrl) return;
+        if (requestId !== loadInfoRequestId || normalizeDownloadInput(els.urlInput.value) !== requestUrl) return;
         if (`${err || ''}`.includes('URL must start with')) {
             shakeUrlInput();
         }
@@ -1107,7 +1127,7 @@ const loadInfo = async () => {
         els.loadInfoBtn.removeAttribute('aria-busy');
         els.loadInfoBtn.disabled = playlistImports.size > 0;
 
-        const nextUrl = els.urlInput.value.trim();
+        const nextUrl = normalizeDownloadInput(els.urlInput.value);
         const inputChanged = nextUrl !== requestUrl;
         const shouldReload = (loadInfoPending || inputChanged) && canLoadInfoForUrl(nextUrl);
         loadInfoPending = false;
@@ -1163,7 +1183,7 @@ const enqueuePlaylistForUrl = (url, presetKey, options = {}) => {
         els.playlistImportStatus.classList.toggle('oj-status-error', error);
     };
     showStatus('Loading YouTube playlist…');
-    if (els.urlInput.value.trim() === url) {
+    if (normalizeDownloadInput(els.urlInput.value) === url) {
         state.info = null;
         state.infoUrl = null;
         renderInfo();
@@ -1207,7 +1227,7 @@ const enqueuePlaylistForUrl = (url, presetKey, options = {}) => {
             appendLog(`[playlist] ${message}`, count === 0);
             if (count) {
                 void settings.cacheLastDownloadedUrl(url);
-                if (!options.preserveComposerState && els.urlInput.value.trim() === url) {
+                if (!options.preserveComposerState && normalizeDownloadInput(els.urlInput.value) === url) {
                     els.urlInput.value = '';
                     state.info = null;
                     state.infoUrl = null;
@@ -1236,6 +1256,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
     if (!url) return null;
     if (!api.available) return null;
     if (!isValidHttpUrl(url)) {
+        showVideoInputError(els.urlInput.value);
         shakeUrlInput();
         return null;
     }
@@ -1359,8 +1380,9 @@ const removeJobFromQueue = async job => {
 };
 
 const enqueueDownload = async () => {
-    const url = els.urlInput.value.trim();
     await initialization;
+    await settings.waitForPendingSave();
+    const url = normalizeDownloadInput(els.urlInput.value);
     const presetKey = getSelectedPresetKey();
     await enqueueDownloadForUrl(url, presetKey);
 };
@@ -1437,7 +1459,9 @@ const importTxtLinks = async () => {
         const file = await api.pickTxtFile();
         if (!file) return;
 
-        const parsed = parseTxtImportLinks(file.content);
+        await initialization;
+        await settings.waitForPendingSave();
+        const parsed = parseTxtImportLinks(file.content, Boolean(els.idImportEnabled.checked));
         if (parsed.isEmpty) {
             const message = 'TXT file is empty.';
             setTxtImportStatus(message, true);
@@ -1445,11 +1469,15 @@ const importTxtLinks = async () => {
             return;
         }
 
+        const idHint =
+            parsed.invalidCount > 0 && els.idImportEnabled.checked
+                ? ' Ambiguous IDs need youtube:, tiktok: or instagram:.'
+                : '';
         if (parsed.items.length === 0) {
             const message = `No valid YouTube, TikTok, or Instagram links found. Skipped ${pluralize(
                 parsed.invalidCount,
                 'invalid line'
-            )} and ${pluralize(parsed.duplicateCount, 'duplicate')}.`;
+            )} and ${pluralize(parsed.duplicateCount, 'duplicate')}.${idHint}`;
             setTxtImportStatus(message, true);
             appendLog(`[txt-import] ${message}`, true);
             return;
@@ -1483,9 +1511,9 @@ const importTxtLinks = async () => {
             'duplicate'
         )}.`;
         const message =
-            importedCount === 0 && failedCount === 0 && duplicateCount > 0
+            (importedCount === 0 && failedCount === 0 && duplicateCount > 0
                 ? `No new links imported. ${skippedSummary}`
-                : formatTxtImportCounts(importedCount, parsed.invalidCount, duplicateCount, failedCount);
+                : formatTxtImportCounts(importedCount, parsed.invalidCount, duplicateCount, failedCount)) + idHint;
         const isError = importedCount === 0;
         setTxtImportStatus(message, isError);
         appendLog(`[txt-import] ${message}`, isError || failedCount > 0);
@@ -1635,7 +1663,7 @@ const bindEvents = () => {
             clearTimeout(urlInputDebounceTimer);
             urlInputDebounceTimer = null;
         }
-        const url = els.urlInput.value.trim();
+        const url = normalizeDownloadInput(els.urlInput.value);
         updateDownloadOptionHints();
         if (!canLoadInfoForUrl(url)) {
             loadInfoRequestId += 1;
@@ -1648,8 +1676,8 @@ const bindEvents = () => {
         }
         urlInputDebounceTimer = setTimeout(() => {
             urlInputDebounceTimer = null;
-            if (!canLoadInfoForUrl(els.urlInput.value.trim())) return;
-            if (normalizeYouTubePlaylistUrl(els.urlInput.value.trim())) {
+            if (!canLoadInfoForUrl(normalizeDownloadInput(els.urlInput.value))) return;
+            if (normalizeYouTubePlaylistUrl(normalizeDownloadInput(els.urlInput.value))) {
                 void enqueueDownload();
                 return;
             }
@@ -1661,13 +1689,13 @@ const bindEvents = () => {
     els.urlInput.addEventListener('keydown', event => {
         const key = event.key.toLowerCase();
         if (event.metaKey && !event.ctrlKey && !event.altKey && key === 'i') {
-            if (!els.urlInput.value.trim()) return;
+            if (!normalizeDownloadInput(els.urlInput.value)) return;
             event.preventDefault();
             void loadInfo();
             return;
         }
         if (key === 'enter' && !event.metaKey && !event.ctrlKey && !event.altKey) {
-            if (!els.urlInput.value.trim()) return;
+            if (!normalizeDownloadInput(els.urlInput.value)) return;
             event.preventDefault();
             void enqueueDownload();
             return;

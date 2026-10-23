@@ -419,6 +419,7 @@ fn app_config_defaults_are_loaded_from_sqlite() {
     assert!(!config.download_video_with_transcript);
     assert!(!config.save_captions);
     assert!(!config.save_thumbnails);
+    assert!(!config.id_import_enabled);
     assert!(config.magic_import_enabled);
     assert!(config.cut_at_timestamp_enabled);
     assert!(config.yt_dlp_path.is_none());
@@ -441,6 +442,7 @@ fn app_config_is_stored_in_sqlite() {
         save_thumbnails: true,
         save_creator_subtitles: true,
         magic_import_enabled: false,
+        id_import_enabled: true,
         cut_at_timestamp_enabled: false,
         last_download_url: Some("https://example.com/watch".to_string()),
         notifications_enabled: true,
@@ -460,6 +462,7 @@ fn app_config_is_stored_in_sqlite() {
     assert!(loaded.save_captions);
     assert!(loaded.save_thumbnails);
     assert!(loaded.notifications_enabled);
+    assert!(loaded.id_import_enabled);
     assert!(!loaded.magic_import_enabled);
     assert!(!loaded.cut_at_timestamp_enabled);
     assert_eq!(

@@ -9,6 +9,7 @@ export const installScreenshotBridge = ({ videos, version, ocr = null, social = 
         selected_preset_key: 'best',
         faster_whisper_model: 'base',
         magic_import_enabled: true,
+        id_import_enabled: false,
         cut_at_timestamp_enabled: true,
         save_captions: true,
         save_thumbnails: true,

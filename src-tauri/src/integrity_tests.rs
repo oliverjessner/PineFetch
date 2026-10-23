@@ -581,7 +581,7 @@ fn version_one_upgrade_and_sql_failure_roll_back_entire_section_and_retry() {
     // then fail version 2. Version 1 is an internal baseline, not an old app.
     crate::database::restore_schema8_caption_fixture(&conn);
     conn.execute_batch(
-        "DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; DROP TABLE job_completions; DROP TABLE legacy_imports; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=1;",
+        "DROP TABLE IF EXISTS history_account_insights; DROP INDEX IF EXISTS idx_history_account_lookup; DROP TABLE IF EXISTS history_social_insights; DROP TABLE history_ocr_frames; DROP TABLE history_ocr; DROP TABLE job_completions; DROP TABLE legacy_imports; ALTER TABLE app_config DROP COLUMN id_import_enabled; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=1;",
     )
     .unwrap();
     let before = schema(&conn);
@@ -1738,7 +1738,7 @@ fn integration_cookie_settings_migration_rolls_back_and_preserves_existing_setti
     let fixture = Fixture::new();
     let conn = fixture.db();
     crate::database::restore_schema8_caption_fixture(&conn);
-    conn.execute_batch("ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=6; UPDATE app_config SET yt_dlp_path='/synthetic/yt-dlp', save_captions=1;").unwrap();
+    conn.execute_batch("ALTER TABLE app_config DROP COLUMN id_import_enabled; ALTER TABLE app_config DROP COLUMN youtube_cookie_browser; ALTER TABLE app_config DROP COLUMN save_creator_subtitles; DROP TABLE history_subtitles; PRAGMA user_version=6; UPDATE app_config SET yt_dlp_path='/synthetic/yt-dlp', save_captions=1;").unwrap();
     let before = schema(&conn);
     let error = database::initialize_with_hook(&conn, |point| {
         if point == MigrationPoint::BrowserCookies {
@@ -1763,7 +1763,7 @@ fn integration_optional_caption_file_migration_preserves_rows_settings_and_rolls
     let fixture = Fixture::new();
     let conn = fixture.db();
     crate::database::restore_schema8_caption_fixture(&conn);
-    conn.execute_batch("PRAGMA user_version=8;
+    conn.execute_batch("ALTER TABLE app_config DROP COLUMN id_import_enabled; PRAGMA user_version=8;
         UPDATE app_config SET youtube_cookie_browser='chrome', save_captions=1, save_creator_subtitles=1;
         INSERT INTO history_entries(id,url,created_at) VALUES ('existing','https://www.youtube.com/watch?v=synthetic',1);
         INSERT INTO captions(history_entry_id,media_path,caption_path,text,sha256,created_at) VALUES ('existing','/synthetic/media.mp4','/synthetic/media.caption.txt','Grüße 🌲','existing-hash',123);").unwrap();
@@ -1800,4 +1800,35 @@ fn integration_optional_caption_file_migration_preserves_rows_settings_and_rolls
         .unwrap();
     assert_eq!(count(&conn, "captions"), 0);
     assert!(!fixture.backups().is_empty());
+}
+
+#[test]
+fn integration_id_import_migration_defaults_off_preserves_settings_and_rolls_back() {
+    let fixture = Fixture::new();
+    let conn = fixture.db();
+    conn.execute_batch("ALTER TABLE app_config DROP COLUMN id_import_enabled; PRAGMA user_version=9;
+        UPDATE app_config SET youtube_cookie_browser='chrome', save_creator_subtitles=1, magic_import_enabled=0;").unwrap();
+    let before = schema(&conn);
+    assert!(database::initialize_with_hook(&conn, |point| {
+        if point == MigrationPoint::IdImport {
+            Err("synthetic ID import migration failure".into())
+        } else {
+            Ok(())
+        }
+    })
+    .unwrap_err()
+    .contains("synthetic ID import migration failure"));
+    assert_eq!(version(&conn), 9);
+    assert_eq!(schema(&conn), before);
+    database::initialize(&conn).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let config = load_config_from_db(&conn).unwrap();
+    assert!(!config.id_import_enabled);
+    assert_eq!(config.youtube_cookie_browser.as_deref(), Some("chrome"));
+    assert!(config.save_creator_subtitles);
+    assert!(!config.magic_import_enabled);
+    conn.execute("UPDATE app_config SET id_import_enabled=1", [])
+        .unwrap();
+    database::initialize(&conn).unwrap();
+    assert!(load_config_from_db(&conn).unwrap().id_import_enabled);
 }

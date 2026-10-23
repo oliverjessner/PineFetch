@@ -138,6 +138,7 @@ export const createSettingsView = ({
             els.downloadVideoWithTranscript.checked = config.download_video_with_transcript ?? false;
             setSelectedPresetKey(config.selected_preset_key);
             els.magicImportEnabled.checked = config.magic_import_enabled ?? true;
+            els.idImportEnabled.checked = config.id_import_enabled ?? false;
             els.cutAtTimestampEnabled.checked = config.cut_at_timestamp_enabled ?? true;
             updateDownloadOptionHints();
             if (isActive()) void refreshYtDlpVersionsOnce();
@@ -248,6 +249,21 @@ export const createSettingsView = ({
         browserAuthentication.bindEvents();
         els.magicImportEnabled.addEventListener('change', () => {
             void saveSettings({ magic_import_enabled: els.magicImportEnabled.checked });
+        });
+        els.idImportEnabled.addEventListener('change', async () => {
+            const previousValue = config?.id_import_enabled ?? false;
+            els.idImportEnabled.disabled = true;
+            try {
+                const saved = await saveSettings({ id_import_enabled: els.idImportEnabled.checked });
+                if (!saved) {
+                    els.idImportEnabled.checked = previousValue;
+                    if (config) config = { ...config, id_import_enabled: previousValue };
+                }
+            } finally {
+                els.idImportEnabled.disabled = false;
+                updateDownloadOptionHints();
+                els.urlInput.dispatchEvent(new Event('input'));
+            }
         });
         els.saveCaptions.addEventListener('change', () => {
             void persistCaptionSetting();

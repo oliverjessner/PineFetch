@@ -17,7 +17,10 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 9;
+pub(super) const SCHEMA_VERSION: i64 = 10;
+
+const ID_IMPORT_SQL: &str =
+    "ALTER TABLE app_config ADD COLUMN id_import_enabled INTEGER NOT NULL DEFAULT 0;";
 
 // A caption is stored independently of an optional exported text file.
 const OPTIONAL_CAPTION_FILES_SQL: &str = r#"
@@ -244,6 +247,7 @@ pub(super) enum MigrationPoint {
     BrowserCookies,
     CreatorSubtitles,
     OptionalCaptionFiles,
+    IdImport,
 }
 
 pub(super) fn initialize_with_hook(
@@ -363,6 +367,13 @@ pub(super) fn initialize_with_hook(
         tx.pragma_update(None, "user_version", 9)
             .map_err(|e| e.to_string())?;
         hook(MigrationPoint::OptionalCaptionFiles)?;
+    }
+    if version < 10 {
+        tx.execute_batch(ID_IMPORT_SQL)
+            .map_err(|e| format!("SQLite migration 10 failed: {e}"))?;
+        tx.pragma_update(None, "user_version", 10)
+            .map_err(|e| e.to_string())?;
+        hook(MigrationPoint::IdImport)?;
     }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
@@ -559,6 +570,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
     if version >= 9 {
         reference
             .execute_batch(OPTIONAL_CAPTION_FILES_SQL)
+            .map_err(|e| e.to_string())?;
+    }
+    if version >= 10 {
+        reference
+            .execute_batch(ID_IMPORT_SQL)
             .map_err(|e| e.to_string())?;
     }
     reference

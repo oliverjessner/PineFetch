@@ -57,7 +57,24 @@
                     <div id="downloadView" class="pinefetch-panel-view oj-stack">
                         <label class="oj-field" for="urlInput">
                             <span class="oj-label">URL</span>
-                            <input id="urlInput" class="oj-input" type="text" placeholder="https://..." />
+                            <input
+                                id="urlInput"
+                                class="oj-input"
+                                type="text"
+                                placeholder="https://..."
+                                aria-describedby="videoInputHelp videoInputError"
+                            />
+                            <span id="videoInputHelp" class="oj-helper" hidden
+                                >Use an 11-character YouTube ID, youtube:&lt;ID&gt;, tiktok:&lt;ID&gt;, or
+                                instagram:&lt;shortcode&gt;. Other IDs need a platform prefix.</span
+                            >
+                            <span
+                                id="videoInputError"
+                                class="oj-helper oj-status-error"
+                                role="status"
+                                aria-live="polite"
+                                hidden
+                            ></span>
                         </label>
 
                         <div class="oj-field">
@@ -246,6 +263,20 @@
 
                         <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsDownloadTitle">
                             <h3 id="settingsDownloadTitle" class="oj-heading-3">Download</h3>
+                            <label class="oj-switch" for="idImportEnabled">
+                                <span class="pinefetch-switch-copy">
+                                    <span class="pinefetch-switch-title">ID import</span>
+                                    <span class="oj-helper"
+                                        >Allow video IDs in the URL field, Magic import and TXT files. Recognize
+                                        11-character YouTube IDs automatically; use youtube:, tiktok: or instagram: for
+                                        explicit platform selection. TikTok and Instagram content must be resolvable by
+                                        the platform.</span
+                                    >
+                                </span>
+                                <input id="idImportEnabled" type="checkbox" role="switch" />
+                                <span class="oj-switch-track" aria-hidden="true"></span>
+                            </label>
+
                             <label class="oj-switch" for="cutAtTimestampEnabled">
                                 <span class="pinefetch-switch-copy">
                                     <span class="pinefetch-switch-title">Cut at timestamp</span>

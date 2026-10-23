@@ -24,6 +24,74 @@ fn url_cases() -> Value {
 }
 
 #[test]
+fn opt_in_video_ids_match_frontend_resolution_and_preserve_the_url_boundary() {
+    let cases: Value =
+        serde_json::from_str(include_str!("../../test/fixtures/video-inputs.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let input = case["input"].as_str().unwrap();
+        let disabled = crate::url_rules::normalize_video_input(input, false);
+        assert_eq!(disabled, input);
+        assert_eq!(
+            validate_download_url(&disabled).is_ok(),
+            validate_download_url(input).is_ok()
+        );
+        let enabled = crate::url_rules::normalize_video_input(input, true);
+        if let Some(url) = case["url"].as_str() {
+            assert_eq!(enabled, url, "{input}");
+            assert!(validate_download_url(&enabled).is_ok());
+        } else {
+            assert_eq!(enabled, input, "{input}");
+            assert!(validate_download_url(&enabled).is_err());
+        }
+    }
+    for input in ["https://example.com/\n", "https://example.com/a\tb"] {
+        assert!(
+            validate_download_url(&crate::url_rules::normalize_video_input(input, true)).is_err()
+        );
+    }
+}
+
+#[test]
+fn job_creation_accepts_video_ids_only_when_id_import_is_enabled() {
+    for enabled in [false, true] {
+        let config = crate::config::ConfigState::new(
+            AppConfig {
+                id_import_enabled: enabled,
+                default_output_dir: Some("/synthetic/output".into()),
+                ..AppConfig::default()
+            },
+            std::sync::Arc::new(Database::new(Connection::open_in_memory().unwrap())),
+        );
+        for input in [
+            "dQw4w9WgXcQ",
+            "youtube:dQw4w9WgXcQ",
+            "tiktok:7421234567890123456",
+            "instagram:ABC123xyz",
+        ] {
+            let request = request_from_preset(download_preset_for_key(None), input.into(), true);
+            let result = crate::worker::build_download_job(&config, request);
+            if enabled {
+                assert_eq!(
+                    result.unwrap().url,
+                    crate::url_rules::normalize_video_input(input, true)
+                );
+            } else {
+                assert_eq!(
+                    result.unwrap_err(),
+                    "URL must start with http:// or https://"
+                );
+            }
+        }
+        let ambiguous = request_from_preset(
+            download_preset_for_key(None),
+            "7421234567890123456".into(),
+            true,
+        );
+        assert!(crate::worker::build_download_job(&config, ambiguous).is_err());
+    }
+}
+
+#[test]
 fn shared_url_validation_covers_gui_cli_and_import_boundaries() {
     for case in url_cases()["validation"].as_array().unwrap() {
         let input = case["input"].as_str().unwrap();

@@ -40,6 +40,11 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
     globalThis.__TAURI__.core.convertFileSrc = path => path;
     const ui = {
         localVideo: false,
+        idInfoUrls: [],
+        txtImportContent: null,
+        holdIdInfo: false,
+        releaseIdInfo: null,
+        failNextIdImportSave: false,
         transcriptText:
             '[00:00:01.000 → 00:00:02.000] Transcript <img src=x onerror="alert(1)"> stays plain text.\n' +
             Array.from(
@@ -173,6 +178,8 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             }
             return { title: 'Fixture playlist', jobs, skipped_count: 1 };
         }
+        if (command === 'pick_txt_file')
+            return ui.txtImportContent === null ? null : { path: '/fixture/ids.txt', content: ui.txtImportContent };
         if (command === 'get_download_presets') await presetsReady;
         if (command === 'get_config') {
             config ||= {
@@ -183,7 +190,21 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             };
             return { ...config };
         }
+        if (command === 'load_info' && ui.idInfoUrls.includes(args.url)) {
+            const complete = () => ({ ...ui.playlistVideos[0], url: args.url, title: 'Resolved ID fixture' });
+            if (ui.holdIdInfo) {
+                ui.holdIdInfo = false;
+                return new Promise(resolve => {
+                    ui.releaseIdInfo = () => resolve(complete());
+                });
+            }
+            return complete();
+        }
         if (command === 'patch_config') {
+            if (ui.failNextIdImportSave && Object.hasOwn(args.changes, 'id_import_enabled')) {
+                ui.failNextIdImportSave = false;
+                throw new Error('Fixture ID import save failed.');
+            }
             if (ui.failNextModelSave && Object.hasOwn(args.changes, 'faster_whisper_model')) {
                 ui.failNextModelSave = false;
                 throw new Error('Fixture model save failed.');
@@ -3438,6 +3459,186 @@ try {
                     'Changes saved. They apply to new downloads.'
             );
             assert.equal(await creatorSubtitles.isChecked(), true);
+
+            // ID import is off by default. Enabling it controls metadata,
+            // queueing and clipboard input, and disabling it rejects late replies.
+            const idToggle = page.locator('#idImportEnabled');
+            const idInput = page.locator('#urlInput');
+            assert.equal(await idToggle.isChecked(), false);
+            await page.locator('#viewDownloadBtn').click();
+            assert(await page.locator('#videoInputHelp').isHidden());
+            const beforeDisabledId = await historyCommandCount();
+            await idInput.fill('dQw4w9WgXcQ');
+            await page.locator('#loadInfoBtn').click();
+            await idInput.press('Enter');
+            await page.waitForTimeout(750);
+            assert.match(await page.locator('#videoInputError').textContent(), /Enable ID import/);
+            assert.equal(
+                await page.evaluate(
+                    after =>
+                        globalThis.__pinefetchUi.commands
+                            .slice(after)
+                            .some(call => ['load_info', 'enqueue_download'].includes(call.command)),
+                    beforeDisabledId
+                ),
+                false
+            );
+            await page.locator('#viewSettingsBtn').click();
+            await idToggle.focus();
+            await page.keyboard.press('Space');
+            await page.waitForFunction(() => {
+                const toggle = globalThis.document.getElementById('idImportEnabled');
+                return toggle.checked && !toggle.disabled;
+            });
+            assert(
+                await page.evaluate(() =>
+                    globalThis.__pinefetchUi.commands.some(
+                        call => call.command === 'patch_config' && call.args.changes.id_import_enabled === true
+                    )
+                )
+            );
+            const idInputs = [
+                ['dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
+                ['youtube:dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'],
+                ['tiktok:7421234567890123456', 'https://www.tiktok.com/@_/video/7421234567890123456'],
+                ['instagram:ABC123xyz', 'https://www.instagram.com/p/ABC123xyz/'],
+            ];
+            await page.evaluate(
+                urls => {
+                    globalThis.__pinefetchUi.idInfoUrls = urls;
+                },
+                idInputs.map(([, url]) => url)
+            );
+            await page.locator('#viewDownloadBtn').click();
+            assert(await page.locator('#videoInputHelp').isVisible());
+            for (const [input, url] of idInputs) {
+                const before = await historyCommandCount();
+                await idInput.fill(input);
+                await page.locator('#loadInfoBtn').click();
+                await page.waitForFunction(
+                    () => globalThis.document.getElementById('infoBadge').textContent === 'Ready'
+                );
+                await idInput.press('Enter');
+                await page.waitForFunction(
+                    expected =>
+                        globalThis.__pinefetchUi.commands
+                            .slice(expected.before)
+                            .some(
+                                call => call.command === 'enqueue_download' && call.args.request.url === expected.url
+                            ),
+                    { before, url }
+                );
+                await page.waitForFunction(() => globalThis.document.getElementById('urlInput').value === '');
+            }
+            const beforeIdFile = await historyCommandCount();
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.txtImportContent = [
+                    '_-012345678',
+                    'https://youtu.be/_-012345678',
+                    'tiktok:7421234567890123457',
+                    'instagram:ABC123other',
+                    '7421234567890123458',
+                ].join('\n');
+            });
+            await page.locator('#importTxtBtn').click();
+            await page.waitForFunction(() => !globalThis.document.getElementById('importTxtBtn').disabled);
+            const idFileRequests = await page.evaluate(
+                after =>
+                    globalThis.__pinefetchUi.commands
+                        .slice(after)
+                        .filter(call => call.command === 'enqueue_download')
+                        .map(call => call.args.request.url),
+                beforeIdFile
+            );
+            assert.deepEqual(idFileRequests, [
+                'https://www.youtube.com/watch?v=_-012345678',
+                'https://www.tiktok.com/@_/video/7421234567890123457',
+                'https://www.instagram.com/p/ABC123other/',
+            ]);
+            assert.match(await page.locator('#txtImportStatus').textContent(), /1 invalid line/);
+            assert.match(await page.locator('#txtImportStatus').textContent(), /Ambiguous IDs need/);
+
+            const beforeAmbiguousId = await historyCommandCount();
+            await idInput.fill('7421234567890123456');
+            await idInput.press('Enter');
+            await page.waitForTimeout(750);
+            assert.match(await page.locator('#videoInputError').textContent(), /Specify the platform/);
+            assert.equal(
+                await page.evaluate(
+                    after =>
+                        globalThis.__pinefetchUi.commands
+                            .slice(after)
+                            .some(call => ['load_info', 'enqueue_download'].includes(call.command)),
+                    beforeAmbiguousId
+                ),
+                false
+            );
+
+            // Magic import uses the same opt-in resolution while preserving the ID in the field.
+            await idInput.fill('');
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.clipboard = 'youtube:dQw4w9WgXcQ';
+                globalThis.dispatchEvent(new globalThis.Event('focus'));
+            });
+            await page.waitForFunction(
+                () => globalThis.document.getElementById('urlInput').value === 'youtube:dQw4w9WgXcQ'
+            );
+            await page.waitForFunction(() => globalThis.document.getElementById('infoBadge').textContent === 'Ready');
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.clipboard = '';
+                globalThis.__pinefetchUi.holdIdInfo = true;
+            });
+            await idInput.fill('dQw4w9WgXcQ');
+            await page.locator('#loadInfoBtn').click();
+            await page.waitForFunction(() => typeof globalThis.__pinefetchUi.releaseIdInfo === 'function');
+            await page.locator('#viewSettingsBtn').click();
+            await idToggle.uncheck();
+            await page.waitForFunction(() => !globalThis.document.getElementById('idImportEnabled').disabled);
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseIdInfo());
+            await page.locator('#viewDownloadBtn').click();
+            await page.waitForFunction(() => globalThis.document.getElementById('loadInfoBtn').disabled === false);
+            assert.equal(await page.locator('#infoTitle').textContent(), 'No video loaded');
+            assert(await page.locator('#videoInputHelp').isHidden());
+            await idInput.fill('');
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.clipboard = 'instagram:ABC123xyz';
+                globalThis.dispatchEvent(new globalThis.Event('focus'));
+            });
+            await page.waitForTimeout(750);
+            assert.equal(await idInput.inputValue(), '');
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.clipboard = '';
+                globalThis.__pinefetchUi.failNextIdImportSave = true;
+            });
+            await page.locator('#viewSettingsBtn').click();
+            await idToggle.check();
+            await page.waitForFunction(() =>
+                globalThis.document
+                    .getElementById('settingsSaveStatus')
+                    .textContent.includes('Fixture ID import save failed.')
+            );
+            assert.equal(await idToggle.isChecked(), false);
+            assert.equal(await idToggle.isDisabled(), false);
+
+            await page.locator('#viewDownloadBtn').click();
+            const beforeDisabledIdFile = await historyCommandCount();
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.txtImportContent =
+                    'youtube:abcdefghijk\ntiktok:7421234567890123459\ninstagram:OtherShortcode';
+            });
+            await page.locator('#importTxtBtn').click();
+            await page.waitForFunction(() => !globalThis.document.getElementById('importTxtBtn').disabled);
+            assert.match(await page.locator('#txtImportStatus').textContent(), /No valid/);
+            assert.equal(
+                await page.evaluate(
+                    after =>
+                        globalThis.__pinefetchUi.commands
+                            .slice(after)
+                            .some(call => call.command === 'enqueue_download'),
+                    beforeDisabledIdFile
+                ),
+                false
+            );
 
             // Playlist paste/import expands into independent jobs without requiring Queue.
             await page.locator('#viewDownloadBtn').click();

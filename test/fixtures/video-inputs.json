@@ -1,0 +1,142 @@
+[
+    {
+        "input": "dQw4w9WgXcQ",
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    },
+    {
+        "input": "_-012345678",
+        "url": "https://www.youtube.com/watch?v=_-012345678"
+    },
+    {
+        "input": "12345678901",
+        "url": "https://www.youtube.com/watch?v=12345678901"
+    },
+    {
+        "input": "  youtube:dQw4w9WgXcQ\n",
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    },
+    {
+        "input": "YouTube:dQw4w9WgXcQ",
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    },
+    {
+        "input": "tiktok:7421234567890123456",
+        "url": "https://www.tiktok.com/@_/video/7421234567890123456"
+    },
+    {
+        "input": "TIKTOK:7421234567890123456",
+        "url": "https://www.tiktok.com/@_/video/7421234567890123456"
+    },
+    {
+        "input": "instagram:ABC123xyz",
+        "url": "https://www.instagram.com/p/ABC123xyz/"
+    },
+    {
+        "input": "instagram:Ab_C-123",
+        "url": "https://www.instagram.com/p/Ab_C-123/"
+    },
+    {
+        "input": "https://youtu.be/dQw4w9WgXcQ?t=61",
+        "url": "https://youtu.be/dQw4w9WgXcQ?t=61"
+    },
+    {
+        "input": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL123",
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL123"
+    },
+    {
+        "input": "https://www.tiktok.com/@creator/video/7421234567890123456",
+        "url": "https://www.tiktok.com/@creator/video/7421234567890123456"
+    },
+    {
+        "input": "https://www.instagram.com/reel/ABC123xyz/",
+        "url": "https://www.instagram.com/reel/ABC123xyz/"
+    },
+    {
+        "input": "7421234567890123456",
+        "url": null
+    },
+    {
+        "input": "ABC123xyz",
+        "url": null
+    },
+    {
+        "input": "short",
+        "url": null
+    },
+    {
+        "input": "dQw4w9WgXcQx",
+        "url": null
+    },
+    {
+        "input": "youtube:short",
+        "url": null
+    },
+    {
+        "input": "youtube:dQw4w9WgXcQx",
+        "url": null
+    },
+    {
+        "input": "youtube:dQw4w9WgXc!",
+        "url": null
+    },
+    {
+        "input": "tiktok:abc123",
+        "url": null
+    },
+    {
+        "input": "tiktok:12345",
+        "url": null
+    },
+    {
+        "input": "tiktok:11111111111111111111111111",
+        "url": null
+    },
+    {
+        "input": "instagram:ab",
+        "url": null
+    },
+    {
+        "input": "instagram:abc/def",
+        "url": null
+    },
+    {
+        "input": "instagram:../secret",
+        "url": null
+    },
+    {
+        "input": "instagram:abc?redirect=evil",
+        "url": null
+    },
+    {
+        "input": "instagram:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "url": null
+    },
+    {
+        "input": "facebook:123456789",
+        "url": null
+    },
+    {
+        "input": "javascript:alert(1)",
+        "url": null
+    },
+    {
+        "input": "file:///tmp/video",
+        "url": null
+    },
+    {
+        "input": "https://",
+        "url": null
+    },
+    {
+        "input": "yt-dlp:search",
+        "url": null
+    },
+    {
+        "input": "--exec",
+        "url": null
+    },
+    {
+        "input": "dQw4 w9WgXc",
+        "url": null
+    }
+]

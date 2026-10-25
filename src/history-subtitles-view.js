@@ -1,10 +1,12 @@
 import { createTextReader } from './history-text-view.js';
 import { renderContentMetadata } from './history-content-details.js';
 
-export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
+export const createHistorySubtitlesView = ({ els, api, appendLog, media }) => {
     let entryId = null;
     let tracks = [];
     let revision = 0;
+    let sourceStartSeconds = 0;
+    let playbackTime = 0;
     const reader = createTextReader({
         input: els.historySubtitleSearchInput,
         copy: els.historySubtitleCopyBtn,
@@ -13,11 +15,18 @@ export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
         viewport: els.historySubtitleListViewport,
         list: els.historySubtitleText,
         appendLog,
+        onSelect: seconds => {
+            playbackTime = Math.max(0, seconds - sourceStartSeconds);
+            media.seek(playbackTime);
+        },
     });
     const cache = new Map();
 
     const render = content => {
+        const start = Number(content?.source_start_seconds);
+        sourceStartSeconds = Number.isFinite(start) ? Math.max(0, start) : 0;
         reader.set(content?.text);
+        if (content?.text) reader.sync(playbackTime + sourceStartSeconds);
         renderContentMetadata(
             els.historySubtitleMeta,
             content
@@ -72,6 +81,8 @@ export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
         revision++;
         entryId = id;
         tracks = nextTracks;
+        sourceStartSeconds = 0;
+        playbackTime = 0;
         cache.clear();
         reader.reset();
         render(null);
@@ -97,6 +108,10 @@ export const createHistorySubtitlesView = ({ els, api, appendLog }) => {
         reset,
         load,
         bindEvents,
+        syncTime: seconds => {
+            playbackTime = seconds;
+            reader.sync(playbackTime + sourceStartSeconds);
+        },
         deactivate: () => {
             revision++;
             reader.deactivate();

@@ -126,7 +126,7 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {}, appendLog
             fallback.removeAttribute('src');
             fallback.hidden = true;
             status.hidden = false;
-            status.textContent = 'Open Transcript or OCR Text to load the saved video.';
+            status.textContent = 'Select a timestamp to navigate the saved video.';
         },
         activate: async () => {
             if (requested || !entry?.id) return;

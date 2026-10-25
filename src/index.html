@@ -1431,19 +1431,43 @@
                                     role="status"
                                     aria-live="polite"
                                 ></p>
-                                <div
-                                    id="historySubtitleListViewport"
-                                    class="pinefetch-text-viewport"
-                                    role="region"
-                                    aria-label="Creator subtitle text"
-                                    tabindex="0"
-                                >
-                                    <ol
-                                        id="historySubtitleText"
-                                        class="pinefetch-text-entries"
-                                        aria-label="Creator subtitle text"
-                                        hidden
-                                    ></ol>
+                                <div class="pinefetch-reader-workspace">
+                                    <section class="pinefetch-reader-text" aria-label="Creator subtitles">
+                                        <div
+                                            id="historySubtitleListViewport"
+                                            class="pinefetch-text-viewport"
+                                            role="region"
+                                            aria-label="Creator subtitle text"
+                                            tabindex="0"
+                                        >
+                                            <ol
+                                                id="historySubtitleText"
+                                                class="pinefetch-text-entries"
+                                                aria-label="Creator subtitle text"
+                                                hidden
+                                            ></ol>
+                                        </div>
+                                    </section>
+                                    <aside
+                                        id="historySubtitlePreview"
+                                        class="pinefetch-history-media"
+                                        aria-label="Video player"
+                                    >
+                                        <div class="pinefetch-media-stage">
+                                            <video
+                                                id="historySubtitleVideo"
+                                                controls
+                                                playsinline
+                                                preload="metadata"
+                                                aria-label="Saved video"
+                                                hidden
+                                            ></video>
+                                            <img data-media-fallback alt="" hidden />
+                                            <p data-media-status class="oj-helper" role="status">
+                                                No saved video is available.
+                                            </p>
+                                        </div>
+                                    </aside>
                                 </div>
                                 <dl
                                     id="historySubtitleMeta"

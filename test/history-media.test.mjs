@@ -113,9 +113,7 @@ test('a stalled decoder prepares local MP4 once and preserves the selected time'
     const { media, video, status } = setup({
         getHistoryMedia: args => {
             calls.push(args);
-            return args.compatible
-                ? new Promise(resolve => (finish = resolve))
-                : Promise.resolve('/saved/video.webm');
+            return args.compatible ? new Promise(resolve => (finish = resolve)) : Promise.resolve('/saved/video.webm');
         },
     });
     t.after(media.pause);

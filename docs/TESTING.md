@@ -79,9 +79,11 @@ keyboard selection and the original SRT/WebVTT/Whisper timestamp forms.
 
 `test/fixtures/history-preview.mp4` is an eight-second synthetic H.264 clip used
 only for playback tests. Its fixture HTTP response supports byte ranges, matching
-the native asset protocol. Transcript and OCR tests seek the real video element,
+the native asset protocol. Transcript, Subtitles and OCR tests seek the real video element,
 check playback selection and exercise OCR's existing image fallback after a player
-error. Both readers use local playback only, without remote embeds.
+error. All three readers use local playback only, without remote embeds. Subtitle
+checks include cut-offset seeking/highlighting, track changes without reloading
+the player and the same responsive layout as Transcript and OCR.
 `history-text.test.mjs` also checks literal search ranges and precise timestamps.
 `history-media.test.mjs` covers missing local files, decoder errors, delayed frames
 and tab changes during loading, plus automatic compatibility preparation, pending

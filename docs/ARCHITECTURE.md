@@ -184,12 +184,17 @@ Social Insights and Keywords tabs. `history-text.js` owns timestamp parsing and 
 search matching; `history-text-view.js` provides safe highlighting, entries, keyboard
 selection and full-text copy. OCR retains its native paging, export and revision guards.
 `history-media-view.js` provides the shared local player, timestamp seeking and playback
-selection from the saved video on disk, with an OCR frame fallback. Playback never
+selection for Transcript, Subtitles and OCR from the saved video on disk, with an OCR
+frame fallback. All three use the same reader workspace and player controls.
+Subtitles retain their original displayed/copied timestamps; the reader subtracts
+`source_start_seconds` when seeking into a cut video and adds it for playback
+highlighting. Changing subtitle tracks preserves the video and playback position.
+Playback never
 loads a remote embed. If native decoding fails or stalls for 12 seconds, it requests
 `get_history_media` with `compatible: true`. `history_media` uses the existing FFmpeg
 runtime and utility process registry to prepare an H.264/AAC MP4 (at most 1280×720,
 YUV 4:2:0, faststart) in the app cache's `history-media` directory. Preparation runs
-off the UI thread with a 30-minute limit and is serialized across both readers.
+off the UI thread with a 30-minute limit and is serialized across all three readers.
 The source file is never replaced. Cache keys include the canonical source path and
 its filesystem fingerprint; changed sources invalidate the cache. Only completed
 outputs are published. The saved path and fingerprint are rechecked before access

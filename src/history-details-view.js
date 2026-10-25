@@ -34,6 +34,7 @@ export const createHistoryDetailsView = ({
     };
     let transcriptReader;
     let ocrView;
+    let subtitlesView;
     const transcriptMedia = createHistoryMediaView({
         root: els.historyTranscriptPreview,
         api,
@@ -45,6 +46,12 @@ export const createHistoryDetailsView = ({
         api,
         appendLog,
         onTime: seconds => ocrView?.syncTime(seconds),
+    });
+    const subtitleMedia = createHistoryMediaView({
+        root: els.historySubtitlePreview,
+        api,
+        appendLog,
+        onTime: seconds => subtitlesView?.syncTime(seconds),
     });
     transcriptReader = createTextReader({
         input: els.historyTranscriptSearchInput,
@@ -58,7 +65,7 @@ export const createHistoryDetailsView = ({
     });
     ocrView = createHistoryOcrView({ els, api, appendLog, jobs, media: ocrMedia });
     const socialView = createHistorySocialInsightsView({ els, api, appendLog });
-    const subtitlesView = createHistorySubtitlesView({ els, api, appendLog });
+    subtitlesView = createHistorySubtitlesView({ els, api, appendLog, media: subtitleMedia });
     const keywordsView = createHistoryKeywordsView({ els, api, appendLog });
 
     const formatDateTime = timestamp => {
@@ -318,6 +325,7 @@ export const createHistoryDetailsView = ({
         transcriptReader.reset();
         transcriptMedia.setEntry(null);
         ocrMedia.setEntry(null);
+        subtitleMedia.setEntry(null);
         const requestId = ++state.detailsRequestId;
         els.historyDetailsContent.hidden = true;
         els.historyOverviewTab.click();
@@ -387,6 +395,7 @@ export const createHistoryDetailsView = ({
             subtitlesView.reset(entryId, details.subtitles || []);
             transcriptMedia.setEntry({ id: entryId });
             ocrMedia.setEntry({ id: entryId });
+            subtitleMedia.setEntry({ id: entryId });
             if (details.captions?.length) void loadSelectedCaption();
             els.historyDetailsContent.hidden = false;
             if (ocr || jobs.get(entryId)?.status === 'running') els.historyOcrTab.click();
@@ -539,13 +548,16 @@ export const createHistoryDetailsView = ({
             if (event.target !== els.historyDetailsContent) return;
             transcriptMedia.pause();
             ocrMedia.pause();
+            subtitleMedia.pause();
             if (event.detail.tab === els.historyOverviewTab) void loadSelectedCaption();
             if (event.detail.tab === els.historyTranscriptTab) {
                 void loadTranscript();
                 void transcriptMedia.activate();
             } else transcriptReader.deactivate();
-            if (event.detail.tab === els.historySubtitlesTab) void subtitlesView.load();
-            else subtitlesView.deactivate();
+            if (event.detail.tab === els.historySubtitlesTab) {
+                void subtitlesView.load();
+                void subtitleMedia.activate();
+            } else subtitlesView.deactivate();
             if (event.detail.tab === els.historyOcrTab) {
                 void ocrView.load();
                 void ocrMedia.activate();
@@ -575,6 +587,7 @@ export const createHistoryDetailsView = ({
             transcriptReader.deactivate();
             transcriptMedia.setEntry(null);
             ocrMedia.setEntry(null);
+            subtitleMedia.setEntry(null);
             ocrView.deactivate();
             socialView.reset(null);
             keywordsView.reset(null);

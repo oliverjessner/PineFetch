@@ -1,5 +1,10 @@
+# 2.6.1
+
+- Updated @puppeteer/browsers to 3.2.6, puppeteer-core to 25.16.0 and @tauri-apps/cli to 2.12.4.
+
 # 2.6.0
 
+- Added the shared local video player to Subtitles with the same text/video layout as Transcript and OCR, timestamp seeking, playback highlighting and cut-aware subtitle timing.
 - Transcript and OCR players now use only the saved video on disk, with local-file notices and OCR frame previews when playback is unavailable. Removed the remote YouTube embed fallback.
 - Added automatic cached H.264/AAC playback previews when the platform cannot decode a saved video (including unsupported AV1/WebM files), preserving timestamp navigation and the original file.
 

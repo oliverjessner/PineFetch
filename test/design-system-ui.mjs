@@ -114,7 +114,7 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
                 format: 'srt',
                 file_available: true,
                 source_start_seconds: 61,
-                text: '1\n00:00:01,000 --> 00:00:02,000\nGrüße aus dem Original',
+                text: '1\n00:01:02,000 --> 00:01:03,000\nGrüße aus dem Original\n\n2\n00:01:04,000 --> 00:01:06,000\nZweite Zeile im Original',
             },
         ],
         holdPlaylist: false,
@@ -1418,7 +1418,7 @@ try {
             }
             await page.setViewportSize({ width: 1400, height: 960 });
             await page.evaluate(() => {
-                globalThis.__pinefetchUi.localVideo = false;
+                globalThis.__pinefetchUi.localVideo = true;
             });
             await page.locator('#historyTranscriptTab').focus();
             await page.keyboard.press('ArrowRight');
@@ -1431,6 +1431,14 @@ try {
             assert.match(await page.locator('#historySubtitleText').textContent(), /Creator <img/);
             assert.equal(await page.locator('#historySubtitleText img').count(), 0);
             assert.match(await page.locator('#historySubtitleNotice').textContent(), /file is missing/);
+            assert.equal(await page.locator('#historySubtitlePreview iframe').count(), 0);
+            await page.waitForFunction(
+                () => globalThis.document.getElementById('historySubtitleVideo').readyState >= 2
+            );
+            await page.locator('#historySubtitleText .pinefetch-text-time').first().click();
+            await page.waitForFunction(
+                () => Math.abs(globalThis.document.getElementById('historySubtitleVideo').currentTime - 1) < 0.1
+            );
             await page.locator('#historySubtitleCopyBtn').click();
             await page.waitForFunction(() => globalThis.__pinefetchUi.copied.startsWith('WEBVTT'));
             await page.locator('#historySubtitleSearchInput').fill('creator');
@@ -1470,11 +1478,45 @@ try {
             await page.locator('#historySubtitleText').waitFor();
             assert.match(await page.locator('#historySubtitleText').textContent(), /Grüße/);
             assert.match(await page.locator('#historySubtitleNotice').textContent(), /starts at 61s/);
+            await page.locator('#historySubtitleText .pinefetch-text-time').nth(1).click();
+            await page.waitForFunction(
+                () => Math.abs(globalThis.document.getElementById('historySubtitleVideo').currentTime - 3) < 0.1
+            );
+            await page.locator('#historySubtitleVideo').evaluate(video => {
+                video.currentTime = 1.5;
+                video.dispatchEvent(new Event('timeupdate'));
+            });
+            assert.equal(
+                await page.locator('#historySubtitleText [aria-current="true"] .pinefetch-text-time').textContent(),
+                '00:01:02.000'
+            );
+            // A language change keeps the same player and current local time.
+            const subtitleMediaRequests = await page.evaluate(
+                () => globalThis.__pinefetchUi.commands.filter(call => call.command === 'get_history_media').length
+            );
+            await page.locator('#historySubtitleTrackSelect').selectOption('/fixture/video.en.vtt');
+            await page.locator('#historySubtitleText').waitFor();
+            assert.equal(
+                await page.locator('#historySubtitleText [aria-current="true"] .pinefetch-text-time').textContent(),
+                '00:00:01.000'
+            );
+            assert.equal(
+                await page.evaluate(
+                    () => globalThis.__pinefetchUi.commands.filter(call => call.command === 'get_history_media').length
+                ),
+                subtitleMediaRequests
+            );
+            assert(
+                Math.abs((await page.locator('#historySubtitleVideo').evaluate(video => video.currentTime)) - 1.5) < 0.1
+            );
+            await page.locator('#historySubtitleTrackSelect').selectOption('/fixture/video.de.srt');
+            await page.locator('#historySubtitleText').waitFor();
             const subtitleHeights = [];
             for (const viewport of [
                 { width: 1400, height: 960 },
                 { width: 1400, height: 1200 },
                 { width: 1000, height: 720 },
+                { width: 600, height: 720 },
             ]) {
                 await page.setViewportSize(viewport);
                 const layout = await page.locator('#historySubtitlesPanel').evaluate(panel => {
@@ -1482,11 +1524,16 @@ try {
                         .getElementById('historySubtitleListViewport')
                         .getBoundingClientRect();
                     const meta = globalThis.document.getElementById('historySubtitleMeta').getBoundingClientRect();
-                    return { text, meta, panel: panel.getBoundingClientRect() };
+                    const media = globalThis.document
+                        .querySelector('#historySubtitlePreview .pinefetch-media-stage')
+                        .getBoundingClientRect();
+                    return { text, meta, media, panel: panel.getBoundingClientRect() };
                 });
                 assert(layout.meta.y >= layout.text.bottom, JSON.stringify(layout));
                 assert(layout.meta.y - layout.text.bottom <= 9, JSON.stringify(layout));
                 assert(layout.meta.bottom <= layout.panel.bottom + 1, JSON.stringify(layout));
+                assert(layout.media.x >= layout.text.right, JSON.stringify(layout));
+                assert(Math.abs(layout.media.width / layout.media.height - 16 / 9) < 0.01, JSON.stringify(layout));
                 subtitleHeights.push(layout.text.height);
                 await page.screenshot({
                     path: `/tmp/pinefetch-subtitles-${viewport.width}x${viewport.height}-${engine.name()}.png`,
@@ -1496,6 +1543,9 @@ try {
             assert(subtitleHeights[2] < subtitleHeights[0], JSON.stringify(subtitleHeights));
             await page.setViewportSize({ width: 1400, height: 960 });
             await page.screenshot({ path: `/tmp/pinefetch-subtitles-${engine.name()}.png` });
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.localVideo = false;
+            });
             await page.locator('#historySubtitlesTab').focus();
             await page.keyboard.press('ArrowRight');
             assert.equal(await page.locator('#historyOcrTab').getAttribute('aria-selected'), 'true');
@@ -1511,6 +1561,7 @@ try {
             );
             await page.locator('#historyDetailsHistoryBtn').click();
             await page.locator('#historyDetailsView').waitFor({ state: 'hidden' });
+            assert.equal(await page.locator('#historySubtitleVideo').getAttribute('src'), null);
             await page.waitForFunction(
                 () =>
                     globalThis.document.querySelector('.pinefetch-history-open-btn') ===
@@ -2895,9 +2946,7 @@ try {
             await page.locator('#historyAccountRemoteList button').click();
             await page.evaluate(() => globalThis.__pinefetchUi.setHistoryEntries(null));
             await page.locator('#downloadView').waitFor();
-            await page.waitForFunction(
-                () => globalThis.document.querySelector('#infoTitle').textContent !== 'No video loaded'
-            );
+            await page.locator('#infoCard').waitFor();
             assert.equal(await page.locator('#urlInput').inputValue(), videos[0].url);
             await page.locator('#viewHistoryBtn').click();
             await page.locator('#historyAccountHistoryBtn').click();
@@ -3614,7 +3663,7 @@ try {
             await page.evaluate(() => globalThis.__pinefetchUi.releaseIdInfo());
             await page.locator('#viewDownloadBtn').click();
             await page.waitForFunction(() => globalThis.document.getElementById('loadInfoBtn').disabled === false);
-            assert.equal(await page.locator('#infoTitle').textContent(), 'No video loaded');
+            assert(await page.locator('#infoCard').isHidden());
             assert(await page.locator('#videoInputHelp').isHidden());
             await idInput.fill('');
             await page.evaluate(() => {
@@ -3628,7 +3677,10 @@ try {
                 globalThis.__pinefetchUi.failNextIdImportSave = true;
             });
             await page.locator('#viewSettingsBtn').click();
-            await idToggle.check();
+            // This save intentionally fails and rolls the switch back to off.
+            // click() permits that rollback; check() requires it to stay checked.
+            assert.equal(await idToggle.isChecked(), false);
+            await idToggle.click();
             await page.waitForFunction(() =>
                 globalThis.document
                     .getElementById('settingsSaveStatus')

@@ -247,6 +247,7 @@ const els = Object.seal({
     historySubtitleSearchInput: document.getElementById('historySubtitleSearchInput'),
     historySubtitleResultCount: document.getElementById('historySubtitleResultCount'),
     historySubtitleListViewport: document.getElementById('historySubtitleListViewport'),
+    historySubtitlePreview: document.getElementById('historySubtitlePreview'),
     historySubtitleMeta: document.getElementById('historySubtitleMeta'),
     historySubtitleNotice: document.getElementById('historySubtitleNotice'),
     historySubtitleStatus: document.getElementById('historySubtitleStatus'),

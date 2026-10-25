@@ -12,7 +12,7 @@ use std::time::Duration;
 
 #[derive(Default)]
 pub(crate) struct HistoryMediaState {
-    // Transcript and OCR can request the same derivative simultaneously.
+    // Transcript, Subtitles and OCR can request the same derivative simultaneously.
     conversion: Mutex<()>,
 }
 

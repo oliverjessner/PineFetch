@@ -658,7 +658,7 @@ fn wal_snapshot_restores_committed_contents_and_links_on_an_isolated_copy() {
     let mut restored = Connection::open(f.path("restored synthetic.sqlite3")).unwrap();
     restored
         .restore(
-            rusqlite::DatabaseName::Main,
+            rusqlite::MAIN_DB,
             &backup_path,
             None::<fn(rusqlite::backup::Progress)>,
         )

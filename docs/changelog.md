@@ -1,6 +1,7 @@
 # 2.6.2
 
 - building fixe for new rust deps
+- Updated the WAL snapshot restore test to use rusqlite 0.40's database name API.
 
 # 2.6.1
 

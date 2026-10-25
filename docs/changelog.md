@@ -1,6 +1,11 @@
+# 2.6.2
+
+- building fixe for new rust deps
+
 # 2.6.1
 
 - Updated @puppeteer/browsers to 3.2.6, puppeteer-core to 25.16.0 and @tauri-apps/cli to 2.12.4.
+- Fixed Rust compilation with rusqlite 0.40 by enabling the required unsigned integer conversions for OCR and saved insights.
 
 # 2.6.0
 

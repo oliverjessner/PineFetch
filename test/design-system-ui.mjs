@@ -593,12 +593,19 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             ui.emit('history:ocr', { ...progress, status: 'cancelled' });
             return;
         }
-        if (command === 'get_history_media')
+        if (command === 'get_history_media') {
+            if (args.compatible) {
+                if (!ui.compatibleVideo) throw new Error('Synthetic playback preparation failure');
+                return '/__history-preview.mp4';
+            }
             return ui.localVideo === 'broken'
                 ? '/__history-failed.mp4'
-                : ui.localVideo
-                  ? '/__history-preview.mp4'
-                  : null;
+                : ui.localVideo === 'unsupported'
+                  ? '/__history-unsupported.mp4'
+                  : ui.localVideo
+                    ? '/__history-preview.mp4'
+                    : null;
+        }
         if (command === 'get_history_transcript') {
             return {
                 language: 'de',
@@ -657,6 +664,8 @@ try {
                             resolve(route.fulfill({ contentType: 'video/mp4', body: 'Undecodable video fixture' }));
                         failedVideoReady();
                     });
+                if (url === `${origin}/__history-unsupported.mp4`)
+                    return route.fulfill({ contentType: 'video/mp4', body: 'Undecodable original video fixture' });
                 if (url === `${origin}/__history-preview.mp4`) {
                     const range = route
                         .request()
@@ -677,11 +686,6 @@ try {
                         body: previewVideo.subarray(start, end + 1),
                     });
                 }
-                if (new URL(url).hostname === 'www.youtube-nocookie.com')
-                    return route.fulfill({
-                        contentType: 'text/html',
-                        body: '<!doctype html><title>Offline embed fixture</title><body style="margin:0;background:#0f1114"></body>',
-                    });
                 if (new URL(url).origin === origin) return route.continue();
                 if (new URL(url).hostname === 'i.ytimg.com' && route.request().resourceType() === 'image') {
                     return route.fulfill({
@@ -1321,15 +1325,28 @@ try {
             assert(await page.locator('#historyCaptionNotice').isVisible());
             await page.locator('#historyCaptionTrackSelect').selectOption({ index: 0 });
             await page.evaluate(() => {
-                globalThis.__pinefetchUi.localVideo = true;
+                globalThis.__pinefetchUi.localVideo = 'unsupported';
+                globalThis.__pinefetchUi.compatibleVideo = true;
             });
             await page.locator('#historyOverviewTab').focus();
             await page.keyboard.press('ArrowRight');
             await page.locator('#historyTranscriptText').waitFor();
+            assert.equal(await page.locator('#historyTranscriptPreview iframe').count(), 0);
             assert.equal(await page.locator('#historyTranscriptText img').count(), 0);
             await page.waitForFunction(
                 () => globalThis.document.getElementById('historyTranscriptVideo').readyState >= 1
             );
+            assert(
+                await page.evaluate(() =>
+                    globalThis.__pinefetchUi.commands.some(
+                        call => call.command === 'get_history_media' && call.args.compatible === true
+                    )
+                )
+            );
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.localVideo = true;
+                globalThis.__pinefetchUi.compatibleVideo = false;
+            });
             await page.locator('#historyTranscriptText .pinefetch-text-time').nth(1).click();
             await page
                 .waitForFunction(
@@ -2635,7 +2652,7 @@ try {
             });
 
             // A stalled native decoder must not suppress OCR previews, and a later
-            // decode error must not cover the already displayed image with an embed.
+            // decode error must preserve the already displayed image.
             await page.evaluate(() => {
                 globalThis.__pinefetchUi.localVideo = 'broken';
             });
@@ -2647,10 +2664,10 @@ try {
             await releaseFailedVideo();
             await page.locator('#historyOcrVideo').waitFor({ state: 'hidden' });
             assert(await page.locator('#historyOcrFrame').isVisible());
-            assert(await page.locator('#historyOcrPreview iframe').isHidden());
+            assert.equal(await page.locator('#historyOcrPreview iframe').count(), 0);
             await page.locator('.pinefetch-ocr-select').nth(1).click();
             await page.locator('#historyOcrFrame').waitFor();
-            assert(await page.locator('#historyOcrPreview iframe').isHidden());
+            assert.equal(await page.locator('#historyOcrPreview iframe').count(), 0);
             await closeDetails();
             await page.evaluate(() => {
                 globalThis.__pinefetchUi.localVideo = false;

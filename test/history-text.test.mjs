@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { textEntries, textTimestamp, timestampMilliseconds, textMatches, entryAtTime } from '../src/history-text.js';
-import { youtubeEmbedSource } from '../src/history-media-view.js';
 
 test('reads real Whisper ranges, SRT and WebVTT without changing the source text', () => {
     const whisper = '[00:00:01.250 → 00:00:02.000] Grüße 🌲\n[00:00:03.000 → 00:00:04.000] Second';
@@ -51,20 +50,4 @@ test('search treats regex characters literally and returns Unicode-safe highligh
         { start: 5, end: 7 },
     ]);
     assert.deepEqual(textMatches('anything', '  '), []);
-});
-test('embed fallback accepts only canonical video IDs from supported YouTube hosts', () => {
-    for (const url of [
-        'https://youtu.be/jNQXAC9IVRw',
-        'https://www.youtube.com/watch?v=jNQXAC9IVRw',
-        'https://www.youtube.com/shorts/jNQXAC9IVRw',
-    ])
-        assert.equal(youtubeEmbedSource(url, 3.8), 'https://www.youtube-nocookie.com/embed/jNQXAC9IVRw?start=3&rel=0');
-    for (const url of [
-        'javascript:alert(1)',
-        'https://youtube.com.evil.test/watch?v=jNQXAC9IVRw',
-        'https://example.com/watch?v=jNQXAC9IVRw',
-        'https://youtube.com/watch?v=../secret',
-        'not a URL',
-    ])
-        assert.equal(youtubeEmbedSource(url), null);
 });

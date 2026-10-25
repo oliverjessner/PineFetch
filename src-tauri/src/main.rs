@@ -26,6 +26,7 @@ mod events;
 mod files;
 mod hashing;
 mod history;
+mod history_media;
 mod history_rules;
 #[cfg(test)]
 mod http_failure_tests;

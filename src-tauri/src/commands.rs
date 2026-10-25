@@ -227,20 +227,58 @@ pub(crate) fn get_history_stats(state: State<AppState>) -> Result<HistoryStats, 
 }
 
 // The asset protocol starts with an empty scope. Authorize only the exact
-// video resolved from this History ID, never a caller-supplied filesystem path.
+// video or playback derivative resolved from this History ID, never a caller path.
 #[tauri::command]
-pub(crate) fn get_history_media(
+pub(crate) async fn get_history_media(
     app: AppHandle,
-    state: State<'_, AppState>,
     id: String,
+    compatible: Option<bool>,
 ) -> Result<String, String> {
-    let path = crate::history::local_history_media_path(&state.db, &id)?;
-    app.asset_protocol_scope()
-        .allow_file(&path)
-        .map_err(|_| "The saved video could not be opened")?;
-    path.into_os_string()
-        .into_string()
-        .map_err(|_| "The saved video path is not valid Unicode".into())
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let source = crate::history::local_history_media_path(&state.db, &id)?;
+        let identity = crate::ocr::fingerprint(&source)?;
+        let directory = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| format!("Playback cache unavailable: {e}"))?
+            .join("history-media");
+        let path = if let Some(path) = crate::history_media::cached(&directory, &source)? {
+            path
+        } else if compatible.unwrap_or(false) {
+            let configured = state
+                .config
+                .lock()
+                .map_err(|_| "Config lock poisoned")?
+                .yt_dlp_path
+                .clone();
+            let tools =
+                crate::runtime::resolve_ffmpeg_location(&app, configured.as_deref().unwrap_or(""))
+                    .ok_or("FFmpeg is required to prepare this video for local playback.")?;
+            state.history_media.prepare(
+                &directory,
+                &source,
+                &std::path::Path::new(&tools).join(crate::runtime::ffmpeg_tool_name()),
+                &state.processes,
+            )?
+        } else {
+            source.clone()
+        };
+        if crate::history::local_history_media_path(&state.db, &id)? != source
+            || crate::ocr::fingerprint(&source)? != identity
+        {
+            return Err("The saved video changed while preparing playback. Reopen the tab.".into());
+        }
+        let path = fs::canonicalize(path).map_err(|e| format!("Playback file unavailable: {e}"))?;
+        app.asset_protocol_scope()
+            .allow_file(&path)
+            .map_err(|_| "The saved video could not be opened")?;
+        path.into_os_string()
+            .into_string()
+            .map_err(|_| "The saved video path is not valid Unicode".into())
+    })
+    .await
+    .map_err(|e| format!("Local playback failed: {e}"))?
 }
 
 #[tauri::command]

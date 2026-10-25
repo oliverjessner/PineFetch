@@ -26,7 +26,7 @@
         ],
         "security": {
             "assetProtocol": { "enable": true, "scope": [] },
-            "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data: asset: http://asset.localhost; connect-src 'self' https://api.github.com; media-src 'self' asset: http://asset.localhost https://asset.localhost; frame-src https://www.youtube-nocookie.com; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+            "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data: asset: http://asset.localhost; connect-src 'self' https://api.github.com; media-src 'self' asset: http://asset.localhost https://asset.localhost; frame-src 'none'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
         }
     },
     "bundle": {

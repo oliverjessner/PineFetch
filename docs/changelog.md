@@ -1,5 +1,8 @@
 # 2.6.0
 
+- Transcript and OCR players now use only the saved video on disk, with local-file notices and OCR frame previews when playback is unavailable. Removed the remote YouTube embed fallback.
+- Added automatic cached H.264/AAC playback previews when the platform cannot decode a saved video (including unsupported AV1/WebM files), preserving timestamp navigation and the original file.
+
 - Added opt-in ID import (off by default): recognize 11-character YouTube IDs and explicit youtube:, tiktok: and instagram: inputs in Download, Magic import and TXT files, with platform hints for ambiguous IDs.
 
 - Fixed blank History media previews when native video decoding stalls or fails: selected OCR frames stay visible until a video frame is decoded and remain available after playback errors.

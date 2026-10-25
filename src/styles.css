@@ -1450,7 +1450,7 @@ body {
     overflow: hidden;
     background: var(--oj-bg);
 }
-.pinefetch-media-stage > :is(video, iframe, img) {
+.pinefetch-media-stage > :is(video, img) {
     position: absolute;
     inset: 0;
     width: 100%;

@@ -37,11 +37,13 @@ export const createHistoryDetailsView = ({
     const transcriptMedia = createHistoryMediaView({
         root: els.historyTranscriptPreview,
         api,
+        appendLog,
         onTime: seconds => transcriptReader?.sync(seconds),
     });
     const ocrMedia = createHistoryMediaView({
         root: els.historyOcrPreview,
         api,
+        appendLog,
         onTime: seconds => ocrView?.syncTime(seconds),
     });
     transcriptReader = createTextReader({
@@ -383,8 +385,8 @@ export const createHistoryDetailsView = ({
             renderOverview(details);
             renderCaptionOptions(details.captions || []);
             subtitlesView.reset(entryId, details.subtitles || []);
-            transcriptMedia.setEntry({ id: entryId, url: details.entry?.url, thumbnail: details.entry?.thumbnail });
-            ocrMedia.setEntry({ id: entryId, url: details.entry?.url, thumbnail: details.entry?.thumbnail });
+            transcriptMedia.setEntry({ id: entryId });
+            ocrMedia.setEntry({ id: entryId });
             if (details.captions?.length) void loadSelectedCaption();
             els.historyDetailsContent.hidden = false;
             if (ocr || jobs.get(entryId)?.status === 'running') els.historyOcrTab.click();

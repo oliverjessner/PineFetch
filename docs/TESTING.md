@@ -81,11 +81,19 @@ keyboard selection and the original SRT/WebVTT/Whisper timestamp forms.
 only for playback tests. Its fixture HTTP response supports byte ranges, matching
 the native asset protocol. Transcript and OCR tests seek the real video element,
 check playback selection and exercise OCR's existing image fallback after a player
-error. Remote YouTube frames are intercepted by the offline test; this suite does
-not assert availability or embedding permission for a live YouTube video.
-`history-text.test.mjs` also checks literal search ranges, precise timestamps and
-spoofed/unsupported embed URLs. The Rust History media test checks ID-scoped file
-resolution, missing files and canonical-path validation.
+error. Both readers use local playback only, without remote embeds.
+`history-text.test.mjs` also checks literal search ranges and precise timestamps.
+`history-media.test.mjs` covers missing local files, decoder errors, delayed frames
+and tab changes during loading, plus automatic compatibility preparation, pending
+seeks, conversion failures and protection against repeated fallback loops. The UI
+suite simulates an unsupported original and plays the returned H.264 fixture.
+The Rust History media tests check ID-scoped file resolution, missing files and
+canonical-path validation. `history_media` integration tests cover cache reuse,
+source invalidation and failed/stale output cleanup with an isolated fake encoder.
+On macOS, `integration_playback_prepares_h264_aac_with_the_bundled_runtime` also
+generates a two-second FFV1/PCM clip and checks the real derivative's H.264/AAC
+codecs and duration using bundled FFmpeg/ffprobe. It reports a skip notice if the
+runtime has not been prepared. Real WKWebView playback remains a manual app check.
 
 ## Inventory and error catalog
 

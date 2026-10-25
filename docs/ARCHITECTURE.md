@@ -184,9 +184,19 @@ Social Insights and Keywords tabs. `history-text.js` owns timestamp parsing and 
 search matching; `history-text-view.js` provides safe highlighting, entries, keyboard
 selection and full-text copy. OCR retains its native paging, export and revision guards.
 `history-media-view.js` provides the shared local player, timestamp seeking and playback
-selection, with an allowlisted YouTube embed or OCR frame fallback. `get_history_media`
-resolves a video by History ID using the existing retained-video resolver and grants
-that exact canonical file in an initially empty Tauri asset scope. It accepts no file
+selection from the saved video on disk, with an OCR frame fallback. Playback never
+loads a remote embed. If native decoding fails or stalls for 12 seconds, it requests
+`get_history_media` with `compatible: true`. `history_media` uses the existing FFmpeg
+runtime and utility process registry to prepare an H.264/AAC MP4 (at most 1280×720,
+YUV 4:2:0, faststart) in the app cache's `history-media` directory. Preparation runs
+off the UI thread with a 30-minute limit and is serialized across both readers.
+The source file is never replaced. Cache keys include the canonical source path and
+its filesystem fingerprint; changed sources invalidate the cache. Only completed
+outputs are published. The saved path and fingerprint are rechecked before access
+is granted. The player keeps pending timestamp selections during preparation and
+ignores replies after navigation; preparation may finish for later cache reuse.
+`get_history_media` resolves the source by History ID and grants only the canonical
+source or derivative file in an initially empty Tauri asset scope. It accepts no file
 path from the frontend. `history-ocr-view.js` loads results lazily through the API client. History's cached
 list and scroll position survive detail navigation. Compact OCR summaries travel
 with each History page using a LEFT JOIN, without result text or per-entry queries.

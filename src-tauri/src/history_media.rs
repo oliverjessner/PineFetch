@@ -145,7 +145,11 @@ mod tests {
             Some(Duration::from_secs(20)),
         )
         .unwrap();
-        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
         let original = fs::read(&source).unwrap();
         let prepared = HistoryMediaState::default()
             .prepare(&root.path("cache"), &source, &ffmpeg, &processes)
@@ -153,7 +157,14 @@ mod tests {
         assert_eq!(fs::read(&source).unwrap(), original);
         let mut probe = Command::new(ffprobe);
         probe
-            .args(["-v", "error", "-show_streams", "-show_format", "-of", "json"])
+            .args([
+                "-v",
+                "error",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+            ])
             .arg(&prepared);
         let output = process::run_command_output(
             probe,
@@ -165,11 +176,20 @@ mod tests {
         assert!(output.status.success());
         let data: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         let streams = data["streams"].as_array().unwrap();
-        assert!(streams.iter().any(|s| s["codec_name"] == "h264" && s["pix_fmt"] == "yuv420p"));
+        assert!(streams
+            .iter()
+            .any(|s| s["codec_name"] == "h264" && s["pix_fmt"] == "yuv420p"));
         assert!(streams.iter().any(|s| s["codec_name"] == "aac"));
-        let duration: f64 = data["format"]["duration"].as_str().unwrap().parse().unwrap();
+        let duration: f64 = data["format"]["duration"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
         assert!((duration - 2.0).abs() < 0.15, "{duration}");
-        assert_eq!(cached(&root.path("cache"), &source).unwrap(), Some(prepared));
+        assert_eq!(
+            cached(&root.path("cache"), &source).unwrap(),
+            Some(prepared)
+        );
     }
 
     #[cfg(unix)]
@@ -203,17 +223,26 @@ printf '\000\000\000\040ftypisom000000000000000000000000' > "$output"
         let tool = fixture_tool(&root, SUCCESS);
         let state = HistoryMediaState::default();
         let processes = ProcessState::default();
-        let prepared = state.prepare(&directory, &source, &tool, &processes).unwrap();
+        let prepared = state
+            .prepare(&directory, &source, &tool, &processes)
+            .unwrap();
         assert_eq!(fs::read(&source).unwrap(), b"original video");
         assert_eq!(cached(&directory, &source).unwrap(), Some(prepared.clone()));
         // An unavailable encoder cannot affect an already completed cache entry.
         let reused = state
-            .prepare(&directory, &source, &root.path("missing-ffmpeg"), &processes)
+            .prepare(
+                &directory,
+                &source,
+                &root.path("missing-ffmpeg"),
+                &processes,
+            )
             .unwrap();
         assert_eq!(reused, prepared);
         fs::write(&source, b"changed and longer original video").unwrap();
         assert_eq!(cached(&directory, &source).unwrap(), None);
-        let changed = state.prepare(&directory, &source, &tool, &processes).unwrap();
+        let changed = state
+            .prepare(&directory, &source, &tool, &processes)
+            .unwrap();
         assert_ne!(changed, prepared);
     }
 
@@ -226,14 +255,20 @@ printf '\000\000\000\040ftypisom000000000000000000000000' > "$output"
         let directory = root.path("cache");
         let state = HistoryMediaState::default();
         let processes = ProcessState::default();
-        let failed = fixture_tool(&root, &format!("{SUCCESS}\necho 'encoder failed' >&2\nexit 1"));
+        let failed = fixture_tool(
+            &root,
+            &format!("{SUCCESS}\necho 'encoder failed' >&2\nexit 1"),
+        );
         assert!(state
             .prepare(&directory, &source, &failed, &processes)
             .unwrap_err()
             .contains("encoder failed"));
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
         assert_eq!(fs::read(&source).unwrap(), b"original video");
-        let changed = fixture_tool(&root, &format!("{SUCCESS}\nprintf ' changed' >> \"$source\""));
+        let changed = fixture_tool(
+            &root,
+            &format!("{SUCCESS}\nprintf ' changed' >> \"$source\""),
+        );
         assert!(state
             .prepare(&directory, &source, &changed, &processes)
             .unwrap_err()

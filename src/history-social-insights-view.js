@@ -131,6 +131,14 @@ export const createHistorySocialInsightsView = ({ els, api, appendLog, profileMe
         state.error = '';
         render();
     };
+    const hydrate = (id, content) => {
+        // An account page already includes its saved snapshot. Never replace a
+        // newer refresh, a pending local read or a failure with that older page.
+        if (id !== state.id || state.reading || state.content !== undefined || state.error) return false;
+        state.content = content || null;
+        render();
+        return true;
+    };
     const load = async () => {
         if (!state.id || state.reading || state.content !== undefined || !api.available) return;
         const id = state.id;
@@ -203,5 +211,5 @@ export const createHistorySocialInsightsView = ({ els, api, appendLog, profileMe
             }
         });
     };
-    return Object.freeze({ reset, load, bindEvents });
+    return Object.freeze({ reset, hydrate, load, bindEvents });
 };

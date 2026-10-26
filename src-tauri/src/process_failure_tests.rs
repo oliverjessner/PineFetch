@@ -1,14 +1,15 @@
 //! Real local process and filesystem boundaries; no platform runtime or downloads.
 use crate::files::{publish_unique_output, OwnedTemporaryFile};
 use crate::process::{
-    run_command_output, terminate_child_process_tree, ProcessError, ProcessState,
+    run_command_output, run_command_streaming, terminate_child_process_tree, ProcessError,
+    ProcessState, OUTPUT_DRAIN_TIMEOUT,
 };
 use crate::test_support::{FakeProcess, TempRoot, TEST_TIMEOUT};
 use crate::worker::request_active_job_cancellation;
 use crate::worker::stop_active_download_on_exit;
 use crate::yt_dlp::{parse_caption_line, parse_download_metadata_line, parse_info_json};
 use std::fs;
-use std::process::{Command, Output};
+use std::process::{Command, ExitStatus, Output};
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -53,6 +54,223 @@ fn registered_child(state: &ProcessState) -> Arc<std::sync::Mutex<std::process::
         );
         thread::yield_now();
     }
+}
+
+fn start_streaming_runner(
+    command: Command,
+    state: Arc<ProcessState>,
+) -> (
+    mpsc::Receiver<Result<ExitStatus, ProcessError>>,
+    thread::JoinHandle<()>,
+) {
+    let (sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let result = run_command_streaming(command, &state, |_| {}, |_| {});
+        let _ = sender.send(result);
+    });
+    (receiver, handle)
+}
+
+#[test]
+fn integration_streaming_preserves_crlf_final_metadata_language_and_partial_errors() {
+    let fake = FakeProcess::new("streaming-lines");
+    let state = ProcessState::default();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let status = run_command_streaming(
+        fake.command(),
+        &state,
+        |line| stdout.push(line.to_string()),
+        |line| stderr.push(line.to_string()),
+    )
+    .unwrap();
+    assert_eq!(status.code(), Some(7));
+    assert_eq!(stdout.len(), 3);
+    assert_eq!(stdout[0], "[download] 100.0% at 1.0MiB/s ETA 00:00");
+    assert_eq!(
+        parse_download_metadata_line(&stdout[1])
+            .unwrap()
+            .1
+            .title
+            .as_deref(),
+        Some("Final metadata")
+    );
+    assert_eq!(
+        crate::media_tools::parse_transcription_line(&stdout[2]),
+        crate::media_tools::TranscriptionLine::Language(Some("de".into()))
+    );
+    assert_eq!(stderr, ["first diagnostic", "last diagnostic"]);
+    assert!(state.current_child.lock().unwrap().is_none());
+}
+
+#[test]
+fn integration_streaming_delivers_progress_before_exit_and_drains_the_last_line() {
+    let fake = FakeProcess::new("slow-output");
+    let (command, control) = fake.controlled_command();
+    let state = Arc::new(ProcessState::default());
+    let runner_state = state.clone();
+    let (sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        run_command_streaming(
+            command,
+            &runner_state,
+            |line| sender.send(line.to_owned()).unwrap(),
+            |_| {},
+        )
+    });
+    let ready = control.wait_ready();
+    assert!(receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .unwrap()
+        .contains("10.0%"));
+    assert!(
+        !handle.is_finished(),
+        "progress must arrive while the process is still running"
+    );
+    assert_eq!(registered_child(&state).lock().unwrap().id(), ready.pid);
+    ready.release();
+    assert!(receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .unwrap()
+        .contains("100.0%"));
+    assert!(handle.join().unwrap().unwrap().success());
+    assert!(state.current_child.lock().unwrap().is_none());
+}
+
+#[test]
+fn integration_streaming_spawn_failure_and_pre_registration_cancel_leave_no_child() {
+    let root = TempRoot::new("streaming-spawn");
+    let state = ProcessState::default();
+    let error = run_command_streaming(
+        Command::new(root.path("missing executable")),
+        &state,
+        |_| panic!("missing executable must not emit output"),
+        |_| panic!("missing executable must not emit output"),
+    )
+    .unwrap_err();
+    assert!(matches!(error, ProcessError::Spawn(_)));
+    assert!(state.current_child.lock().unwrap().is_none());
+
+    let fake = FakeProcess::new("hang");
+    *state.current_job_id.lock().unwrap() = Some("cancel-before-registration".into());
+    *state.cancel_requested.lock().unwrap() = Some("cancel-before-registration".into());
+    let status = run_command_streaming(fake.command(), &state, |_| {}, |_| {}).unwrap();
+    assert!(!status.success());
+    assert!(state.current_child.lock().unwrap().is_none());
+}
+
+#[test]
+fn integration_streaming_cancellation_reaps_the_registered_process() {
+    let fake = FakeProcess::new("hang");
+    let (command, control) = fake.controlled_command();
+    let state = Arc::new(ProcessState::default());
+    *state.current_job_id.lock().unwrap() = Some("streaming-cancel".into());
+    let (receiver, handle) = start_streaming_runner(command, state.clone());
+    let _ready = control.wait_ready();
+    let child = registered_child(&state);
+    request_active_job_cancellation(&state, "streaming-cancel").unwrap();
+    assert!(!receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .unwrap()
+        .unwrap()
+        .success());
+    handle.join().unwrap();
+    assert!(child.lock().unwrap().try_wait().unwrap().is_some());
+    assert!(state.current_child.lock().unwrap().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn integration_streaming_inherited_pipes_are_bounded_and_the_descendant_is_stopped() {
+    let fake = FakeProcess::new("spawn-child");
+    let (mut command, control) = fake.controlled_command();
+    command.arg("--parent-exits");
+    let state = Arc::new(ProcessState::default());
+    let (receiver, handle) = start_streaming_runner(command, state.clone());
+    let ready = control.wait_ready();
+    let descendant_pid = ready.child_pid;
+    let _cleanup = crate::test_support::DescendantCleanup::new(&ready);
+    let child = registered_child(&state);
+    let started = Instant::now();
+    ready.release();
+    assert!(receiver.recv_timeout(Duration::from_millis(200)).is_err());
+    assert!(
+        state.current_child.lock().unwrap().is_some(),
+        "keep the child registered throughout pipe drain"
+    );
+    let result = receiver.recv_timeout(TEST_TIMEOUT).unwrap();
+    handle.join().unwrap();
+    assert!(matches!(result, Err(ProcessError::OutputDrain)));
+    assert!(started.elapsed() >= OUTPUT_DRAIN_TIMEOUT);
+    assert!(started.elapsed() < OUTPUT_DRAIN_TIMEOUT + Duration::from_secs(3));
+    assert!(child.lock().unwrap().try_wait().unwrap().is_some());
+    assert!(state.current_child.lock().unwrap().is_none());
+    crate::test_support::assert_process_stopped(descendant_pid);
+}
+
+#[test]
+fn integration_streaming_rejects_an_oversized_line_and_reaps_its_writer() {
+    let fake = FakeProcess::new("oversized-line");
+    let state = ProcessState::default();
+    let error = run_command_streaming(fake.command(), &state, |_| {}, |_| {}).unwrap_err();
+    assert!(
+        matches!(error, ProcessError::Read(ref cause) if cause.kind() == std::io::ErrorKind::InvalidData)
+    );
+    assert!(state.current_child.lock().unwrap().is_none());
+}
+
+#[test]
+fn integration_streaming_keeps_split_unicode_and_rejects_invalid_utf8() {
+    let fake = FakeProcess::new("split-unicode");
+    let state = ProcessState::default();
+    let mut lines = Vec::new();
+    assert!(run_command_streaming(
+        fake.command(),
+        &state,
+        |line| lines.push(line.to_owned()),
+        |_| {}
+    )
+    .unwrap()
+    .success());
+    assert_eq!(
+        lines,
+        [format!("{}🌲", "a".repeat(16383)), "last line".into()]
+    );
+    let invalid = FakeProcess::new("malformed-output");
+    let error = run_command_streaming(invalid.command(), &state, |_| {}, |_| {}).unwrap_err();
+    assert!(
+        matches!(error, ProcessError::Read(ref cause) if cause.kind() == std::io::ErrorKind::InvalidData)
+    );
+    assert!(state.current_child.lock().unwrap().is_none());
+}
+
+#[test]
+fn integration_streaming_shutdown_reaps_the_child_and_finishes_the_runner() {
+    let fake = FakeProcess::new("hang");
+    let (command, control) = fake.controlled_command();
+    let state = Arc::new(crate::state::AppState::new(
+        crate::models::AppConfig::default(),
+        rusqlite::Connection::open_in_memory().unwrap(),
+    ));
+    *state.processes.current_job_id.lock().unwrap() = Some("streaming-shutdown".into());
+    let runner_state = state.clone();
+    let (sender, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let result = run_command_streaming(command, &runner_state.processes, |_| {}, |_| {});
+        let _ = sender.send(result);
+    });
+    let _ready = control.wait_ready();
+    let child = registered_child(&state.processes);
+    stop_active_download_on_exit(&state);
+    assert!(!receiver
+        .recv_timeout(TEST_TIMEOUT)
+        .unwrap()
+        .unwrap()
+        .success());
+    handle.join().unwrap();
+    assert!(child.lock().unwrap().try_wait().unwrap().is_some());
+    assert!(state.processes.current_child.lock().unwrap().is_none());
+    assert!(state.processes.shutting_down.load(Ordering::SeqCst));
 }
 
 #[test]

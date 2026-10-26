@@ -370,8 +370,6 @@ pub(crate) struct LinkDumpSettingsPatch {
 #[derive(Debug, Clone)]
 pub(crate) struct ValidSecretResult {
     pub(crate) id: String,
-    #[allow(dead_code)]
-    pub(crate) name: String,
 }
 
 #[derive(Debug, Clone)]

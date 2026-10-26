@@ -54,6 +54,9 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             ).join('\n'),
         commands: [],
         copied: '',
+        holdCopy: false,
+        releaseCopy: null,
+        failNextCopy: false,
         ocrRecords: {},
         socialRecords: {},
         accountRecords: {},
@@ -68,6 +71,8 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
         failProfileVideos: false,
         emptyProfileVideos: false,
         failAccountRead: false,
+        holdAccountRead: false,
+        releaseAccountRead: null,
         keywordRecords: { 'history-1': keywordFixture },
         holdKeywords: false,
         releaseKeywords: null,
@@ -138,6 +143,20 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
     Object.defineProperty(globalThis.navigator, 'clipboard', {
         value: {
             writeText: async text => {
+                if (ui.holdCopy) {
+                    ui.holdCopy = false;
+                    await new Promise((resolve, reject) => {
+                        ui.releaseCopy = (failed = false) => {
+                            ui.releaseCopy = null;
+                            if (failed) reject(new Error('Fixture clipboard failure'));
+                            else resolve();
+                        };
+                    });
+                }
+                if (ui.failNextCopy) {
+                    ui.failNextCopy = false;
+                    throw new Error('Fixture clipboard failure');
+                }
                 ui.copied = text;
             },
         },
@@ -323,7 +342,7 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             if (!entry) throw new Error('Missing fixture account');
             const matching = entries.filter(row => row.uploader === entry.uploader && row.source === entry.source);
             const offset = args.offset || 0;
-            return {
+            const page = {
                 source: entry.source,
                 uploader: entry.uploader,
                 saved: {
@@ -333,6 +352,16 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
                 },
                 insights: structuredClone(ui.accountRecords[entry.uploader] || null),
             };
+            if (ui.holdAccountRead) {
+                ui.holdAccountRead = false;
+                return new Promise(resolve => {
+                    ui.releaseAccountRead = () => {
+                        ui.releaseAccountRead = null;
+                        resolve(page);
+                    };
+                });
+            }
+            return page;
         }
         if (command === 'load_history_account_insights') {
             ui.accountFetches++;
@@ -1318,12 +1347,42 @@ try {
             assert(await page.locator('#historyCaptionNotice').isHidden());
             await page.locator('#historyCaptionCopyBtn').click();
             assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.copied), 'Caption content.\n'.repeat(60));
+            assert.equal(await page.locator('#historyCaptionStatus').textContent(), 'Video description copied.');
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.failNextCopy = true;
+            });
+            await page.locator('#historyCaptionCopyBtn').click();
+            await page.waitForFunction(
+                () =>
+                    globalThis.document.querySelector('#historyCaptionStatus').textContent ===
+                    'Video description could not be copied.'
+            );
+            // A finished clipboard operation must not report into another caption track.
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.holdCopy = true;
+            });
+            await page.locator('#historyCaptionCopyBtn').click();
+            await page.waitForFunction(() => Boolean(globalThis.__pinefetchUi.releaseCopy));
             await page.locator('#historyCaptionTrackSelect').selectOption('/fixture/alternate.mp4');
             await page.waitForFunction(
                 () => globalThis.document.getElementById('historyCaptionText').textContent === 'Alternate description.'
             );
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseCopy());
+            assert.equal(await page.locator('#historyCaptionStatus').textContent(), '');
             assert(await page.locator('#historyCaptionNotice').isVisible());
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.holdCopy = true;
+            });
+            await page.locator('#historyCaptionCopyBtn').click();
+            await page.waitForFunction(() => Boolean(globalThis.__pinefetchUi.releaseCopy));
             await page.locator('#historyCaptionTrackSelect').selectOption({ index: 0 });
+            await page.waitForFunction(
+                () =>
+                    globalThis.document.querySelector('#historyCaptionText').textContent ===
+                    'Caption content.\n'.repeat(60)
+            );
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseCopy(true));
+            assert.equal(await page.locator('#historyCaptionStatus').textContent(), '');
             await page.evaluate(() => {
                 globalThis.__pinefetchUi.localVideo = 'unsupported';
                 globalThis.__pinefetchUi.compatibleVideo = true;
@@ -2727,6 +2786,12 @@ try {
             // Account navigation is local; profile metrics and video discovery require explicit clicks.
             await openOcr('history-1');
             await page.locator('#historyOverviewTab').click();
+            const accountReadCount = () =>
+                page.evaluate(
+                    () =>
+                        globalThis.__pinefetchUi.commands.filter(call => call.command === 'get_history_account').length
+                );
+            const beforeAccountOpen = await accountReadCount();
             await page.locator('#historyDetailsAccountBreadcrumbBtn').click();
             await page.locator('#historyAccountView').waitFor();
             await page.waitForFunction(
@@ -2734,6 +2799,8 @@ try {
             );
             assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.accountFetches), 0);
             assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.profileFetches), 0);
+            assert.equal(await accountReadCount(), beforeAccountOpen + 1);
+            assert.match(await page.locator('#historyAccountSocialStatus').textContent(), /No Social Insights saved/);
             assert(await page.locator('#historyAccountOpenBtn').isDisabled());
             assert(await page.locator('#historyAccountProfileHint').isVisible());
             assert.match(await page.locator('#historyAccountVideosStateTitle').textContent(), /Discover more/);
@@ -2764,10 +2831,12 @@ try {
             await page.locator('#historyDetailsContent').waitFor();
             await page.evaluate(() => globalThis.__pinefetchUi.releaseAccount());
             assert(await page.locator('#historyAccountView').isHidden());
+            const beforeSavedAccountOpen = await accountReadCount();
             await page.locator('#historyDetailsAccountBreadcrumbBtn').click();
             await page.waitForFunction(
                 () => globalThis.document.querySelector('#historyAccountSocialMetrics').childElementCount === 2
             );
+            assert.equal(await accountReadCount(), beforeSavedAccountOpen + 1);
             assert.equal(await page.evaluate(() => globalThis.__pinefetchUi.accountFetches), 1);
             assert.equal(await page.locator('#historyAccountSavedList button').count(), 20);
             await page.locator('#historyAccountMoreSavedBtn').click();
@@ -2910,8 +2979,10 @@ try {
             await page.evaluate(() => {
                 globalThis.__pinefetchUi.failAccountRead = true;
             });
+            const beforeFailedAccountOpen = await accountReadCount();
             await page.locator('#historyDetailsAccountBreadcrumbBtn').click();
             await page.locator('#historyAccountRetryBtn').waitFor();
+            assert.equal(await accountReadCount(), beforeFailedAccountOpen + 1);
             assert(
                 await page.locator('#historyAccountStatus').evaluate(el => el.classList.contains('oj-status-error'))
             );
@@ -2923,6 +2994,29 @@ try {
             await page.waitForFunction(
                 () => globalThis.document.querySelector('#historyAccountSocialMetrics').childElementCount === 2
             );
+            assert.equal(await accountReadCount(), beforeFailedAccountOpen + 2);
+            // A slow saved page cannot replace a newer explicit refresh snapshot.
+            await page.locator('#historyAccountSavedList button').first().click();
+            await page.locator('#historyDetailsContent').waitFor();
+            await page.evaluate(() => {
+                Object.values(globalThis.__pinefetchUi.accountRecords)[0].data.metrics.subscribers = 1;
+                globalThis.__pinefetchUi.holdAccountRead = true;
+            });
+            const beforeHeldAccountOpen = await accountReadCount();
+            await page.locator('#historyDetailsAccountBreadcrumbBtn').click();
+            await page.waitForFunction(() => Boolean(globalThis.__pinefetchUi.releaseAccountRead));
+            await page.locator('#historyAccountSocialLoadBtn').click();
+            await page.waitForFunction(() =>
+                /12[,.]345/.test(globalThis.document.querySelector('#historyAccountSocialMetrics').textContent)
+            );
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseAccountRead());
+            await page.waitForFunction(
+                () => globalThis.document.querySelector('#historyAccountSavedList').childElementCount === 20
+            );
+            assert.match(await accountMetrics.innerText(), /12[,.]345/);
+            // The fixture's explicit refresh resolves its account once; opening
+            // and rendering the captured page must not add a third local read.
+            assert.equal(await accountReadCount(), beforeHeldAccountOpen + 2);
             const accountViewport = page.viewportSize();
             await page.setViewportSize({ width: 390, height: 844 });
             assert(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth));

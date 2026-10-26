@@ -24,18 +24,25 @@ export const bindTextSearch = (input, search) => {
         }
     });
 };
-export const copyAllText = async ({ getText, isCurrent = () => true, status, appendLog }) => {
+export const copyAllText = async ({
+    getText,
+    isCurrent = () => true,
+    status,
+    appendLog,
+    successMessage = 'All text copied.',
+    errorMessage = 'Text could not be copied. Try again.',
+}) => {
     try {
         const text = await getText();
         if (!isCurrent() || !text) return false;
         await navigator.clipboard.writeText(text);
         if (!isCurrent()) return false;
-        status.textContent = 'All text copied.';
-        toast('All text copied.', { type: 'success' });
+        status.textContent = successMessage;
+        toast(successMessage, { type: 'success' });
         return true;
     } catch (error) {
         appendLog?.(`[History copy] ${error}`, true);
-        if (isCurrent()) status.textContent = 'Text could not be copied. Try again.';
+        if (isCurrent()) status.textContent = errorMessage;
         return false;
     }
 };

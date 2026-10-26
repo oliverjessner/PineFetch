@@ -128,6 +128,29 @@ fn main() {
             io::stderr().flush().unwrap();
             process::exit(7);
         }
+        "streaming-lines" => {
+            io::stdout()
+                .write_all(b"[download] 100.0% at 1.0MiB/s ETA 00:00\r\npinefetch_metadata:{\"filepath\":\"/synthetic/clip.mp4\",\"title\":\"Final metadata\"}\npinefetch_language:de")
+                .unwrap();
+            io::stderr()
+                .write_all(b"first diagnostic\r\nlast diagnostic")
+                .unwrap();
+            process::exit(7);
+        }
+        "oversized-line" => {
+            let bytes = vec![b'x'; 16384];
+            loop {
+                if io::stdout().write_all(&bytes).is_err() {
+                    break;
+                }
+            }
+        }
+        "split-unicode" => {
+            io::stdout().write_all(&vec![b'a'; 16383]).unwrap();
+            io::stdout()
+                .write_all("🌲\r\nlast line".as_bytes())
+                .unwrap();
+        }
         "exit-error" => {
             checkpoint(address.as_deref(), None);
             eprintln!("ERROR: controlled external process failure");

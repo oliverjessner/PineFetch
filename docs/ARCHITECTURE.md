@@ -95,6 +95,13 @@ output failures. Its display/conversion preserves the current interface messages
 Argument builders and output parsers require neither installed runtimes nor a
 desktop. Process regression tests use local synthetic child processes.
 
+Downloads and Whisper share `process::run_command_streaming`. It dispatches
+stdout/stderr lines to their existing parsers without capture mutexes or reader
+threads, limits each line to 8 MiB and bounds pipe draining after process exit.
+The active child remains registered through draining and cleanup. On Unix, its
+exit is observed without reaping until cleanup can safely address descendants
+in the original process group; malformed output is a controlled process error.
+
 ## Where to change a shared rule
 
 | Rule                                                   | Canonical location and consumers                                                                                                                                                        |
@@ -175,6 +182,14 @@ Schema changes use explicit ordered migrations. Legacy JSON formats, completion
 receipts, backup policy and file ownership rules remain in place. See [DATA-INTEGRITY.md](DATA-INTEGRITY.md)
 for those guarantees and their temporary-database/fault-injection regressions.
 
+The published SHA-256 indexes on History and Captions are intentionally retained
+in 2.7.0. Current application queries resolve entry identities rather than hashes,
+but removing these schema-validated objects requires a versioned migration and
+its mandatory backup. This cleanup preserves the storage contract and efficient
+hash-based database inspection. Isolated SQL comparisons show real write and
+space costs; they do not establish a download-workflow bottleneck that warrants
+changing the schema in this release.
+
 Local OCR uses `ocr` for background orchestration and an independent process
 registry, `ocr_rules` for frame-local reading order/media/protocol validation and
 `ocr_store` for guarded SQL. `history-ocr-jobs.js` owns app-wide events and job
@@ -241,6 +256,12 @@ Views still manage presentation state and asynchronous UI requests. Settings sav
 coordination and the main download form are intentionally not rewritten into a
 state framework. A future extraction can move another independently testable rule
 or introduce event/resource callbacks if a second execution host needs them.
+
+Caption and reader copy actions share `history-text-view.js` feedback and stale
+request guards while retaining their own messages. Account pages seed the shared
+Social Insights view from the snapshot already returned with saved downloads;
+initial display does not issue a second account read. Explicit refresh and retry
+retain their existing asynchronous guards and persistence behavior.
 
 ## Working rule and checks
 

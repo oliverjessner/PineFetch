@@ -1,3 +1,10 @@
+# 2.7.0
+
+- Removed unused application CSS, obsolete DOM references and an unused field from internal Link Dump secret validation.
+- Consolidated History clipboard feedback and reused account snapshots to avoid a duplicate initial database read, preserving retry and stale-response handling.
+- Shared the download and Whisper streaming-process lifecycle, with bounded output draining, process cleanup and an 8 MiB line limit.
+- Added regression coverage for clipboard failures, account snapshot reuse, streaming cancellation, inherited pipes and malformed process output.
+
 # 2.6.2
 
 - building fixe for new rust deps

@@ -4,6 +4,16 @@ Paste a video link into the **URL** field on PineFetch's Download screen. PineFe
 
 Here are our first class citizen listed:
 
+Automatic metadata previews are limited to PineFetch's recognized sites. Other
+valid HTTP(S) links show **Not checked** and **Load info to check this link**;
+select **Load info** to ask yt-dlp for metadata, or **Queue** to request a download.
+The host alone does not determine whether a link works: availability depends on
+yt-dlp, the website and the individual content.
+
+TXT import, Magic import and Browser Import / Link Dump have their own narrower
+platform rules. A manually accepted download link does not automatically qualify
+for these import paths.
+
 | Source             | Example URL                     | captions\* |
 | ------------------ | ------------------------------- | ---------- |
 | YouTube            | `youtube.com/watch?...`,        | Yes        |

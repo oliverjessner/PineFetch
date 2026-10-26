@@ -34,6 +34,7 @@ const els = Object.seal({
     magicImportEnabled: document.getElementById('magicImportEnabled'),
     idImportEnabled: document.getElementById('idImportEnabled'),
     videoInputHelp: document.getElementById('videoInputHelp'),
+    manualInfoHint: document.getElementById('manualInfoHint'),
     videoInputError: document.getElementById('videoInputError'),
     cutAtTimestampEnabled: document.getElementById('cutAtTimestampEnabled'),
     urlInput: document.getElementById('urlInput'),
@@ -468,12 +469,10 @@ const getQueuedTxtImportKeys = () => {
 
 const setInfoBadge = text => {
     els.infoBadge.textContent = text;
+    els.manualInfoHint.hidden = text !== 'Not checked';
     els.infoBadge.classList.toggle('oj-badge-success', text === 'Ready');
     els.infoBadge.classList.toggle('oj-badge-info', text === 'Loading...');
-    els.infoBadge.classList.toggle(
-        'oj-badge-danger',
-        ['Error', 'Formats unavailable', 'Unsupported link', 'Invalid URL'].includes(text)
-    );
+    els.infoBadge.classList.toggle('oj-badge-danger', ['Error', 'Formats unavailable', 'Invalid URL'].includes(text));
 };
 
 const setActiveView = view => {
@@ -1066,15 +1065,16 @@ const browserImport = createBrowserImportView({ els, api, appendLog, appendTextS
 const { applyLinkDumpServerStatus, syncLinkDumpOverview } = browserImport;
 
 let loadInfoInFlight = false;
-let loadInfoPending = false;
+let pendingInfoUrl = null;
 let loadInfoRequestId = 0;
 
-const canLoadInfoForUrl = url => isValidHttpUrl(url) && Boolean(detectPlatform(url));
+const canAutoLoadInfoForUrl = url => isValidHttpUrl(url) && Boolean(detectPlatform(url));
 
-const loadInfo = async () => {
+const loadInfo = async (expectedUrl = normalizeDownloadInput(els.urlInput.value)) => {
     await initialization;
     await settings.waitForPendingSave();
     const url = normalizeDownloadInput(els.urlInput.value);
+    if (url !== expectedUrl) return;
     if (!url) return;
     if (!isValidHttpUrl(url)) {
         showVideoInputError(els.urlInput.value);
@@ -1086,7 +1086,7 @@ const loadInfo = async () => {
         return;
     }
     if (loadInfoInFlight) {
-        loadInfoPending = true;
+        pendingInfoUrl = url;
         return;
     }
 
@@ -1100,7 +1100,6 @@ const loadInfo = async () => {
     try {
         const info = await api.loadInfo({ url: requestUrl });
         if (requestId !== loadInfoRequestId || normalizeDownloadInput(els.urlInput.value) !== requestUrl) {
-            loadInfoPending = true;
             return;
         }
         state.info = info;
@@ -1125,8 +1124,9 @@ const loadInfo = async () => {
 
         const nextUrl = normalizeDownloadInput(els.urlInput.value);
         const inputChanged = nextUrl !== requestUrl;
-        const shouldReload = (loadInfoPending || inputChanged) && canLoadInfoForUrl(nextUrl);
-        loadInfoPending = false;
+        const shouldReload =
+            isValidHttpUrl(nextUrl) && (pendingInfoUrl === nextUrl || (inputChanged && canAutoLoadInfoForUrl(nextUrl)));
+        pendingInfoUrl = null;
 
         if (requestId === loadInfoRequestId && !inputChanged && document.activeElement === els.loadInfoBtn) {
             els.urlInput.focus();
@@ -1135,7 +1135,7 @@ const loadInfo = async () => {
         if (shouldReload) {
             setInfoBadge('Loading...');
             window.setTimeout(() => {
-                void loadInfo();
+                void loadInfo(nextUrl);
             }, 0);
         }
     }
@@ -1335,6 +1335,7 @@ const enqueueDownloadForUrl = async (url, presetKey, options = {}) => {
             state.info = null;
             state.infoUrl = null;
             renderInfo();
+            setInfoBadge('Idle');
             els.urlInput.focus();
         }
         return id;
@@ -1632,7 +1633,7 @@ const bindEvents = () => {
     window.addEventListener('focus', () => {
         void tryMagicImport();
     });
-    els.loadInfoBtn.addEventListener('click', loadInfo);
+    els.loadInfoBtn.addEventListener('click', () => void loadInfo());
     els.startDownloadBtn.addEventListener('click', enqueueDownload);
     els.presetDropdown.addEventListener('oj:select', event => {
         if (event.target !== els.presetDropdown || !Object.hasOwn(presets, event.detail?.value)) return;
@@ -1661,18 +1662,19 @@ const bindEvents = () => {
         }
         const url = normalizeDownloadInput(els.urlInput.value);
         updateDownloadOptionHints();
-        if (!canLoadInfoForUrl(url)) {
+        if (!canAutoLoadInfoForUrl(url)) {
             loadInfoRequestId += 1;
-            loadInfoPending = false;
+            pendingInfoUrl = null;
             state.info = null;
             state.infoUrl = null;
             renderInfo();
-            setInfoBadge(!url ? 'Idle' : isValidHttpUrl(url) ? 'Unsupported link' : 'Invalid URL');
+            setInfoBadge(!url ? 'Idle' : isValidHttpUrl(url) ? 'Not checked' : 'Invalid URL');
             return;
         }
+        setInfoBadge('Idle');
         urlInputDebounceTimer = setTimeout(() => {
             urlInputDebounceTimer = null;
-            if (!canLoadInfoForUrl(normalizeDownloadInput(els.urlInput.value))) return;
+            if (!canAutoLoadInfoForUrl(normalizeDownloadInput(els.urlInput.value))) return;
             if (normalizeYouTubePlaylistUrl(normalizeDownloadInput(els.urlInput.value))) {
                 void enqueueDownload();
                 return;
@@ -1699,7 +1701,7 @@ const bindEvents = () => {
         if (key === 'escape') {
             event.preventDefault();
             loadInfoRequestId += 1;
-            loadInfoPending = false;
+            pendingInfoUrl = null;
             els.urlInput.value = '';
             updateDownloadOptionHints();
             state.info = null;

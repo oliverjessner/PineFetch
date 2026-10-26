@@ -17,5 +17,20 @@ fn main() {
             .expect("Could not run the build-time Apple Vision helper compiler");
         assert!(status.success(), "Apple Vision helper compilation failed");
     }
+    // Tauri overlays development resources and follows existing destination
+    // symlinks. Remove this generated copy while Cargo owns the build lock, so
+    // a former venv cannot retain pyvenv.cfg or links into a host installation.
+    let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let profile_dir = out_dir
+        .ancestors()
+        .find(|path| path.file_name() == Some(std::ffi::OsStr::new("build")))
+        .and_then(std::path::Path::parent)
+        .expect("Could not resolve Cargo's profile resource directory");
+    let whisper_copy = profile_dir.join("resources/whisper-runtime");
+    match std::fs::remove_dir_all(&whisper_copy) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("Could not reset generated Whisper resources: {error}"),
+    }
     tauri_build::build()
 }

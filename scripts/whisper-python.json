@@ -1,0 +1,27 @@
+{
+    "version": "3.12.15",
+    "release": "20261021",
+    "targets": {
+        "darwin-arm64": {
+            "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-aarch64-apple-darwin-install_only.tar.gz",
+            "sha256": "a18cc33862b53bd54a148c710def5375c1b47470cccedf817a19c2d211764584",
+            "executable": "bin/python3.12",
+            "minimumMacOS": "14.0"
+        },
+        "linux-arm64": {
+            "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-aarch64-unknown-linux-gnu-install_only.tar.gz",
+            "sha256": "f53cca8fcd20805bddaa8bff1ef722a6918f8225d37561bd36ad901d13d580af",
+            "executable": "bin/python3.12"
+        },
+        "linux-x64": {
+            "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
+            "sha256": "5ff9f0602ce964a529ed1e8555d3abab6341926d724402ba9a15e9e877191124",
+            "executable": "bin/python3.12"
+        },
+        "win32-x64": {
+            "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-x86_64-pc-windows-msvc-install_only.tar.gz",
+            "sha256": "be7f14464d1d66f84429ad27e01f6d1482963afff64a2fb5256b2a51c7b5d398",
+            "executable": "python.exe"
+        }
+    }
+}

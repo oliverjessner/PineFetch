@@ -31,7 +31,7 @@ See the [video and caption compatibility list](docs/COMPATIBILITY.md) for accept
 
 ## Install
 
-Available for Apple silicon Macs running macOS 11 or later. Loading online Social Insights requires macOS 13.5 or later. Downloads require [yt-dlp](https://github.com/yt-dlp/yt-dlp#installation).
+Available for Apple silicon Macs running macOS 11 or later. Local transcription requires macOS 14 or later; its Python runtime is included. Loading online Social Insights requires macOS 13.5 or later. Downloads require [yt-dlp](https://github.com/yt-dlp/yt-dlp#installation).
 
 ### Homebrew
 

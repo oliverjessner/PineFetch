@@ -282,15 +282,34 @@ fn ffmpeg_and_whisper_argument_builders_preserve_paths_and_modes() {
     for (timestamps, expected) in [(false, "0"), (true, "1")] {
         let args =
             build_transcription_args(std::path::Path::new(input), output, "small", timestamps);
-        assert_eq!(args[0], "-c");
-        assert!(args[1]
+        assert_eq!(args[0], "-I");
+        assert_eq!(args[1], "-B");
+        assert_eq!(args[2], "-c");
+        assert!(args[3]
             .to_str()
             .unwrap()
             .contains("from faster_whisper import WhisperModel"));
         assert_eq!(
-            args[2..],
+            args[4..],
             [input, output, "small", expected].map(std::ffi::OsStr::new)
         );
+    }
+}
+
+#[test]
+fn whisper_macos_requirement_rejects_older_or_unknown_versions() {
+    use crate::media_tools::validate_whisper_macos_version;
+    for version in ["11.7.10", "12.7", "13.6.1"] {
+        assert_eq!(
+            validate_whisper_macos_version(version).unwrap_err(),
+            "Local transcription requires macOS 14 or later."
+        );
+    }
+    for version in ["14.0", "14.7.1", "15.0", "27.0.1\n"] {
+        assert!(validate_whisper_macos_version(version).is_ok());
+    }
+    for version in ["", "unknown", "-1.0"] {
+        assert!(validate_whisper_macos_version(version).is_err());
     }
 }
 

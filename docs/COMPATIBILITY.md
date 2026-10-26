@@ -1,5 +1,12 @@
 # URL download and caption compatibility
 
+Local transcription uses the bundled Python/Whisper runtime and requires macOS
+14 or later on Apple silicon. Python and Homebrew Python do not need to be
+installed. Older supported macOS versions reject transcription before downloading
+media and show the requirement. The first use of a Whisper model requires a model
+download. See [runtime preparation and validation](WHISPER_RUNTIME.md) for the
+tested packaging scope and platform limits.
+
 Paste a video link into the **URL** field on PineFetch's Download screen. PineFetch passes it to yt-dlp. The platforms below have extractors in yt-dlp 2026.08.19; individual videos may still be unavailable. See yt-dlp's [full supported-sites list](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
 
 Here are our first class citizen listed:

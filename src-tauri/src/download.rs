@@ -48,6 +48,9 @@ pub(super) fn run_download_job(
     state: &AppState,
     job: &DownloadJob,
 ) -> Result<DownloadRunResult, String> {
+    if job.transcribe_text {
+        crate::runtime::ensure_whisper_platform()?;
+    }
     let effective_job = effective_download_job(job);
     let job = &effective_job;
     let yt_dlp = resolve_yt_dlp(app, &state.config)?;

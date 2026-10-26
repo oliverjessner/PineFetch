@@ -1,5 +1,9 @@
 # 2.7.0
 
+- Replaced the Homebrew-linked Whisper virtual environment with checksum-pinned standalone CPython, its standard library and hash-pinned binary dependencies.
+- Added native dependency auditing, wheel relocation, isolated decoding checks and atomic runtime replacement with rollback; Python no longer needs to be installed separately.
+- Added an explicit moved-runtime decode and real model inference check with Homebrew access blocked. Documented the existing macOS 14 minimum of the transcription dependencies and reject older systems before downloading media.
+
 - Replaced premature Unsupported link warnings with a neutral Not checked state and guidance to check other HTTP(S) links manually.
 - Preserved explicitly requested metadata checks while an older request is running, without enabling automatic previews for additional sites.
 

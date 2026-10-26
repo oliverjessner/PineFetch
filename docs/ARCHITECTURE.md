@@ -102,6 +102,13 @@ The active child remains registered through draining and cleanup. On Unix, its
 exit is observed without reaping until cleanup can safely address descendants
 in the original process group; malformed output is a controlled process error.
 
+Whisper uses a complete checksum-pinned standalone CPython distribution, with
+hash-pinned binary packages. Preparation checks native dependency closure and
+PCM decoding before and after atomic publication. Python runs with isolated
+search paths; macOS transcription jobs check the dependencies' macOS 14 minimum
+before downloading media. Packaging and real moved-runtime acceptance are
+described in [WHISPER_RUNTIME.md](WHISPER_RUNTIME.md).
+
 ## Where to change a shared rule
 
 | Rule                                                   | Canonical location and consumers                                                                                                                                                        |

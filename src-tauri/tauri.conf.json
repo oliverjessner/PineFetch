@@ -1,7 +1,7 @@
 {
     "productName": "PineFetch",
     "mainBinaryName": "PineFetch",
-    "version": "2.6.2",
+    "version": "2.7.0",
     "identifier": "com.pinefetch.app",
     "build": {
         "beforeBuildCommand": "npm run sync:design-system && npm run prepare:social-runtime",

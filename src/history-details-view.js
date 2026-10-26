@@ -4,7 +4,7 @@ import { createHistoryOcrView } from './history-ocr-view.js';
 import { createHistorySocialInsightsView } from './history-social-insights-view.js';
 import { createHistoryKeywordsView } from './history-keywords-view.js';
 import { createHistorySubtitlesView } from './history-subtitles-view.js';
-import { createTextReader } from './history-text-view.js';
+import { copyAllText, createTextReader } from './history-text-view.js';
 import { createHistoryMediaView } from './history-media-view.js';
 
 export const createHistoryDetailsView = ({
@@ -407,18 +407,6 @@ export const createHistoryDetailsView = ({
         }
     };
 
-    const copyContent = async (content, statusElement, label) => {
-        if (!content?.text) return;
-        try {
-            await navigator.clipboard.writeText(content.text);
-            statusElement.textContent = `${label} copied.`;
-            toast(`${label} copied.`, { type: 'success' });
-        } catch (err) {
-            appendLog(`[copy] ${err}`, true);
-            statusElement.textContent = `${label} could not be copied.`;
-        }
-    };
-
     const bindEvents = () => {
         ocrView.bindEvents();
         socialView.bindEvents();
@@ -567,8 +555,24 @@ export const createHistoryDetailsView = ({
         });
         els.historyCaptionTrackSelect.addEventListener('change', () => void loadSelectedCaption());
         els.historyCaptionCopyBtn.addEventListener('click', () => {
-            const content = state.captions.get(els.historyCaptionTrackSelect.value);
-            void copyContent(content, els.historyCaptionStatus, captionTitle());
+            const requestId = state.detailsRequestId;
+            const entryId = state.entryId;
+            const mediaPath = els.historyCaptionTrackSelect.value;
+            const content = state.captions.get(mediaPath);
+            const label = captionTitle();
+            void copyAllText({
+                getText: () => content?.text,
+                isCurrent: () =>
+                    requestId === state.detailsRequestId &&
+                    entryId === state.entryId &&
+                    mediaPath === els.historyCaptionTrackSelect.value &&
+                    !els.historyDetailsView.hidden &&
+                    els.historyOverviewTab.getAttribute('aria-selected') === 'true',
+                status: els.historyCaptionStatus,
+                appendLog,
+                successMessage: `${label} copied.`,
+                errorMessage: `${label} could not be copied.`,
+            });
         });
     };
 

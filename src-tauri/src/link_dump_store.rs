@@ -260,27 +260,23 @@ pub(super) fn validate_link_dump_secret(
     let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, name, secret_hash
+            "SELECT id, secret_hash
              FROM link_dump_secrets
              WHERE revoked_at IS NULL AND deleted_at IS NULL",
         )
         .map_err(|e| format!("Link Dump secret validation failed: {e}"))?;
     let rows = stmt
         .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .map_err(|e| format!("Link Dump secret validation failed: {e}"))?;
 
     let mut matched: Option<ValidSecretResult> = None;
     for row in rows {
-        let (id, name, stored_hash) =
+        let (id, stored_hash) =
             row.map_err(|e| format!("Link Dump secret validation failed: {e}"))?;
         if constant_time_eq_str(&candidate_hash, &stored_hash) {
-            matched = Some(ValidSecretResult { id, name });
+            matched = Some(ValidSecretResult { id });
         }
     }
 

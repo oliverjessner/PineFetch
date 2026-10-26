@@ -22,11 +22,7 @@ use crate::models::LogEvent;
 use crate::models::SavedCaption;
 use crate::models::TranscriptionRunResult;
 use crate::platform::caption_platform;
-use crate::process::clear_current_child;
-use crate::process::configure_child_process_group;
-use crate::process::register_current_child;
-use crate::process::run_command_output;
-use crate::process::terminate_child_process_tree;
+use crate::process::{run_command_output, run_command_streaming, ProcessError};
 use crate::runtime::ffmpeg_tool_name;
 use crate::runtime::resolve_deno_executable;
 use crate::runtime::resolve_ffmpeg_location;
@@ -41,17 +37,9 @@ use crate::yt_dlp::parse_progress_line;
 use crate::yt_dlp::parse_yt_dlp_filepath;
 use regex::Regex;
 use std::fs;
-use std::io::BufRead;
-use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::process::Stdio;
-use std::sync::mpsc;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::thread;
-use std::time::Duration;
 use tauri::AppHandle;
 use uuid::Uuid;
 
@@ -97,136 +85,68 @@ pub(super) fn run_download_job(
         .clone();
     crate::yt_dlp::apply_browser_cookies(&mut command, &job.url, browser.as_deref());
     command.args(args);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    configure_child_process_group(&mut command);
-
-    let child = command.spawn().map_err(|e| format!("Spawn failed: {e}"))?;
-    let child = Arc::new(Mutex::new(child));
-
-    if let Err(err) = register_current_child(&state.processes, &child) {
-        if let Ok(mut process) = child.lock() {
-            let _ = terminate_child_process_tree(&mut process);
-            let _ = process.wait();
-        }
-        return Err(err);
-    }
-
-    let (stdout, stderr) = {
-        let mut guard = child.lock().map_err(|_| "Child lock poisoned")?;
-        (guard.stdout.take(), guard.stderr.take())
-    };
-
     let progress_re =
         Regex::new(crate::yt_dlp::PROGRESS_PATTERN).map_err(|e| format!("Regex error: {e}"))?;
-    let output_path_capture: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let subtitle_capture: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let subtitles_for_stdout = subtitle_capture.clone();
-    let caption_capture: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
-    let metadata_capture: Arc<Mutex<Vec<(String, InfoResponse)>>> =
-        Arc::new(Mutex::new(Vec::new()));
-    let error_capture: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-
-    let app_stdout = app.clone();
-    let id_stdout = job.id.clone();
-    let output_path_for_stdout = output_path_capture.clone();
-    let captions_for_stdout = caption_capture.clone();
+    let mut output_paths = Vec::new();
+    let mut subtitle_capture = Vec::new();
+    let mut caption_capture = Vec::new();
+    let mut metadata_capture: Vec<(String, InfoResponse)> = Vec::new();
+    let mut error_capture = None;
     let reddit_caption = caption_platform.as_deref() == Some("reddit");
-    let metadata_for_stdout = metadata_capture.clone();
-    let handle_out = thread::spawn(move || {
-        if let Some(out) = stdout {
-            let reader = BufReader::new(out);
-            for line in reader.lines().map_while(Result::ok) {
-                if line.starts_with("pinefetch_subtitles:") {
-                    if let Ok(mut lines) = subtitles_for_stdout.lock() {
-                        if lines.len() < 16 && line.len() <= 4 * 1024 * 1024 {
-                            lines.push(line.clone());
-                        }
-                    }
-                    continue;
+    let status = run_command_streaming(
+        command,
+        &state.processes,
+        |line| {
+            if line.starts_with("pinefetch_subtitles:") {
+                if subtitle_capture.len() < 16 && line.len() <= 4 * 1024 * 1024 {
+                    subtitle_capture.push(line.to_string());
                 }
-                if !line.starts_with("pinefetch_caption:")
-                    && !line.starts_with("pinefetch_metadata:")
-                {
-                    emit_log(
-                        &app_stdout,
-                        LogEvent {
-                            id: id_stdout.clone(),
-                            line: line.clone(),
-                            is_error: false,
-                        },
-                    );
-                }
-
-                if let Some(progress) = parse_progress_line(&line, &progress_re, &id_stdout) {
-                    emit_progress(&app_stdout, progress);
-                }
-
-                if let Some(path_line) = parse_yt_dlp_filepath(&line) {
-                    if let Ok(mut slot) = output_path_for_stdout.lock() {
-                        slot.push(path_line);
-                    }
-                }
-                if let Some(caption) = parse_caption_line(&line, reddit_caption) {
-                    if let Ok(mut captions) = captions_for_stdout.lock() {
-                        captions.push(caption);
-                    }
-                }
-                if let Some(metadata) = parse_download_metadata_line(&line) {
-                    if let Ok(mut entries) = metadata_for_stdout.lock() {
-                        entries.push(metadata);
-                    }
-                }
+                return;
             }
-        }
-    });
-
-    let app_stderr = app.clone();
-    let id_stderr = job.id.clone();
-    let error_for_stderr = error_capture.clone();
-    let handle_err = thread::spawn(move || {
-        if let Some(err) = stderr {
-            let reader = BufReader::new(err);
-            for line in reader.lines().map_while(Result::ok) {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    if let Ok(mut reason) = error_for_stderr.lock() {
-                        if trimmed.starts_with("ERROR:") || reason.is_none() {
-                            *reason = Some(trimmed.to_string());
-                        }
-                    }
-                }
+            if !line.starts_with("pinefetch_caption:") && !line.starts_with("pinefetch_metadata:") {
                 emit_log(
-                    &app_stderr,
+                    app,
                     LogEvent {
-                        id: id_stderr.clone(),
-                        line,
-                        is_error: true,
+                        id: job.id.clone(),
+                        line: line.to_string(),
+                        is_error: false,
                     },
                 );
             }
-        }
-    });
-
-    let status = loop {
-        let maybe_status = {
-            let mut guard = child.lock().map_err(|_| "Child lock poisoned")?;
-            guard.try_wait().map_err(|e| format!("Wait failed: {e}"))?
-        };
-
-        if let Some(status) = maybe_status {
-            break status;
-        }
-
-        thread::sleep(Duration::from_millis(100));
-    };
-    clear_current_child(&state.processes, &child);
-    let _ = handle_out.join();
-    let _ = handle_err.join();
-
-    let mut output_path = output_path_capture
-        .lock()
-        .ok()
-        .and_then(|guard| select_existing_output_path(&guard));
+            if let Some(progress) = parse_progress_line(line, &progress_re, &job.id) {
+                emit_progress(app, progress);
+            }
+            if let Some(path) = parse_yt_dlp_filepath(line) {
+                output_paths.push(path);
+            }
+            if let Some(caption) = parse_caption_line(line, reddit_caption) {
+                caption_capture.push(caption);
+            }
+            if let Some(metadata) = parse_download_metadata_line(line) {
+                metadata_capture.push(metadata);
+            }
+        },
+        |line| {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && (trimmed.starts_with("ERROR:") || error_capture.is_none()) {
+                error_capture = Some(trimmed.to_string());
+            }
+            emit_log(
+                app,
+                LogEvent {
+                    id: job.id.clone(),
+                    line: line.to_string(),
+                    is_error: true,
+                },
+            );
+        },
+    )
+    .map_err(|error| match error {
+        ProcessError::Spawn(error) => format!("Spawn failed: {error}"),
+        ProcessError::Wait(error) => format!("Wait failed: {error}"),
+        error => error.to_string(),
+    })?;
+    let mut output_path = select_existing_output_path(&output_paths);
     let mut info = None;
     let mut saved_captions = Vec::new();
     let mut saved_subtitles = Vec::new();
@@ -242,13 +162,15 @@ pub(super) fn run_download_job(
             );
         }
 
-        info = metadata_capture.lock().ok().and_then(|entries| {
-            entries
-                .iter()
-                .find(|(path, _)| output_path.as_deref() == Some(path.as_str()))
-                .or_else(|| (entries.len() == 1).then(|| entries.first()).flatten())
-                .map(|(_, info)| info.clone())
-        });
+        info = metadata_capture
+            .iter()
+            .find(|(path, _)| output_path.as_deref() == Some(path.as_str()))
+            .or_else(|| {
+                (metadata_capture.len() == 1)
+                    .then(|| metadata_capture.first())
+                    .flatten()
+            })
+            .map(|(_, info)| info.clone());
 
         completion::output_ready(&state.db, job, output_path.as_deref()).map_err(|e| {
             format!("Downloaded output receipt failed: {e}; any produced file preserved")
@@ -256,11 +178,7 @@ pub(super) fn run_download_job(
 
         if job.save_creator_subtitles {
             if let Some(media) = output_path.as_deref() {
-                for line in subtitle_capture
-                    .lock()
-                    .map_err(|_| "Subtitle capture lock poisoned")?
-                    .iter()
-                {
+                for line in &subtitle_capture {
                     match crate::subtitles::collect(line, Path::new(media), job.cut_start_time.unwrap_or(0.0)) {
                         Ok(tracks) => {
                             for track in tracks {
@@ -288,10 +206,7 @@ pub(super) fn run_download_job(
         }
 
         if capture_captions {
-            let captions = caption_capture
-                .lock()
-                .map_err(|_| "Caption capture lock poisoned")?;
-            if captions.is_empty() {
+            if caption_capture.is_empty() {
                 emit_log(
                     app,
                     LogEvent {
@@ -304,7 +219,7 @@ pub(super) fn run_download_job(
                     },
                 );
             }
-            for (downloaded_path, caption) in captions.iter() {
+            for (downloaded_path, caption) in &caption_capture {
                 let final_path = if original_output_path.as_deref() == Some(downloaded_path) {
                     output_path.as_deref().unwrap_or(downloaded_path)
                 } else {
@@ -340,7 +255,7 @@ pub(super) fn run_download_job(
     Ok(DownloadRunResult {
         exit_code: status.code().unwrap_or(-1),
         output_path,
-        error: error_capture.lock().ok().and_then(|reason| reason.clone()),
+        error: error_capture,
         info,
         captions: saved_captions,
         subtitles: saved_subtitles,
@@ -741,95 +656,55 @@ pub(super) fn run_faster_whisper_transcription(
     );
 
     let mut command = Command::new(python);
-    command
-        .args(build_transcription_args(
-            transcription_input,
-            &transcript_path_str,
-            &model_name,
-            job.transcribe_timestamps,
-        ))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    configure_child_process_group(&mut command);
-
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("Failed to start faster-whisper transcription: {e}"))?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let child = Arc::new(Mutex::new(child));
-    if let Err(err) = register_current_child(&state.processes, &child) {
-        if let Ok(mut process) = child.lock() {
-            let _ = terminate_child_process_tree(&mut process);
-            let _ = process.wait();
-        }
-        return Err(err);
-    }
-    let app_stdout = app.clone();
-    let job_id_stdout = job.id.clone();
-    let (language_sender, language_receiver) = mpsc::channel();
-    let handle_out = thread::spawn(move || {
-        if let Some(out) = stdout {
-            let reader = BufReader::new(out);
-            for line in reader.lines().map_while(Result::ok) {
-                match parse_transcription_line(&line) {
-                    TranscriptionLine::Language(language) => {
-                        if let Some(language) = language {
-                            let _ = language_sender.send(language);
-                        }
-                    }
-                    TranscriptionLine::Log(line) => emit_log(
-                        &app_stdout,
-                        LogEvent {
-                            id: job_id_stdout.clone(),
-                            line: format!("[faster-whisper] {line}"),
-                            is_error: false,
-                        },
-                    ),
+    command.args(build_transcription_args(
+        transcription_input,
+        &transcript_path_str,
+        &model_name,
+        job.transcribe_timestamps,
+    ));
+    let mut language = None;
+    let mut stderr_line = String::new();
+    let status = run_command_streaming(
+        command,
+        &state.processes,
+        |line| match parse_transcription_line(line) {
+            TranscriptionLine::Language(detected) => {
+                if language.is_none() {
+                    language = detected;
                 }
             }
-        }
-    });
-
-    let app_stderr = app.clone();
-    let job_id_stderr = job.id.clone();
-    let handle_err = thread::spawn(move || {
-        let mut last_error = String::new();
-        if let Some(err) = stderr {
-            let reader = BufReader::new(err);
-            for line in reader.lines().map_while(Result::ok) {
-                if !line.trim().is_empty() {
-                    last_error = line.trim().chars().take(1024).collect();
-                }
-                emit_log(
-                    &app_stderr,
-                    LogEvent {
-                        id: job_id_stderr.clone(),
-                        line: format!("[faster-whisper] {line}"),
-                        is_error: true,
-                    },
-                );
+            TranscriptionLine::Log(line) => emit_log(
+                app,
+                LogEvent {
+                    id: job.id.clone(),
+                    line: format!("[faster-whisper] {line}"),
+                    is_error: false,
+                },
+            ),
+        },
+        |line| {
+            if !line.trim().is_empty() {
+                stderr_line = line.trim().chars().take(1024).collect();
             }
+            emit_log(
+                app,
+                LogEvent {
+                    id: job.id.clone(),
+                    line: format!("[faster-whisper] {line}"),
+                    is_error: true,
+                },
+            );
+        },
+    )
+    .map_err(|error| match error {
+        ProcessError::Spawn(error) => {
+            format!("Failed to start faster-whisper transcription: {error}")
         }
-        last_error
-    });
-
-    let status = loop {
-        let maybe_status = {
-            let mut process = child.lock().map_err(|_| "Child lock poisoned")?;
-            process
-                .try_wait()
-                .map_err(|e| format!("Failed while waiting for faster-whisper: {e}"))?
-        };
-        if let Some(status) = maybe_status {
-            break status;
+        ProcessError::Wait(error) => {
+            format!("Failed while waiting for faster-whisper: {error}")
         }
-        thread::sleep(Duration::from_millis(100));
-    };
-    clear_current_child(&state.processes, &child);
-    let _ = handle_out.join();
-    let stderr_line = handle_err.join().unwrap_or_default();
+        error => error.to_string(),
+    })?;
 
     if !status.success() {
         let code = status.code().unwrap_or(-1);
@@ -840,7 +715,7 @@ pub(super) fn run_faster_whisper_transcription(
         return Err("faster-whisper finished but no transcript file was created".to_string());
     }
 
-    let language = language_receiver.try_recv().map_err(|_| {
+    let language = language.ok_or_else(|| {
         "faster-whisper finished without reporting the detected language".to_string()
     })?;
     emit_log(

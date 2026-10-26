@@ -132,7 +132,7 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
             els.historyAccountMoreSavedBtn.hidden = !page.saved.has_more;
             if (page.insights?.profile_url) setProfile(page.insights.profile_url);
             status(els.historyAccountStatus);
-            if (!append) void social.load();
+            if (!append) social.hydrate(id, page.insights);
         } catch (error) {
             appendLog(`[account] ${error}`, true);
             if (state.id === id && state.request === request) {

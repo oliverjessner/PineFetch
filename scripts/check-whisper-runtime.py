@@ -2,6 +2,7 @@
 import io
 import sys
 import wave
+from pathlib import Path
 
 import av
 import faster_whisper
@@ -9,6 +10,16 @@ from faster_whisper.audio import decode_audio
 
 
 def main():
+    executable = Path(sys.executable).resolve()
+    runtime = executable.parent.parent if executable.parent.name == "bin" else executable.parent
+    if Path(sys.prefix).resolve() != runtime or Path(sys.base_prefix).resolve() != runtime:
+        raise RuntimeError("Bundled Python prefix escapes the standalone runtime")
+    for entry in sys.path:
+        if not Path(entry).resolve().is_relative_to(runtime):
+            raise RuntimeError(f"Python search path escapes the standalone runtime: {entry}")
+    for module in (av, faster_whisper, wave):
+        if not Path(module.__file__).resolve().is_relative_to(runtime):
+            raise RuntimeError(f"Python module escapes the standalone runtime: {module.__name__}")
     expected_whisper, expected_av, expected_python = sys.argv[1:]
     actual = (faster_whisper.__version__, av.__version__, sys.version.split()[0])
     expected = (expected_whisper, expected_av, expected_python)

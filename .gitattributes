@@ -1,0 +1,2 @@
+# Preserve verbatim upstream license text, including its original whitespace.
+docs/licenses/python-standalone/LICENSE.*.txt -whitespace

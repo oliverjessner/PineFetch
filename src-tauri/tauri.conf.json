@@ -4,7 +4,7 @@
     "version": "2.7.0",
     "identifier": "com.pinefetch.app",
     "build": {
-        "beforeBuildCommand": "npm run sync:design-system && npm run prepare:social-runtime",
+        "beforeBuildCommand": "npm run sync:design-system && npm run prepare:whisper-runtime && npm run prepare:social-runtime",
         "beforeDevCommand": "npm run prepare:social-runtime && node scripts/dev-server.mjs",
         "additionalWatchFolders": ["../native", "../scripts"],
         "devUrl": "http://127.0.0.1:1420",

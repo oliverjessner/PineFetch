@@ -1,0 +1,218 @@
+{
+    "python_version": "3.12.15",
+    "python_build_standalone_release": "20261021",
+    "upstream_commit": "0c5e581b54a4736cdbbe68bdd6d7e571a1dca11e",
+    "upstream_source": "https://github.com/astral-sh/python-build-standalone/tree/0c5e581b54a4736cdbbe68bdd6d7e571a1dca11e",
+    "notice_origin": "python/licenses/* from the verified aarch64 macOS full archive, identical to the pinned source files; other inspected target collections match apart from Windows CRLF endings",
+    "notices": [
+        {
+            "file": "LICENSE.bdb.txt",
+            "sha256": "3bdff06e69991c94664f2ef5c5f8096f60b7dbec071756ea6cc26b445e06ec5b"
+        },
+        {
+            "file": "LICENSE.bzip2.txt",
+            "sha256": "1f38bbc7caacafd65169276d759c0d88c991b753b643ce35d0e45ea1971dd441"
+        },
+        {
+            "file": "LICENSE.cpython.txt",
+            "sha256": "86e61415828a8b5b06ec8d024e6f086ce155a8b85fd0c419c0ba4dc004e74fdd"
+        },
+        {
+            "file": "LICENSE.expat.txt",
+            "sha256": "122f2c27000472a201d337b9b31f7eb2b52d091b02857061a8880371612d9534"
+        },
+        {
+            "file": "LICENSE.libX11.txt",
+            "sha256": "2daec087a88e7c9b8082557cdeebad5bbb8155a4137472f0b22e269cd99d0c1e"
+        },
+        {
+            "file": "LICENSE.libXau.txt",
+            "sha256": "56abe29bb1d9806a9e04fa9f80fed2c0f18027594df3f098148d814aef6bddfa"
+        },
+        {
+            "file": "LICENSE.libedit.txt",
+            "sha256": "29cea33c32bbc9785142386377915612a2fa786482c46843383384aded2e09b1"
+        },
+        {
+            "file": "LICENSE.libffi.txt",
+            "sha256": "deaf3a42effb551a5b140fa9afefed183a27f1341c6d1bf430d106a5e6931fc0"
+        },
+        {
+            "file": "LICENSE.liblzma.txt",
+            "sha256": "9a4062de0a2c388a98cf35a35d348b62fa97c838a71c3c28ee1a2d7d0a565b02"
+        },
+        {
+            "file": "LICENSE.libuuid.txt",
+            "sha256": "122ee1f7e258f2c3c0e538a75c037684f420454bf3850ddc74ce750bbf5fe86b"
+        },
+        {
+            "file": "LICENSE.libxcb.txt",
+            "sha256": "c5ffbfeaa501071ceeb97b7de2c0d703fdaa35de01c0fb6cbac1c28453a3e9fd"
+        },
+        {
+            "file": "LICENSE.mpdecimal.txt",
+            "sha256": "669512af7219f58be03a398766d7c9da11a3b3df9d3f05cb74c5ceca25c8da3b"
+        },
+        {
+            "file": "LICENSE.ncurses.txt",
+            "sha256": "87a4c4442337b8968ef956031c406b74f9cb7149b7ba87311bdaba534816201c"
+        },
+        {
+            "file": "LICENSE.openssl-3.txt",
+            "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+        },
+        {
+            "file": "LICENSE.python-build-standalone.txt",
+            "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+        },
+        {
+            "file": "LICENSE.sqlite.txt",
+            "sha256": "38bef3d28b24f145ea293bd3b6eb4b20396982abc8303128fb493986ea5bc719"
+        },
+        {
+            "file": "LICENSE.tcl.txt",
+            "sha256": "c0a69a2bfd757361ec7e6143973b103c90409316b49e9c88db26ad6388e79f16"
+        },
+        {
+            "file": "LICENSE.tix.txt",
+            "sha256": "3ac5cdd0bef6c43ce34c6a7ced452081d9e5a0bf94082b9f9147d23ec9e214f5"
+        },
+        {
+            "file": "LICENSE.zlib-ng.txt",
+            "sha256": "6c9f0d975b41afaa34d22f55bb8986ce69e5cb7ad327cb2b28820cd425edf5ee"
+        },
+        {
+            "file": "LICENSE.zlib.txt",
+            "sha256": "818922b2620f12801a12bf78e399644a30990e66824abd8ca8ec24d451d6f92c"
+        },
+        {
+            "file": "LICENSE.zstd.txt",
+            "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8"
+        }
+    ],
+    "inspected_targets": [
+        {
+            "target": "aarch64-apple-darwin",
+            "full_archive": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-aarch64-apple-darwin-pgo%2Blto-full.tar.zst",
+            "full_archive_sha256": "5d758025b32106c96c5734797c8985d21aba1be67a18cc062f767823f8fcbbf5",
+            "python_version": "3.12.15",
+            "apple_sdk_deployment_target": "11.0",
+            "crt_features": ["libSystem"],
+            "referenced_notices": [
+                "LICENSE.bzip2.txt",
+                "LICENSE.cpython.txt",
+                "LICENSE.expat.txt",
+                "LICENSE.libedit.txt",
+                "LICENSE.libffi.txt",
+                "LICENSE.liblzma.txt",
+                "LICENSE.libuuid.txt",
+                "LICENSE.mpdecimal.txt",
+                "LICENSE.ncurses.txt",
+                "LICENSE.openssl-3.txt",
+                "LICENSE.sqlite.txt",
+                "LICENSE.tcl.txt",
+                "LICENSE.zlib-ng.txt",
+                "LICENSE.zlib.txt"
+            ]
+        },
+        {
+            "target": "aarch64-unknown-linux-gnu",
+            "full_archive": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-aarch64-unknown-linux-gnu-pgo%2Blto-full.tar.zst",
+            "full_archive_sha256": "d40b4b72653d830884ac3ae432cf6b761a63b4c9b65d0d8f9241ddbd03c9c020",
+            "python_version": "3.12.15",
+            "apple_sdk_deployment_target": null,
+            "crt_features": ["glibc-dynamic", "glibc-max-symbol-version:2.17"],
+            "referenced_notices": [
+                "LICENSE.bdb.txt",
+                "LICENSE.bzip2.txt",
+                "LICENSE.cpython.txt",
+                "LICENSE.expat.txt",
+                "LICENSE.libX11.txt",
+                "LICENSE.libXau.txt",
+                "LICENSE.libedit.txt",
+                "LICENSE.libffi.txt",
+                "LICENSE.liblzma.txt",
+                "LICENSE.libuuid.txt",
+                "LICENSE.libxcb.txt",
+                "LICENSE.mpdecimal.txt",
+                "LICENSE.ncurses.txt",
+                "LICENSE.openssl-3.txt",
+                "LICENSE.sqlite.txt",
+                "LICENSE.tcl.txt",
+                "LICENSE.zlib-ng.txt",
+                "LICENSE.zlib.txt"
+            ]
+        },
+        {
+            "target": "x86_64-apple-darwin",
+            "full_archive": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-x86_64-apple-darwin-pgo%2Blto-full.tar.zst",
+            "full_archive_sha256": "14dd4aea2051903a788519ca56328c3f9932fb505a57400d81fea4abe2870fc7",
+            "python_version": "3.12.15",
+            "apple_sdk_deployment_target": "10.15",
+            "crt_features": ["libSystem"],
+            "referenced_notices": [
+                "LICENSE.bzip2.txt",
+                "LICENSE.cpython.txt",
+                "LICENSE.expat.txt",
+                "LICENSE.libedit.txt",
+                "LICENSE.libffi.txt",
+                "LICENSE.liblzma.txt",
+                "LICENSE.libuuid.txt",
+                "LICENSE.mpdecimal.txt",
+                "LICENSE.ncurses.txt",
+                "LICENSE.openssl-3.txt",
+                "LICENSE.sqlite.txt",
+                "LICENSE.tcl.txt",
+                "LICENSE.zlib-ng.txt",
+                "LICENSE.zlib.txt"
+            ]
+        },
+        {
+            "target": "x86_64-pc-windows-msvc",
+            "full_archive": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-x86_64-pc-windows-msvc-pgo-full.tar.zst",
+            "full_archive_sha256": "237531762f296c6daf0fbcf91cab1b13061f35bd390207176e79f3ba10330f01",
+            "python_version": "3.12.15",
+            "apple_sdk_deployment_target": null,
+            "crt_features": ["vcruntime:140"],
+            "referenced_notices": [
+                "LICENSE.bzip2.txt",
+                "LICENSE.cpython.txt",
+                "LICENSE.libffi.txt",
+                "LICENSE.liblzma.txt",
+                "LICENSE.libuuid.txt",
+                "LICENSE.openssl-3.txt",
+                "LICENSE.sqlite.txt",
+                "LICENSE.tcl.txt",
+                "LICENSE.tix.txt"
+            ]
+        },
+        {
+            "target": "x86_64-unknown-linux-gnu",
+            "full_archive": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-x86_64-unknown-linux-gnu-pgo%2Blto-full.tar.zst",
+            "full_archive_sha256": "5c992267780cef4c168bc07dba54f125ec1a2b9383a47946fc805f81a4712119",
+            "python_version": "3.12.15",
+            "apple_sdk_deployment_target": null,
+            "crt_features": ["glibc-dynamic", "glibc-max-symbol-version:2.17"],
+            "referenced_notices": [
+                "LICENSE.bdb.txt",
+                "LICENSE.bzip2.txt",
+                "LICENSE.cpython.txt",
+                "LICENSE.expat.txt",
+                "LICENSE.libX11.txt",
+                "LICENSE.libXau.txt",
+                "LICENSE.libedit.txt",
+                "LICENSE.libffi.txt",
+                "LICENSE.liblzma.txt",
+                "LICENSE.libuuid.txt",
+                "LICENSE.libxcb.txt",
+                "LICENSE.mpdecimal.txt",
+                "LICENSE.ncurses.txt",
+                "LICENSE.openssl-3.txt",
+                "LICENSE.sqlite.txt",
+                "LICENSE.tcl.txt",
+                "LICENSE.zlib-ng.txt",
+                "LICENSE.zlib.txt"
+            ]
+        }
+    ]
+}

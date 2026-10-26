@@ -33,6 +33,15 @@ OCR and Whisper build tests allow 60 seconds per test and 30 seconds per child
 process. The first execution of their temporary fixture programs can take longer
 on macOS. Process start errors, timeouts and signals are reported explicitly.
 
+Whisper preparation tests use a controlled executable fixture with real archive
+hashing, extraction and filesystem replacement. The native dependency tests
+include synthetic Mach-O graphs; neither fixture suite proves real inference.
+`npm run test:whisper-runtime -- --keep` separately moves the real runtime and
+checks PCM decoding and tiny-model inference with host Python paths and network
+access blocked during inference. It requires macOS and sandbox tooling; it fails
+if that isolation is unavailable. See [WHISPER_RUNTIME.md](WHISPER_RUNTIME.md) for
+bundle-resource checks and the remaining clean-device acceptance boundary.
+
 The pyramid has five levels:
 
 1. **Unit:** URL/domain/timestamp parsing, presets, process arguments, metadata

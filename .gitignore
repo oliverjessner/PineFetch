@@ -35,3 +35,6 @@ src-tauri/resources/social-runtime/*
 !src-tauri/resources/social-runtime/PLACEHOLDER
 src-tauri/resources/.social-runtime-*/
 src-tauri/resources/social-runtime.previous/
+src-tauri/resources/.whisper-runtime-*/
+src-tauri/resources/.whisper-runtime.lock/
+src-tauri/resources/whisper-runtime.previous/

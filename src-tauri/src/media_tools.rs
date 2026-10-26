@@ -1,6 +1,23 @@
 //! Pure FFmpeg/Whisper arguments and transcription stdout interpretation.
 use std::ffi::OsStr;
 use std::path::Path;
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn validate_whisper_macos_version(version: &str) -> Result<(), String> {
+    let major = version
+        .trim()
+        .split('.')
+        .next()
+        .and_then(|value| value.parse::<u16>().ok())
+        .ok_or_else(|| {
+            "Could not determine the macOS version for local transcription".to_string()
+        })?;
+    if major < 14 {
+        return Err("Local transcription requires macOS 14 or later.".to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn build_cut_args<'a>(
     input: &'a str,
     output: &'a str,
@@ -47,8 +64,10 @@ pub(crate) fn build_transcription_args<'a>(
     output: &'a str,
     model: &'a str,
     timestamps: bool,
-) -> [&'a OsStr; 6] {
+) -> [&'a OsStr; 8] {
     [
+        OsStr::new("-I"),
+        OsStr::new("-B"),
         OsStr::new("-c"),
         OsStr::new(FASTER_WHISPER_TRANSCRIBE_SNIPPET),
         input.as_os_str(),
@@ -86,6 +105,12 @@ pub(crate) fn transcription_failure_message(code: i32, stderr_line: &str) -> Str
 const FASTER_WHISPER_TRANSCRIBE_SNIPPET: &str = r#"
 import sys
 from pathlib import Path
+
+if sys.platform == "darwin":
+    import platform
+    if tuple(int(part) for part in platform.mac_ver()[0].split(".")[:2]) < (14, 0):
+        print("Local transcription requires macOS 14 or later.", file=sys.stderr)
+        raise SystemExit(1)
 
 try:
     from faster_whisper import WhisperModel

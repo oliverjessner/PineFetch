@@ -7,6 +7,27 @@ use std::time::Duration;
 use tauri::AppHandle;
 use tauri::Manager;
 
+pub(crate) fn ensure_whisper_platform() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("/usr/bin/sw_vers");
+        command
+            .arg("-productVersion")
+            .env("SYSTEM_VERSION_COMPAT", "0");
+        let output = run_command_output(command, None, None, Some(Duration::from_secs(5)))
+            .map_err(|error| {
+                format!("Could not determine macOS transcription compatibility: {error}")
+            })?;
+        if !output.status.success() {
+            return Err("Could not determine the macOS version for local transcription".into());
+        }
+        crate::media_tools::validate_whisper_macos_version(&String::from_utf8_lossy(
+            &output.stdout,
+        ))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn resolve_ocr_helper(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     if !cfg!(target_os = "macos") {
         return Err("Apple Vision OCR is available on macOS only.".into());
@@ -172,6 +193,8 @@ pub(crate) fn resolve_ffmpeg_location(app: &AppHandle, yt_dlp_path: &str) -> Opt
 pub(crate) fn resolve_bundled_python(app: &AppHandle) -> Option<String> {
     #[cfg(target_os = "windows")]
     let candidates = vec![
+        "whisper-runtime/python.exe",
+        "resources/whisper-runtime/python.exe",
         "whisper-runtime/Scripts/python.exe",
         "resources/whisper-runtime/Scripts/python.exe",
     ];

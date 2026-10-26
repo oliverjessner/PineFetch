@@ -1,5 +1,8 @@
 # 2.7.0
 
+- Added confirmation before removing a History entry, naming its saved texts, subtitles, OCR results and insights while preserving downloaded files.
+- Clarified Clear History's deletion scope, prevented duplicate deletion actions and preserved keyboard focus and retry after failures.
+
 - Removed unused application CSS, obsolete DOM references and an unused field from internal Link Dump secret validation.
 - Consolidated History clipboard feedback and reused account snapshots to avoid a duplicate initial database read, preserving retry and stale-response handling.
 - Shared the download and Whisper streaming-process lifecycle, with bounded output draining, process cleanup and an 8 MiB line limit.

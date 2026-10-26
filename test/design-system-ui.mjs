@@ -73,6 +73,13 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
         failAccountRead: false,
         holdAccountRead: false,
         releaseAccountRead: null,
+        historyDeleteFixtures: false,
+        holdHistoryRemove: false,
+        releaseHistoryRemove: null,
+        holdHistoryRead: false,
+        releaseHistoryRead: null,
+        failNextHistoryRemove: false,
+        completedHistoryRemovals: [],
         keywordRecords: { 'history-1': keywordFixture },
         holdKeywords: false,
         releaseKeywords: null,
@@ -239,6 +246,17 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             if (historyCleared) {
                 return { video_count: 0, total_file_size_bytes: 0, total_duration_seconds: 0, source_counts: [] };
             }
+            if (ui.historyDeleteFixtures) {
+                const entries = historyEntries || [];
+                const sources = new Map();
+                for (const entry of entries) sources.set(entry.source, (sources.get(entry.source) || 0) + 1);
+                return {
+                    video_count: entries.length,
+                    total_file_size_bytes: entries.reduce((sum, entry) => sum + entry.file_size_bytes, 0),
+                    total_duration_seconds: entries.reduce((sum, entry) => sum + entry.duration_seconds, 0),
+                    source_counts: [...sources].map(([source, count]) => ({ source, count })),
+                };
+            }
             const stats = await invoke(command, args);
             return { ...stats, source_counts: historySources.map(source => ({ source, count: 1 })) };
         }
@@ -246,17 +264,29 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
         if (command === 'get_history' && historyEntries) {
             const filtered = historyEntries.filter(entry => {
                 if (args.source && entry.source !== args.source) return false;
+                if (ui.historyDeleteFixtures && args.query && args.searchField === 'title')
+                    return entry.title.toLowerCase().includes(args.query.toLowerCase());
                 if (!args.query || args.searchField !== 'user') return true;
                 if (args.exactUser) return entry.uploader === args.query;
                 return entry.uploader?.toLowerCase().includes(args.query.toLowerCase());
             });
             const offset = args.offset || 0;
             const end = offset + args.limit;
-            return {
+            const page = {
                 entries: filtered.slice(offset, end),
                 has_more: filtered.length > end,
                 total_count: filtered.length,
             };
+            if (ui.historyDeleteFixtures && ui.holdHistoryRead) {
+                ui.holdHistoryRead = false;
+                await new Promise(resolve => {
+                    ui.releaseHistoryRead = () => {
+                        ui.releaseHistoryRead = null;
+                        resolve();
+                    };
+                });
+            }
+            return page;
         }
         if (command === 'get_history_details') {
             const customEntry = historyEntries?.find(entry => entry.id === args.id);
@@ -656,6 +686,25 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
                         ? 'Alternate description.'
                         : 'Caption content.\n'.repeat(60),
             };
+        }
+        if (command === 'remove_history_entry') {
+            if (ui.holdHistoryRemove) {
+                ui.holdHistoryRemove = false;
+                await new Promise(resolve => {
+                    ui.releaseHistoryRemove = () => {
+                        ui.releaseHistoryRemove = null;
+                        resolve();
+                    };
+                });
+            }
+            if (ui.failNextHistoryRemove) {
+                ui.failNextHistoryRemove = false;
+                throw new Error('Fixture history deletion failed');
+            }
+            if (!ui.historyDeleteFixtures || !historyEntries) throw new Error('Missing isolated deletion fixture');
+            historyEntries = historyEntries.filter(entry => entry.id !== args.id);
+            ui.completedHistoryRemovals.push(args.id);
+            return;
         }
         if (command === 'clear_history') {
             historyCleared = true;
@@ -1134,6 +1183,326 @@ try {
             await page.waitForFunction(
                 () => globalThis.document.querySelectorAll('.pinefetch-history-item').length === 2
             );
+
+            // Single deletion has the same destructive-data boundary as Clear,
+            // with cancel, retry, focus and navigation checked on isolated rows.
+            const literalDeleteTitle = 'Delete fixture "quoted" <img src=x onerror=alert(1)> & preserved';
+            const deleteEntries = [
+                { id: 'delete-first', title: literalDeleteTitle },
+                { id: 'delete-middle', title: 'Delete fixture middle' },
+                { id: 'delete-last', title: 'Delete fixture last' },
+                { id: 'delete-retained', title: 'Unrelated retained fixture' },
+                { id: 'delete-other-source', title: 'Delete fixture on another platform', source: 'tiktok' },
+            ].map(entry => ({
+                url: `https://example.com/${entry.id}`,
+                uploader: 'Deletion fixture creator',
+                source: 'youtube',
+                file_size_bytes: 1024,
+                duration_seconds: 1,
+                ...entry,
+            }));
+            await page.evaluate(entries => {
+                globalThis.__pinefetchUi.historyDeleteFixtures = true;
+                globalThis.__pinefetchUi.setHistoryEntries(entries);
+                globalThis.__pinefetchUi.emit('history:changed', {});
+            }, deleteEntries);
+            await page.locator('[data-history-id="delete-first"]').waitFor();
+            beforeHistoryRequest = await historyCommandCount();
+            await selectHistoryFilter('historySource', 'youtube', 'YouTube');
+            await waitForHistoryRequest(beforeHistoryRequest, 'title', 'youtube');
+            beforeHistoryRequest = await historyCommandCount();
+            await searchInput.fill('Delete fixture');
+            await waitForHistoryRequest(beforeHistoryRequest, 'title', 'youtube', 'Delete fixture');
+            await page.waitForFunction(
+                () => globalThis.document.querySelectorAll('.pinefetch-history-item').length === 3
+            );
+            const removeHistoryCalls = () =>
+                page.evaluate(() =>
+                    globalThis.__pinefetchUi.commands.filter(call => call.command === 'remove_history_entry')
+                );
+            const historyRemoveButton = id =>
+                page.locator(`[data-history-id="${id}"] .pinefetch-history-item-remove-btn`);
+            const historyDeleteDialog = page.locator('dialog.oj-dialog[open]');
+            const openHistoryDelete = async (id, twice = false) => {
+                const selector = `[data-history-id="${id}"] .pinefetch-history-item-remove-btn`;
+                try {
+                    await page.waitForFunction(selector => {
+                        const button = globalThis.document.querySelector(selector);
+                        return button?.isConnected && !button.disabled;
+                    }, selector);
+                    await historyRemoveButton(id).evaluate((button, twice) => {
+                        button.click();
+                        if (twice) button.click();
+                    }, twice);
+                    await historyDeleteDialog.waitFor();
+                } catch (error) {
+                    const diagnostic = await page.evaluate(selector => {
+                        const button = globalThis.document.querySelector(selector);
+                        return {
+                            button: button && { disabled: button.disabled, connected: button.isConnected },
+                            status: globalThis.document.querySelector('#historyActionStatus').textContent,
+                            activeView: globalThis.document.querySelector('.oj-nav-link[aria-current="page"]')?.id,
+                            history: [...globalThis.document.querySelectorAll('.pinefetch-history-item')].map(row => ({
+                                id: row.dataset.historyId,
+                                title: row.querySelector('.pinefetch-history-title')?.textContent,
+                                removeDisabled: row.querySelector('.pinefetch-history-item-remove-btn')?.disabled,
+                            })),
+                            commands: globalThis.__pinefetchUi.commands.slice(-12),
+                        };
+                    }, selector);
+                    console.error(
+                        '[test:ui] History delete dialog diagnostic:',
+                        JSON.stringify({ errors, diagnostic })
+                    );
+                    throw error;
+                }
+            };
+            const assertDeleteScope = async dialog => {
+                const text = await dialog.innerText();
+                for (const scope of ['transcripts', 'captions', 'creator subtitles', 'OCR results', 'Social Insights'])
+                    assert(text.toLowerCase().includes(scope.toLowerCase()), `Missing deletion scope: ${scope}`);
+                assert.match(text, /files.*stay.*disk/is);
+            };
+            const assertHistoryFocus = async (id, remove = false) => {
+                const selector = id
+                    ? `[data-history-id="${id}"] .${remove ? 'pinefetch-history-item-remove-btn' : 'pinefetch-history-open-btn'}`
+                    : '#historySearchInput';
+                await page.waitForFunction(
+                    selector => globalThis.document.querySelector(selector) === globalThis.document.activeElement,
+                    selector
+                );
+            };
+            for (const escape of [false, true]) {
+                await openHistoryDelete('delete-first', true);
+                assert.equal(await historyDeleteDialog.count(), 1);
+                assert.equal(await historyDeleteDialog.getByRole('heading').textContent(), 'Remove from history?');
+                assert((await historyDeleteDialog.innerText()).includes(literalDeleteTitle));
+                assert.equal(await historyDeleteDialog.locator('img').count(), 0);
+                await assertDeleteScope(historyDeleteDialog);
+                assert.equal(await page.evaluate(() => globalThis.document.activeElement.textContent), 'Cancel');
+                assert(
+                    await historyDeleteDialog
+                        .getByRole('button', { name: 'Remove from history', exact: true })
+                        .evaluate(button => button.classList.contains('oj-button-danger'))
+                );
+                if (escape) await page.keyboard.press('Escape');
+                else await historyDeleteDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+                await historyDeleteDialog.waitFor({ state: 'hidden' });
+                assert.equal((await removeHistoryCalls()).length, 0);
+                await assertHistoryFocus('delete-first', true);
+            }
+            // Background completion can replace the dialog's opener without
+            // changing its filters. Cancel must restore the current same-ID X.
+            await openHistoryDelete('delete-first');
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.previousDeleteOpener = globalThis.document.querySelector(
+                    '[data-history-id="delete-first"] .pinefetch-history-item-remove-btn'
+                );
+                globalThis.__pinefetchUi.emit('history:changed', {});
+            });
+            await page.waitForFunction(() => {
+                const button = globalThis.document.querySelector(
+                    '[data-history-id="delete-first"] .pinefetch-history-item-remove-btn'
+                );
+                return button?.isConnected && button !== globalThis.__pinefetchUi.previousDeleteOpener;
+            });
+            await historyDeleteDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+            await historyDeleteDialog.waitFor({ state: 'hidden' });
+            assert.equal((await removeHistoryCalls()).length, 0);
+            await assertHistoryFocus('delete-first', true);
+            // Closing a dialog before an in-flight refresh resolves must keep
+            // its focus intent until the final replacement list is available.
+            await openHistoryDelete('delete-first');
+            await page.evaluate(() => {
+                const ui = globalThis.__pinefetchUi;
+                ui.previousDeleteOpener = globalThis.document.querySelector(
+                    '[data-history-id="delete-first"] .pinefetch-history-item-remove-btn'
+                );
+                ui.holdHistoryRead = true;
+                ui.emit('history:changed', {});
+            });
+            await page.waitForFunction(() => Boolean(globalThis.__pinefetchUi.releaseHistoryRead));
+            await historyDeleteDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+            await historyDeleteDialog.waitFor({ state: 'hidden' });
+            assert.equal((await removeHistoryCalls()).length, 0);
+            assert.equal(await page.evaluate(() => typeof globalThis.__pinefetchUi.releaseHistoryRead), 'function');
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseHistoryRead());
+            await page.waitForFunction(() => {
+                const button = globalThis.document.querySelector(
+                    '[data-history-id="delete-first"] .pinefetch-history-item-remove-btn'
+                );
+                return button?.isConnected && button !== globalThis.__pinefetchUi.previousDeleteOpener;
+            });
+            await assertHistoryFocus('delete-first', true);
+
+            // Clear has the same deferred Cancel focus rule, while still
+            // issuing no deletion command at all.
+            await page.locator('#clearHistoryBtn').click();
+            await historyDeleteDialog.waitFor();
+            await page.evaluate(() => {
+                const ui = globalThis.__pinefetchUi;
+                ui.previousDeleteOpener = globalThis.document.querySelector(
+                    '[data-history-id="delete-first"] .pinefetch-history-item-remove-btn'
+                );
+                ui.holdHistoryRead = true;
+                ui.emit('history:changed', {});
+            });
+            await page.waitForFunction(() => Boolean(globalThis.__pinefetchUi.releaseHistoryRead));
+            await historyDeleteDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+            await historyDeleteDialog.waitFor({ state: 'hidden' });
+            assert.equal(
+                await page.evaluate(
+                    () => globalThis.__pinefetchUi.commands.filter(call => call.command === 'clear_history').length
+                ),
+                0
+            );
+            assert.equal(await page.evaluate(() => typeof globalThis.__pinefetchUi.releaseHistoryRead), 'function');
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseHistoryRead());
+            await page.waitForFunction(() => {
+                const button = globalThis.document.querySelector(
+                    '[data-history-id="delete-first"] .pinefetch-history-item-remove-btn'
+                );
+                return button?.isConnected && button !== globalThis.__pinefetchUi.previousDeleteOpener;
+            });
+            await page.waitForFunction(
+                () => globalThis.document.querySelector('#clearHistoryBtn') === globalThis.document.activeElement
+            );
+            // Failure retains the row, reports inline, restores its X and allows retry.
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.holdHistoryRemove = true;
+                globalThis.__pinefetchUi.failNextHistoryRemove = true;
+            });
+            await openHistoryDelete('delete-first');
+            await historyDeleteDialog
+                .getByRole('button', { name: 'Remove from history', exact: true })
+                .evaluate(button => {
+                    button.click();
+                    button.click();
+                });
+            await page.waitForFunction(() => Boolean(globalThis.__pinefetchUi.releaseHistoryRemove));
+            assert.equal((await removeHistoryCalls()).length, 1);
+            assert.equal((await removeHistoryCalls())[0].args.id, 'delete-first');
+            assert(await page.locator('#clearHistoryBtn').isDisabled());
+            assert(
+                await page
+                    .locator('.pinefetch-history-item-remove-btn')
+                    .evaluateAll(buttons => buttons.every(button => button.disabled))
+            );
+            await historyRemoveButton('delete-middle').evaluate(button => button.click());
+            assert.equal(await historyDeleteDialog.count(), 0);
+            assert.equal((await removeHistoryCalls()).length, 1);
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.previousDeleteOpener = globalThis.document.querySelector(
+                    '[data-history-id="delete-first"] .pinefetch-history-item-remove-btn'
+                );
+                globalThis.__pinefetchUi.holdHistoryRead = true;
+                globalThis.__pinefetchUi.emit('history:changed', {});
+            });
+            await page.waitForFunction(() => Boolean(globalThis.__pinefetchUi.releaseHistoryRead));
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseHistoryRemove());
+            await page.waitForFunction(() => {
+                const status = globalThis.document.querySelector('#historyActionStatus');
+                return !status.hidden && status.classList.contains('oj-status-error') && status.textContent.trim();
+            });
+            assert(await page.locator('[data-history-id="delete-first"]').isVisible());
+            assert.equal(await page.evaluate(() => typeof globalThis.__pinefetchUi.releaseHistoryRead), 'function');
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseHistoryRead());
+            await page.waitForFunction(() => {
+                const button = globalThis.document.querySelector(
+                    '[data-history-id="delete-first"] .pinefetch-history-item-remove-btn'
+                );
+                return button?.isConnected && button !== globalThis.__pinefetchUi.previousDeleteOpener;
+            });
+            await assertHistoryFocus('delete-first', true);
+            assert(await historyRemoveButton('delete-first').isEnabled());
+            assert(await page.locator('#clearHistoryBtn').isEnabled());
+            const statsReadsBeforeDelete = await page.evaluate(
+                () => globalThis.__pinefetchUi.commands.filter(call => call.command === 'get_history_stats').length
+            );
+            await openHistoryDelete('delete-first');
+            await historyDeleteDialog.getByRole('button', { name: 'Remove from history', exact: true }).click();
+            await page.locator('[data-history-id="delete-first"]').waitFor({ state: 'detached' });
+            await assertHistoryFocus('delete-middle');
+            assert.equal((await removeHistoryCalls()).length, 2);
+            assert.equal(await searchInput.inputValue(), 'Delete fixture');
+            assert.equal(await page.locator('#historySearchFieldValue').textContent(), 'Title');
+            assert.equal(await page.locator('#historySourceValue').textContent(), 'YouTube');
+            await page.waitForFunction(
+                () => globalThis.document.querySelector('#historyVideoCount').textContent === '4'
+            );
+            assert(
+                (await page.evaluate(
+                    () => globalThis.__pinefetchUi.commands.filter(call => call.command === 'get_history_stats').length
+                )) > statsReadsBeforeDelete
+            );
+            // Last visible row falls back to its previous neighbor; the final
+            // filtered match falls back to search without clearing the filters.
+            await openHistoryDelete('delete-last');
+            await historyDeleteDialog.getByRole('button', { name: 'Remove from history', exact: true }).click();
+            await page.locator('[data-history-id="delete-last"]').waitFor({ state: 'detached' });
+            await assertHistoryFocus('delete-middle');
+            await openHistoryDelete('delete-middle');
+            await historyDeleteDialog.getByRole('button', { name: 'Remove from history', exact: true }).click();
+            await page.locator('[data-history-id="delete-middle"]').waitFor({ state: 'detached' });
+            await assertHistoryFocus(null);
+            assert.equal((await removeHistoryCalls()).length, 4);
+            assert.equal(await searchInput.inputValue(), 'Delete fixture');
+            assert.equal(await page.locator('#historySourceValue').textContent(), 'YouTube');
+            await page.waitForFunction(
+                () => globalThis.document.querySelector('#historyVideoCount').textContent === '2'
+            );
+
+            // A late accepted delete may update the data, but cannot steal focus
+            // back from a different main view when its promise finishes.
+            await page.evaluate(
+                entries => {
+                    globalThis.__pinefetchUi.setHistoryEntries(entries);
+                    globalThis.__pinefetchUi.holdHistoryRemove = true;
+                    globalThis.__pinefetchUi.emit('history:changed', {});
+                },
+                [
+                    deleteEntries[3],
+                    deleteEntries[4],
+                    { ...deleteEntries[0], id: 'delete-late', title: 'Delete fixture late' },
+                ]
+            );
+            await historyRemoveButton('delete-late').waitFor();
+            await openHistoryDelete('delete-late');
+            await historyDeleteDialog.getByRole('button', { name: 'Remove from history', exact: true }).click();
+            await page.waitForFunction(() => Boolean(globalThis.__pinefetchUi.releaseHistoryRemove));
+            await page.locator('#viewDownloadBtn').click();
+            await page.locator('#urlInput').focus();
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseHistoryRemove());
+            await page.waitForFunction(() => globalThis.__pinefetchUi.completedHistoryRemovals.includes('delete-late'));
+            await page.evaluate(
+                () =>
+                    new Promise(resolve =>
+                        globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))
+                    )
+            );
+            assert(await page.locator('#downloadView').isVisible());
+            assert(await page.locator('#urlInput').evaluate(input => input === globalThis.document.activeElement));
+            await page.locator('#viewHistoryBtn').click();
+            await page.locator('[data-history-id="delete-late"]').waitFor({ state: 'detached' });
+            assert.equal(await searchInput.inputValue(), 'Delete fixture');
+            assert.equal(await page.locator('#historySourceValue').textContent(), 'YouTube');
+            assert.equal((await removeHistoryCalls()).length, 5);
+
+            beforeHistoryRequest = await historyCommandCount();
+            await searchInput.fill('');
+            await waitForHistoryRequest(beforeHistoryRequest, 'title', 'youtube');
+            beforeHistoryRequest = await historyCommandCount();
+            await selectHistoryFilter('historySource', '', 'All sources');
+            await waitForHistoryRequest(beforeHistoryRequest, 'title');
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.historyDeleteFixtures = false;
+                globalThis.__pinefetchUi.holdHistoryRead = false;
+                globalThis.__pinefetchUi.releaseHistoryRead = null;
+                globalThis.__pinefetchUi.setHistoryEntries(null);
+                globalThis.__pinefetchUi.emit('history:changed', {});
+            });
+            await page.locator('[data-history-id="history-1"]').waitFor();
+            await page.locator('[data-history-id="history-2"]').waitFor();
 
             // Creator shortcuts reset pagination and scope the exact stored name to its platform.
             await page.evaluate(() => {
@@ -3350,6 +3719,7 @@ try {
             await page.locator('#clearHistoryBtn').click();
             const confirmation = page.locator('dialog.oj-dialog[open]');
             await confirmation.waitFor();
+            await assertDeleteScope(confirmation);
             assert.equal(await page.evaluate(() => globalThis.document.activeElement.textContent), 'Cancel');
             await page.keyboard.press('Escape');
             await confirmation.waitFor({ state: 'hidden' });

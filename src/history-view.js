@@ -30,6 +30,10 @@ export const createHistoryView = ({
         historySource: '',
         historyExactUser: false,
         historyClearing: false,
+        historyRemoving: false,
+        historyRemovalFocus: null,
+        historyViewRevision: 0,
+        historyFilterRevision: 0,
         page: 'list',
         historyReturnId: null,
         scrollTop: 0,
@@ -104,6 +108,8 @@ export const createHistoryView = ({
     });
 
     const activate = () => {
+        state.historyViewRevision += 1;
+        state.historyRemovalFocus = null;
         const detail = isActive() && state.page === 'detail';
         const account = isActive() && state.page === 'account';
         const list = isActive() && state.page === 'list';
@@ -147,11 +153,41 @@ export const createHistoryView = ({
         return formatLocalDateTime(date);
     };
 
+    const updateHistoryMutationControls = () => {
+        const busy = state.historyClearing || state.historyRemoving;
+        els.clearHistoryBtn.disabled = !api.available || state.historyLoading || busy;
+        for (const button of els.historyList.querySelectorAll('.pinefetch-history-item-remove-btn')) {
+            button.disabled = !api.available || busy;
+        }
+    };
     const setHistoryLoading = isLoading => {
         state.historyLoading = isLoading;
         els.loadMoreHistoryBtn.disabled = isLoading;
-        els.clearHistoryBtn.disabled = isLoading || state.historyClearing;
+        updateHistoryMutationControls();
         els.loadMoreHistoryBtn.textContent = isLoading ? 'Loading...' : 'Load more';
+    };
+
+    const canReturnHistoryFocus = (context, opener) =>
+        isActive() &&
+        state.page === 'list' &&
+        context.view === state.historyViewRevision &&
+        context.filter === state.historyFilterRevision &&
+        (document.activeElement === document.body ||
+            document.activeElement === opener ||
+            !document.activeElement?.isConnected);
+    const restoreHistoryRemovalFocus = () => {
+        if (state.historyLoading || !state.historyRemovalFocus) return;
+        const focus = state.historyRemovalFocus;
+        state.historyRemovalFocus = null;
+        if (!canReturnHistoryFocus(focus, focus.opener)) return;
+        const rows = [...els.historyList.children];
+        const row = focus.ids.map(id => rows.find(row => row.dataset.historyId === id)).find(Boolean);
+        const target = focus.clear
+            ? els.clearHistoryBtn
+            : row?.querySelector(focus.remove ? '.pinefetch-history-item-remove-btn' : '.pinefetch-history-open-btn') ||
+              rows[0]?.querySelector('.pinefetch-history-open-btn') ||
+              els.historySearchInput;
+        target.focus({ preventScroll: true });
     };
 
     const updateHistoryResultCount = () => {
@@ -321,14 +357,62 @@ export const createHistoryView = ({
         removeBtn.appendChild(removeIcon);
         removeBtn.title = 'Remove from history';
         removeBtn.setAttribute('aria-label', `Remove from history: ${entryLabel}`);
+        removeBtn.disabled = !api.available || state.historyClearing || state.historyRemoving;
         removeBtn.onclick = async event => {
             event.stopPropagation();
+            if (!api.available || state.historyRemoving || state.historyClearing) return;
+            state.historyRemoving = true;
+            const context = { view: state.historyViewRevision, filter: state.historyFilterRevision };
+            let removed = false;
             try {
+                removeBtn.focus({ preventScroll: true });
+                updateHistoryMutationControls();
+                if (
+                    !(await confirmDialog({
+                        title: 'Remove from history?',
+                        message:
+                            'Remove “' +
+                            entryLabel +
+                            "” from History and delete its saved transcripts, captions, creator subtitles, OCR results and Social Insights? Saved account insights are also removed if this is the account's last History entry. This cannot be undone. Downloaded files will stay on disk.",
+                        confirmLabel: 'Remove from history',
+                        variant: 'danger',
+                    }))
+                )
+                    return;
+                if (!isActive() || state.page !== 'list' || context.view !== state.historyViewRevision) return;
+                updateHistoryMutationControls();
+                setHistoryActionStatus('Removing history entry...');
+                const rows = [...els.historyList.children];
+                const index = rows.findIndex(row => row.dataset.historyId === entry.id);
+                const neighbours = [...rows.slice(index + 1), ...rows.slice(0, index).reverse()].map(
+                    row => row.dataset.historyId
+                );
                 await api.removeHistoryEntry({ id: entry.id });
+                removed = true;
+                const returnFocus = canReturnHistoryFocus(context, removeBtn);
+                const currentRow = [...els.historyList.children].find(row => row.dataset.historyId === entry.id);
+                if (currentRow) {
+                    currentRow.remove();
+                    state.historyOffset = Math.max(0, state.historyOffset - 1);
+                }
                 invalidateHistoryCache();
-                void renderHistory({ force: true });
+                if (returnFocus)
+                    state.historyRemovalFocus = {
+                        ...context,
+                        ids: neighbours,
+                        opener: removeBtn,
+                    };
+                await renderHistory({ force: true });
+                setHistoryActionStatus('History entry removed. Downloaded files remain on disk.');
             } catch (err) {
+                setHistoryActionStatus('Could not remove this history entry. Try again.', true);
                 appendLog(`[history] ${err}`, true);
+            } finally {
+                state.historyRemoving = false;
+                updateHistoryMutationControls();
+                if (!removed && canReturnHistoryFocus(context, removeBtn))
+                    state.historyRemovalFocus = { ...context, ids: [entry.id], opener: removeBtn, remove: true };
+                restoreHistoryRemovalFocus();
             }
         };
         item.appendChild(removeBtn);
@@ -416,12 +500,15 @@ export const createHistoryView = ({
             updateHistoryActions();
             if (needsFollowUpRefresh && isActive()) {
                 void renderHistory({ force: true });
+            } else {
+                restoreHistoryRemovalFocus();
             }
         }
     };
 
     const showSavedVideosByCreator = ({ uploader, source }) => {
         if (!uploader || !source) return;
+        state.historyFilterRevision += 1;
         if (historySearchTimer !== null) clearTimeout(historySearchTimer);
         historySearchTimer = null;
         els.historySearchInput.value = uploader;
@@ -473,6 +560,7 @@ export const createHistoryView = ({
                 !state.historyExactUser
             )
                 return;
+            state.historyFilterRevision += 1;
             state.historyQuery = query;
             state.historySearchField = searchField;
             state.historySource = source;
@@ -508,26 +596,27 @@ export const createHistoryView = ({
             });
         }
         els.clearHistoryBtn.addEventListener('click', async () => {
-            if (!api.available || state.historyClearing) return;
+            if (!api.available || state.historyClearing || state.historyRemoving) return;
             state.historyClearing = true;
-            els.clearHistoryBtn.focus({ preventScroll: true });
-            if (
-                !(await confirmDialog({
-                    title: 'Clear history?',
-                    message:
-                        'Delete all history entries and saved transcripts? This cannot be undone. Downloaded files will stay on disk.',
-                    confirmLabel: 'Clear history',
-                    variant: 'danger',
-                }))
-            ) {
-                state.historyClearing = false;
-                els.clearHistoryBtn.disabled = state.historyLoading;
-                return;
-            }
-            els.clearHistoryBtn.disabled = true;
-            setHistoryActionStatus('Deleting history...');
+            const context = { view: state.historyViewRevision, filter: state.historyFilterRevision };
+            let cleared = false;
             try {
+                els.clearHistoryBtn.focus({ preventScroll: true });
+                updateHistoryMutationControls();
+                if (
+                    !(await confirmDialog({
+                        title: 'Clear history?',
+                        message:
+                            'Delete all History entries and their saved transcripts, captions, creator subtitles, OCR results and Social Insights, including saved account insights? This cannot be undone. Downloaded files will stay on disk.',
+                        confirmLabel: 'Clear history',
+                        variant: 'danger',
+                    }))
+                )
+                    return;
+                updateHistoryMutationControls();
+                setHistoryActionStatus('Deleting history...');
                 await api.clearHistory();
+                cleared = true;
                 if (historySearchTimer !== null) clearTimeout(historySearchTimer);
                 historySearchTimer = null;
                 els.historySearchInput.value = '';
@@ -546,7 +635,10 @@ export const createHistoryView = ({
                 appendLog(`[history] ${err}`, true);
             } finally {
                 state.historyClearing = false;
-                els.clearHistoryBtn.disabled = state.historyLoading;
+                updateHistoryMutationControls();
+                if (!cleared && canReturnHistoryFocus(context, els.clearHistoryBtn))
+                    state.historyRemovalFocus = { ...context, ids: [], opener: els.clearHistoryBtn, clear: true };
+                restoreHistoryRemovalFocus();
             }
         });
     };

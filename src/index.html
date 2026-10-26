@@ -62,11 +62,14 @@
                                 class="oj-input"
                                 type="text"
                                 placeholder="https://..."
-                                aria-describedby="videoInputHelp videoInputError"
+                                aria-describedby="videoInputHelp manualInfoHint videoInputError"
                             />
                             <span id="videoInputHelp" class="oj-helper" hidden
                                 >Use an 11-character YouTube ID, youtube:&lt;ID&gt;, tiktok:&lt;ID&gt;, or
                                 instagram:&lt;shortcode&gt;. Other IDs need a platform prefix.</span
+                            >
+                            <span id="manualInfoHint" class="oj-helper" role="status" aria-live="polite" hidden
+                                >Load info to check this link.</span
                             >
                             <span
                                 id="videoInputError"

@@ -44,6 +44,10 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
         txtImportContent: null,
         holdIdInfo: false,
         releaseIdInfo: null,
+        manualInfoUrls: [],
+        manualInfoHoldUrls: [],
+        manualInfoFailUrls: [],
+        releaseManualInfo: {},
         failNextIdImportSave: false,
         transcriptText:
             '[00:00:01.000 → 00:00:02.000] Transcript <img src=x onerror="alert(1)"> stays plain text.\n' +
@@ -215,6 +219,23 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
                 youtube_cookie_browser: 'firefox',
             };
             return { ...config };
+        }
+        if (command === 'load_info' && ui.manualInfoUrls.includes(args.url)) {
+            if (ui.manualInfoHoldUrls.includes(args.url)) {
+                ui.manualInfoHoldUrls = ui.manualInfoHoldUrls.filter(url => url !== args.url);
+                await new Promise(resolve => {
+                    ui.releaseManualInfo[args.url] = () => {
+                        delete ui.releaseManualInfo[args.url];
+                        resolve();
+                    };
+                });
+            }
+            if (ui.manualInfoFailUrls.includes(args.url)) throw new Error('Fixture extractor could not read this link');
+            return {
+                ...ui.playlistVideos[0],
+                url: args.url,
+                title: `Checked link fixture: ${args.url}`,
+            };
         }
         if (command === 'load_info' && ui.idInfoUrls.includes(args.url)) {
             const complete = () => ({ ...ui.playlistVideos[0], url: args.url, title: 'Resolved ID fixture' });
@@ -4293,6 +4314,181 @@ try {
             assert.equal(await playlistCalls(), afterPlaylists);
             assert.equal(await page.locator('.pinefetch-queue-item').count(), playlistQueueCount);
             assert.equal(await playlistInput.inputValue(), videos[1].url);
+
+            // An unrecognized host is unchecked, not an extractor rejection.
+            // Explicit metadata/queue actions retain the ordinary HTTP(S) contract.
+            const manualInfoLinks = {
+                unknown: 'https://vimeo.com/123456789',
+                failure: 'https://example.com/e13-extractor-error',
+                queue: 'http://example.com/e13-queue',
+                known: 'https://www.youtube.com/watch?v=E13Known001',
+            };
+            await page.evaluate(links => {
+                const ui = globalThis.__pinefetchUi;
+                ui.clipboard = '';
+                ui.manualInfoUrls = Object.values(links);
+            }, manualInfoLinks);
+            const manualInfoInput = page.locator('#urlInput');
+            const manualInfoHint = page.locator('#manualInfoHint');
+            const manualInfoBadge = page.locator('#infoBadge');
+            const metadataCallsSince = (url, after) =>
+                page.evaluate(
+                    ({ url, after }) =>
+                        globalThis.__pinefetchUi.commands
+                            .slice(after)
+                            .filter(call => call.command === 'load_info' && call.args.url === url).length,
+                    { url, after }
+                );
+            const waitForCheckedLink = async url => {
+                await page.waitForFunction(
+                    url =>
+                        globalThis.document.querySelector('#infoBadge').textContent === 'Ready' &&
+                        globalThis.document.querySelector('#infoTitle').textContent === `Checked link fixture: ${url}`,
+                    url
+                );
+                assert(await manualInfoHint.isHidden());
+            };
+            await page.waitForFunction(() => !globalThis.document.querySelector('#loadInfoBtn').disabled);
+            const beforeUnknownInfo = await historyCommandCount();
+            await manualInfoInput.fill(manualInfoLinks.unknown);
+            assert.equal(await manualInfoBadge.textContent(), 'Not checked');
+            assert.equal(await manualInfoBadge.evaluate(badge => badge.classList.contains('oj-badge-danger')), false);
+            assert(await manualInfoHint.isVisible());
+            assert.equal((await manualInfoHint.textContent()).trim(), 'Load info to check this link.');
+            assert(await page.locator('#loadInfoBtn').isVisible());
+            assert(await page.locator('#loadInfoBtn').isEnabled());
+            assert(await page.locator('#startDownloadBtn').isVisible());
+            assert(await page.locator('#startDownloadBtn').isEnabled());
+            await page.waitForTimeout(750);
+            assert.equal(await metadataCallsSince(manualInfoLinks.unknown, beforeUnknownInfo), 0);
+            await page.locator('#loadInfoBtn').click();
+            await waitForCheckedLink(manualInfoLinks.unknown);
+            assert.equal(await metadataCallsSince(manualInfoLinks.unknown, beforeUnknownInfo), 1);
+
+            // Only an actual fixture extractor failure produces Error, and the
+            // same full URL can be retried without a blanket unsupported label.
+            await page.evaluate(url => {
+                globalThis.__pinefetchUi.manualInfoFailUrls = [url];
+            }, manualInfoLinks.failure);
+            const beforeInfoFailure = await historyCommandCount();
+            await manualInfoInput.fill(manualInfoLinks.failure);
+            assert.equal(await manualInfoBadge.textContent(), 'Not checked');
+            assert(await manualInfoHint.isVisible());
+            assert(await page.locator('#infoCard').isHidden());
+            await page.locator('#loadInfoBtn').click();
+            await page.waitForFunction(() => globalThis.document.querySelector('#infoBadge').textContent === 'Error');
+            assert(await manualInfoBadge.evaluate(badge => badge.classList.contains('oj-badge-danger')));
+            assert.equal(await metadataCallsSince(manualInfoLinks.failure, beforeInfoFailure), 1);
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.manualInfoFailUrls = [];
+            });
+            await page.locator('#loadInfoBtn').click();
+            await waitForCheckedLink(manualInfoLinks.failure);
+            assert.equal(await metadataCallsSince(manualInfoLinks.failure, beforeInfoFailure), 2);
+
+            // A valid unrecognized HTTP URL can be queued unchanged; no
+            // successful metadata lookup is required for this existing action.
+            const beforeUnknownQueue = await historyCommandCount();
+            await manualInfoInput.fill(manualInfoLinks.queue);
+            assert(await manualInfoHint.isVisible());
+            await page.waitForTimeout(750);
+            assert.equal(await metadataCallsSince(manualInfoLinks.queue, beforeUnknownQueue), 0);
+            await page.locator('#startDownloadBtn').click();
+            await page.waitForFunction(
+                ({ url, after }) =>
+                    globalThis.__pinefetchUi.commands
+                        .slice(after)
+                        .some(call => call.command === 'enqueue_download' && call.args.request.url === url),
+                { url: manualInfoLinks.queue, after: beforeUnknownQueue }
+            );
+            await page.waitForFunction(() => globalThis.document.querySelector('#urlInput').value === '');
+            assert(await manualInfoHint.isHidden());
+
+            const beforeKnownPreview = await historyCommandCount();
+            await manualInfoInput.fill(manualInfoLinks.unknown);
+            assert(await manualInfoHint.isVisible());
+            await manualInfoInput.fill(manualInfoLinks.known);
+            assert(await manualInfoHint.isHidden());
+            await waitForCheckedLink(manualInfoLinks.known);
+            assert.equal(await metadataCallsSince(manualInfoLinks.known, beforeKnownPreview), 1);
+            await manualInfoInput.fill(manualInfoLinks.unknown);
+            await manualInfoInput.fill('');
+            assert(await manualInfoHint.isHidden());
+            assert.equal(await manualInfoBadge.textContent(), 'Idle');
+
+            // A completed old known-host request cannot start metadata work for
+            // an unknown replacement or overwrite its neutral state.
+            await page.evaluate(url => {
+                globalThis.__pinefetchUi.manualInfoHoldUrls = [url];
+            }, manualInfoLinks.known);
+            const beforeStaleKnown = await historyCommandCount();
+            await manualInfoInput.fill(manualInfoLinks.known);
+            await page.waitForFunction(
+                url => Boolean(globalThis.__pinefetchUi.releaseManualInfo[url]),
+                manualInfoLinks.known
+            );
+            await manualInfoInput.fill(manualInfoLinks.unknown);
+            await page.evaluate(url => globalThis.__pinefetchUi.releaseManualInfo[url](), manualInfoLinks.known);
+            await page.waitForFunction(() => !globalThis.document.querySelector('#loadInfoBtn').disabled);
+            await page.waitForTimeout(750);
+            assert.equal(await metadataCallsSince(manualInfoLinks.known, beforeStaleKnown), 1);
+            assert.equal(await metadataCallsSince(manualInfoLinks.unknown, beforeStaleKnown), 0);
+            assert.equal(await manualInfoBadge.textContent(), 'Not checked');
+            assert(await manualInfoHint.isVisible());
+            assert(await page.locator('#infoCard').isHidden());
+
+            // Explicit Cmd+I must survive a still-running older request even
+            // though its new URL does not qualify for automatic previews.
+            await page.evaluate(url => {
+                globalThis.__pinefetchUi.manualInfoHoldUrls = [url];
+            }, manualInfoLinks.known);
+            const beforePendingManual = await historyCommandCount();
+            await manualInfoInput.fill(manualInfoLinks.known);
+            await page.waitForFunction(
+                url => Boolean(globalThis.__pinefetchUi.releaseManualInfo[url]),
+                manualInfoLinks.known
+            );
+            await manualInfoInput.fill(manualInfoLinks.unknown);
+            await manualInfoInput.press('Meta+i');
+            await page.evaluate(url => globalThis.__pinefetchUi.releaseManualInfo[url](), manualInfoLinks.known);
+            await waitForCheckedLink(manualInfoLinks.unknown);
+            assert.equal(await metadataCallsSince(manualInfoLinks.known, beforePendingManual), 1);
+            assert.equal(await metadataCallsSince(manualInfoLinks.unknown, beforePendingManual), 1);
+
+            for (const invalid of [
+                'file:///tmp/e13.mp4',
+                'javascript:alert(1)',
+                'ftp://example.com/e13',
+                'https://example.com/\u0001invalid',
+            ]) {
+                const beforeInvalidLink = await historyCommandCount();
+                await manualInfoInput.fill(invalid);
+                await page.locator('#loadInfoBtn').click();
+                await manualInfoInput.press('Enter');
+                await page.waitForTimeout(750);
+                assert(await manualInfoHint.isHidden());
+                assert(await page.locator('#videoInputError').isVisible());
+                assert.equal(
+                    await page.evaluate(
+                        after =>
+                            globalThis.__pinefetchUi.commands
+                                .slice(after)
+                                .filter(call =>
+                                    ['load_info', 'enqueue_download', 'enqueue_playlist'].includes(call.command)
+                                ).length,
+                        beforeInvalidLink
+                    ),
+                    0
+                );
+            }
+            await manualInfoInput.press('Escape');
+            assert(await manualInfoHint.isHidden());
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.manualInfoUrls = [];
+                globalThis.__pinefetchUi.manualInfoHoldUrls = [];
+                globalThis.__pinefetchUi.manualInfoFailUrls = [];
+                globalThis.__pinefetchUi.releaseManualInfo = {};
+            });
 
             // Verify desktop minimum size and compact browser layout after font loading.
             for (const width of [1000, 520]) {

@@ -1,5 +1,8 @@
 # 2.7.0
 
+- Replaced premature Unsupported link warnings with a neutral Not checked state and guidance to check other HTTP(S) links manually.
+- Preserved explicitly requested metadata checks while an older request is running, without enabling automatic previews for additional sites.
+
 - Added confirmation before removing a History entry, naming its saved texts, subtitles, OCR results and insights while preserving downloaded files.
 - Clarified Clear History's deletion scope, prevented duplicate deletion actions and preserved keyboard focus and retry after failures.
 

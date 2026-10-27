@@ -2,6 +2,7 @@ export const createAppState = () =>
     Object.seal({
         jobs: new Map(),
         queueIds: [],
+        queueRevision: -1,
         queueAutoStartEnabled: true,
         queueWorkerRunning: false,
         queuePaused: false,
@@ -43,6 +44,57 @@ export const applyQueueStatus = (state, status, autoStartFallback = true) => {
     state.queueAutoStartEnabled = status?.auto_start ?? autoStartFallback;
     state.queueWorkerRunning = Boolean(status?.worker_running);
     state.queuePaused = Boolean(status?.paused);
+};
+
+// Snapshots also bootstrap a reopened window after backend events were missed.
+// Late responses must not turn active or completed jobs back into waiting jobs.
+export const mergeQueueSnapshot = (state, snapshot, describe = () => ({}), now = Date.now()) => {
+    if (Number.isSafeInteger(snapshot?.revision)) {
+        if (snapshot.revision < state.queueRevision) return [];
+        state.queueRevision = snapshot.revision;
+    }
+    const pending = Array.isArray(snapshot) ? snapshot : Array.isArray(snapshot?.pending) ? snapshot.pending : [];
+    const interrupted = Array.isArray(snapshot?.interrupted) ? snapshot.interrupted : [];
+    const active = snapshot?.active;
+    const recoveredIds = new Set(interrupted.map(entry => entry.job?.id));
+    for (const [id, job] of state.jobs) {
+        if (job.recovered && !recoveredIds.has(id)) state.jobs.delete(id);
+    }
+    const entries = [
+        ...pending.map(job => ({ job, state: 'queued' })),
+        ...(active?.job ? [{ job: active.job, state: active.state || 'downloading' }] : []),
+        ...interrupted.map(entry => ({ ...entry, state: 'error', recovered: true })),
+    ];
+    const waiting = [];
+    const changed = [];
+    const phaseRank = { downloading: 1, transcribing: 2, cancelling: 3 };
+    for (const entry of entries) {
+        const job = entry.job;
+        if (!job?.id || state.suppressedJobIds.has(job.id)) continue;
+        const existing = state.jobs.get(job.id);
+        let status = entry.state;
+        if (terminalJobStates.has(existing?.state) && !entry.recovered) status = existing.state;
+        if (existing?.state === 'success' || existing?.state === 'cancelled') status = existing.state;
+        if (isQueueBusy(existing?.state) && (phaseRank[status] || 0) < phaseRank[existing.state])
+            status = existing.state;
+        updateJobState(
+            state,
+            job.id,
+            {
+                ...describe(job, existing),
+                url: job.url,
+                state: status,
+                recovered: Boolean(entry.recovered && status === 'error'),
+                error: entry.recovered ? entry.error : existing?.error,
+                outputPath: entry.output_path || existing?.outputPath || null,
+            },
+            now
+        );
+        if (status === 'queued' && !entry.recovered) waiting.push(job.id);
+        changed.push(job.id);
+    }
+    state.queueIds = waiting;
+    return changed;
 };
 
 export const applyDownloadState = (state, payload) => {

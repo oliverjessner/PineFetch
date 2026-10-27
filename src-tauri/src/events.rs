@@ -17,8 +17,8 @@ pub(super) fn emit_queue_status(app: &AppHandle, state: &QueueState) {
 }
 
 pub(super) fn emit_queue(app: &AppHandle, state: &QueueState) -> Result<(), String> {
-    let queue = state.pending.lock().map_err(|_| "Queue lock poisoned")?;
-    app.emit(QUEUE_UPDATE, queue.clone())
+    let snapshot = crate::queue::snapshot_queue(state)?;
+    app.emit(QUEUE_UPDATE, snapshot)
         .map_err(|e| format!("Emit queue failed: {e}"))
 }
 

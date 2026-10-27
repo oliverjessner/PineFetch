@@ -464,7 +464,7 @@ fn integration_shutdown_during_cancellation_reaps_the_active_child_and_pauses_qu
     handle.join().unwrap();
     assert!(!output.status.success());
     assert!(state.processes.shutting_down.load(Ordering::SeqCst));
-    assert!(*state.queue.paused.lock().unwrap());
+    assert!(state.queue.data.lock().unwrap().stopping);
     assert_eq!(
         state.processes.cancel_requested.lock().unwrap().as_deref(),
         Some("shutdown-job")

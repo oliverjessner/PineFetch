@@ -17,7 +17,17 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 11;
+pub(super) const SCHEMA_VERSION: i64 = 12;
+
+const QUEUE_SQL: &str = r#"
+CREATE TABLE queue_state (
+    id INTEGER PRIMARY KEY CHECK (id=1),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK (revision>=0),
+    snapshot_json TEXT NOT NULL CHECK (length(snapshot_json)<=16777216)
+);
+INSERT INTO queue_state(id,snapshot_json) VALUES
+    (1,'{"format_version":1,"pending":[],"active":null,"interrupted":[],"auto_start":true,"paused":false}');
+"#;
 
 // NULL + known=0 is a legacy row, eligible only for exact-stem resolution.
 // NULL + known=1 explicitly records a new transcript without retained video.
@@ -59,11 +69,17 @@ pub(crate) fn restore_schema8_caption_fixture(conn: &Connection) {
 
 #[cfg(test)]
 pub(crate) fn restore_schema10_transcript_fixture(conn: &Connection) {
+    restore_schema11_queue_fixture(conn);
     conn.execute_batch(
         "ALTER TABLE transcriptions DROP COLUMN media_path_known;
          ALTER TABLE transcriptions DROP COLUMN media_path;",
     )
     .unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn restore_schema11_queue_fixture(conn: &Connection) {
+    conn.execute_batch("DROP TABLE queue_state;").unwrap();
 }
 
 const CREATOR_SUBTITLES_SQL: &str =
@@ -267,6 +283,7 @@ pub(super) enum MigrationPoint {
     OptionalCaptionFiles,
     IdImport,
     TranscriptMedia,
+    Queue,
 }
 
 pub(super) fn initialize_with_hook(
@@ -400,6 +417,13 @@ pub(super) fn initialize_with_hook(
         tx.pragma_update(None, "user_version", 11)
             .map_err(|e| e.to_string())?;
         hook(MigrationPoint::TranscriptMedia)?;
+    }
+    if version < 12 {
+        tx.execute_batch(QUEUE_SQL)
+            .map_err(|error| format!("SQLite migration 12 failed: {error}"))?;
+        tx.pragma_update(None, "user_version", 12)
+            .map_err(|error| error.to_string())?;
+        hook(MigrationPoint::Queue)?;
     }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
@@ -608,6 +632,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             .execute_batch(TRANSCRIPT_MEDIA_SQL)
             .map_err(|e| e.to_string())?;
     }
+    if version >= 12 {
+        reference
+            .execute_batch(QUEUE_SQL)
+            .map_err(|error| error.to_string())?;
+    }
     reference
         .execute_batch("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .map_err(|e| e.to_string())?;
@@ -626,6 +655,9 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let tables: HashSet<&str> = objects.iter().map(|(name, _, _)| name.as_str()).collect();
     if version > 0 {
+        if version >= 12 && !tables.contains("queue_state") {
+            return Err("Inconsistent schema 12: missing queue_state; database preserved".into());
+        }
         for name in [
             "app_config",
             "history_entries",
@@ -770,10 +802,18 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             .filter(|c| !c.is_whitespace())
             .flat_map(char::to_lowercase)
             .collect();
-        if matches!(table.as_str(), "app_config" | "link_dump_settings")
-            && !canonical.contains("check(id=1)")
+        if matches!(
+            table.as_str(),
+            "app_config" | "link_dump_settings" | "queue_state"
+        ) && !canonical.contains("check(id=1)")
         {
             return Err(format!("{} (singleton constraint)", fail()));
+        }
+        if table == "queue_state"
+            && (!canonical.contains("check(revision>=0)")
+                || !canonical.contains("check(length(snapshot_json)<=16777216)"))
+        {
+            return Err(format!("{} (queue constraints)", fail()));
         }
         if table == "transcriptions"
             && !canonical.contains("check(\"type\"in('text','textwithtimestamps'))")

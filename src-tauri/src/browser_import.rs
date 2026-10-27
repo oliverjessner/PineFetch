@@ -10,7 +10,6 @@ use crate::models::LinkDumpQueueSummary;
 use crate::models::LinkDumpServerStatus;
 use crate::models::NormalizedVideoUrl;
 use crate::presets::download_preset_for_key;
-use crate::queue::insert_unique_video_jobs;
 use crate::queue::is_queue_auto_start_enabled;
 use crate::state::AppState;
 use crate::video_urls::is_allowed_link_dump_host;
@@ -637,19 +636,7 @@ pub(super) fn add_normalized_video_urls_to_queue(
         ));
     }
 
-    let added_count = {
-        let mut queue = state
-            .queue
-            .pending
-            .lock()
-            .map_err(|_| "Queue lock poisoned")?;
-        let active_key = state
-            .queue
-            .active_video_key
-            .lock()
-            .map_err(|_| "Active video key lock poisoned")?;
-        insert_unique_video_jobs(&mut queue, active_key.as_deref(), candidates, summary)
-    };
+    let added_count = crate::queue::enqueue_unique(&state.queue, candidates, summary)?;
     if added_count > 0 {
         emit_queue(app, &state.queue)?;
         if is_queue_auto_start_enabled(&state.queue)? {

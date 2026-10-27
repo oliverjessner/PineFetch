@@ -57,7 +57,7 @@ fn completed_and_failed_jobs_release_active_state_and_allow_the_next_fifo_job() 
         assert_eq!(result.state, terminal);
         assert_eq!(committed.get(), terminal == DownloadState::Success);
         assert!(processes.current_job_id.lock().unwrap().is_none());
-        assert!(queue.active_video_key.lock().unwrap().is_none());
+        assert!(queue.data.lock().unwrap().active_video_key.is_none());
         assert_eq!(
             next_worker_job(&queue, &processes.current_job_id)
                 .unwrap()
@@ -94,7 +94,10 @@ fn cancelled_waiting_jobs_are_removed_once_without_changing_the_active_job() {
         processes.current_job_id.lock().unwrap().as_deref(),
         Some("active")
     );
-    assert_eq!(queue.pending.lock().unwrap().front().unwrap().id, "next");
+    assert_eq!(
+        queue.data.lock().unwrap().pending.front().unwrap().id,
+        "next"
+    );
 }
 
 #[test]
@@ -139,7 +142,7 @@ fn pause_and_repeated_resume_preserve_waiting_jobs_and_worker_ownership() {
     assert!(!claim_worker_start(&queue).unwrap());
     let (next, paused) = next_worker_job(&queue, &processes.current_job_id).unwrap();
     assert!(next.is_none() && paused);
-    assert_eq!(queue.pending.lock().unwrap().len(), 1);
+    assert_eq!(queue.data.lock().unwrap().pending.len(), 1);
     set_queue_paused(&queue, false).unwrap();
     set_queue_paused(&queue, false).unwrap();
     assert!(claim_worker_start(&queue).unwrap());
@@ -158,7 +161,7 @@ fn pause_and_repeated_resume_preserve_waiting_jobs_and_worker_ownership() {
 fn auto_start_setting_controls_automatic_start_while_manual_start_remains_available() {
     for enabled in [false, true] {
         let queue = QueueState::default();
-        *queue.auto_start.lock().unwrap() = enabled;
+        queue.data.lock().unwrap().auto_start = enabled;
         enqueue_jobs(&queue, vec![job("one")]).unwrap();
         if is_queue_auto_start_enabled(&queue).unwrap() {
             assert!(claim_worker_start(&queue).unwrap());
@@ -167,7 +170,7 @@ fn auto_start_setting_controls_automatic_start_while_manual_start_remains_availa
             snapshot_queue_status(&queue).unwrap().worker_running,
             enabled
         );
-        assert_eq!(queue.pending.lock().unwrap().len(), 1);
+        assert_eq!(queue.data.lock().unwrap().pending.len(), 1);
         if !enabled {
             assert!(claim_worker_start(&queue).unwrap());
         }
@@ -229,9 +232,10 @@ fn concurrent_enqueue_keeps_each_batch_contiguous_without_losing_jobs() {
         handle.join().unwrap();
     }
     let ids: Vec<_> = queue
-        .pending
+        .data
         .lock()
         .unwrap()
+        .pending
         .iter()
         .map(|job| job.id.clone())
         .collect();

@@ -24,7 +24,7 @@ pub(super) fn load_from_dirs(data_dir: &Path, config_dir: &Path) -> Result<AppSt
     import_legacy_config(&db, &config_dir.join("config.json"))?;
     let config = load_config_from_db(&db)?;
     import_legacy_history(&db, &data_dir.join("history.json"))?;
-    let mut state = AppState::new(config, db);
+    let mut state = AppState::restore(config, db)?;
     state.ocr = std::sync::Arc::new(crate::ocr::OcrState::initialize(data_dir, &state.db)?);
     Ok(state)
 }

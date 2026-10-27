@@ -14,7 +14,7 @@ All Rust modules live in `src-tauri/src`.
 | `main`, `startup`, `state`                                                                          | Compose the app, resolve desktop data paths, wire legacy imports, register commands and install startup/shutdown hooks.                        |
 | `models`                                                                                            | Shared serialized configuration, download, history and Link Dump models. `DownloadState` preserves the existing seven snake-case event values. |
 | `config_rules`, `download_rules`, `history_rules`, `url_rules`, `video_urls`, `platform`, `presets` | Pure normalization, job preparation, timestamps, output names, metadata fallback, URL identity and platform/preset decisions.                  |
-| `queue`                                                                                             | FIFO storage, pause/status/next/removal, URL deduplication and final cancellation/success decisions, without Tauri or SQLite.                  |
+| `queue`, `queue_store`                                                                              | Queue transitions, atomic snapshots, profile ownership and recovery from completion receipts, without a Tauri handle.                          |
 | `worker`                                                                                            | Coordinate job execution, cancellation, completion, worker lifecycle and existing notifications/events.                                        |
 | `download`, `metadata`, `runtime`                                                                   | Execute downloads/transcription/cuts, fetch metadata and locate/probe yt-dlp, FFmpeg/ffprobe, Python/Whisper and Deno.                         |
 | `yt_dlp`, `media_tools`                                                                             | Pure yt-dlp/FFmpeg/Whisper arguments and progress, filepath, caption, metadata and transcription parsing.                                      |
@@ -83,8 +83,26 @@ function does not emit UI events or itself require a database.
 
 ## Queue and process lifecycle
 
-`QueueState` owns pending jobs, auto-start/pause flags, worker lifecycle and the
-active normalized video key. `ProcessState` owns the current job/child, utility
+`QueueState` owns pending jobs, auto-start/pause flags, interrupted jobs, worker
+lifecycle and the active normalized video key under one state mutex.
+`queue_store` saves a versioned JSON snapshot in schema 12's `queue_state` row.
+It includes complete job options and FIFO order; a revision check prevents stale
+writers from replacing saved work. Mutation commits precede in-memory publication
+and acknowledgement. Snapshots are limited to 16 MiB; unsupported/corrupt snapshots
+are refused without reinitialization.
+
+An [operating-system file lock](https://doc.rust-lang.org/std/fs/struct.File.html#method.try_lock)
+held for the profile's lifetime prevents two application instances from claiming
+the same work. It is released automatically after process exit. Startup reconciles
+the active snapshot and pending jobs against completion receipts. Complete
+receipts are omitted, even if History was subsequently removed; uncertain jobs
+become interrupted entries with their known output paths and never run
+automatically. Explicit Queue again atomically replaces an interrupted entry
+with a fresh job identity and the same options. Normal waiting jobs follow the
+saved Auto-start/Pause mode. Shutdown uses a separate transient stop flag so
+it cannot replace the user's saved Pause choice.
+
+`ProcessState` owns the current job/child, utility
 children, cancellation request and shutdown flag. Pause prevents taking the next
 job; resume allows it. Removing a waiting job preserves the order of all others.
 Active cancellation is coordinated by the worker and terminates the existing
@@ -188,6 +206,12 @@ Tauri's setup hook only installs the initialized state and starts services.
 Schema changes use explicit ordered migrations. Legacy JSON formats, completion
 receipts, backup policy and file ownership rules remain in place. See [DATA-INTEGRITY.md](DATA-INTEGRITY.md)
 for those guarantees and their temporary-database/fault-injection regressions.
+
+Schema 12 adds the queue snapshot with the existing mandatory migration backup,
+layout validation and rollback. It does not change saved History or completion
+receipts. The native queue snapshot includes pending, active and interrupted
+entries, so a reloaded frontend can recover states missed before event listeners
+were registered. Late snapshots preserve newer active and terminal states.
 
 Schema 11 adds nullable `transcriptions.media_path` and
 `media_path_known` (default 0). Completion validates and flushes the actual

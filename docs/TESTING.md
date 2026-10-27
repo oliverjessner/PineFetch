@@ -50,6 +50,16 @@ and schema-10-to-11 backup/migration refusal. Their media bytes are synthetic
 filesystem fixtures; they do not claim real video decoding or native player UI
 coverage.
 
+Queue persistence tests use isolated profiles, real SQLite transactions and
+subprocess exits without destructors. They cover a 100-job restart, full options
+and modes, concurrent batches, interrupted output, completed receipts, explicit
+requeue, shutdown, storage errors, stale writers, profile ownership and migration
+rollback. They do not start actual media downloads.
+`npm run test:queue-ui` checks restored queues, interrupted-job controls, failed
+requeue, removal and reload in Chromium and WebKit using controlled native
+responses. Browser persistence is a fixture; the Rust tests prove the real
+database and process boundaries.
+
 The pyramid has five levels:
 
 1. **Unit:** URL/domain/timestamp parsing, presets, process arguments, metadata

@@ -69,6 +69,10 @@ Choose the best available video, video up to 1080p, MP3, Opus or a transcript wi
 
 Add individual links, paste a YouTube playlist or import a TXT list of supported links, then let the queue run or pause after the current item. History keeps completed downloads searchable and shows recorded file sizes, runtime and totals by platform.
 
+Waiting jobs, their options and order, and your Auto-start/Pause choices survive
+restarts. Interrupted jobs stay stopped; open their menu and choose **Queue again**
+to reuse the saved options. Completed downloads are not automatically repeated.
+
 ![PineFetch History with saved downloads, search filters and download statistics](src/images/mockups/history.webp)
 
 ## Saved metadata, transcripts and captions

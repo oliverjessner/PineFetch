@@ -43,6 +43,7 @@ export const createTauriClient = tauri => {
         getLinkDumpOverview: args => invoke('get_link_dump_overview', args),
         getNavigationRequest: args => invoke('get_navigation_request', args),
         getQueue: args => invoke('get_queue', args),
+        retryInterruptedDownload: args => invoke('retry_interrupted_download', args),
         getQueueStatus: args => invoke('get_queue_status', args),
         getYtDlpInstalledVersion: args => invoke('get_yt_dlp_installed_version', args),
         initializeCli: args => invoke('initialize_cli', args),

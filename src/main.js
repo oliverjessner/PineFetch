@@ -6,6 +6,7 @@ import {
     createAppState,
     updateJobState,
     applyQueueStatus,
+    mergeQueueSnapshot,
     applyDownloadState,
     applyDownloadProgress,
     isCancellable,
@@ -270,6 +271,7 @@ const els = Object.seal({
     queueContextDownloads: document.getElementById('queueContextDownloads'),
     queueContextCancelBtn: document.getElementById('queueContextCancelBtn'),
     queueContextRemoveBtn: document.getElementById('queueContextRemoveBtn'),
+    queueContextRetryBtn: document.getElementById('queueContextRetryBtn'),
 });
 const presetLabels = Object.freeze([
     {
@@ -601,6 +603,7 @@ const syncQueueContextMenuState = () => {
     els.queueContextCancelBtn.disabled = !canCancel;
     els.queueContextCancelBtn.textContent = isCancelling ? 'Cancelling...' : 'Cancel download';
     els.queueContextRemoveBtn.hidden = !canRemove;
+    els.queueContextRetryBtn.hidden = !job?.recovered;
 };
 
 const openQueueContextMenu = (job, x, y) => {
@@ -815,8 +818,11 @@ const renderQueue = () => {
                 cancelling: 'oj-badge-warning',
             }[job.state] || '';
         badge.className = `oj-badge ${badgeVariant} pinefetch-queue-badge`;
-        badge.textContent =
-            { success: 'Completed', error: 'Failed', transcribing: 'Transcribing' }[job.state] || job.state || 'queued';
+        badge.textContent = job.recovered
+            ? 'Interrupted'
+            : { success: 'Completed', error: 'Failed', transcribing: 'Transcribing' }[job.state] ||
+              job.state ||
+              'queued';
 
         const moreBtn = document.createElement('button');
         moreBtn.className = 'oj-icon-button pinefetch-queue-more-btn';
@@ -1362,7 +1368,7 @@ const removeJobFromQueue = async job => {
     if (state.selectedId === job.id) state.selectedId = null;
     scheduleQueueRender();
 
-    if (job.state !== 'queued') return;
+    if (job.state !== 'queued' && !job.recovered) return;
 
     try {
         await api.cancelDownload({ id: job.id });
@@ -1530,6 +1536,7 @@ const clearQueue = async () => {
     const idsToCancel = new Set(state.queueIds);
     state.jobs.forEach(job => {
         if (
+            job.recovered ||
             job.state === 'queued' ||
             job.state === 'downloading' ||
             job.state === 'transcribing' ||
@@ -1766,6 +1773,29 @@ const bindEvents = () => {
         hideQueueContextMenu({ restoreFocus: true });
         if (!job) return;
 
+        if (button.dataset.action === 'retry-interrupted') {
+            button.disabled = true;
+            try {
+                const queuedId = await api.retryInterruptedDownload({ id: job.id });
+                state.suppressedJobIds.add(job.id);
+                state.jobs.delete(job.id);
+                if (state.selectedId === job.id) state.selectedId = queuedId;
+                scheduleQueueRender();
+                requestAnimationFrame(() => {
+                    queueCardElements
+                        .get(queuedId)
+                        ?.querySelector('.pinefetch-queue-more-btn')
+                        ?.focus({ preventScroll: true });
+                });
+            } catch (error) {
+                updateJob(job.id, { clearError: 'Could not queue again: ' + error });
+                appendLog('[queue] ' + error, true);
+            } finally {
+                button.disabled = false;
+            }
+            return;
+        }
+
         if (button.dataset.action === 'copy-link') {
             try {
                 await navigator.clipboard.writeText(job.url || '');
@@ -1842,26 +1872,19 @@ const bindEvents = () => {
 };
 
 const applyQueueSnapshot = jobs => {
-    const queue = Array.isArray(jobs) ? jobs : [];
-    state.queueIds = queue.map(job => job.id).filter(id => !state.suppressedJobIds.has(id));
-    queue.forEach(job => {
-        if (state.suppressedJobIds.has(job.id)) return;
-        const existing = state.jobs.get(job.id);
+    const changed = mergeQueueSnapshot(state, jobs, (job, existing) => {
         const preset = findPresetForDownloadJob(job);
         const fallbackThumbnail = resolveYouTubeThumbnail(job.url);
-        updateJob(job.id, {
-            url: job.url,
-            label: existing?.label || job.url,
-            thumbnail: existing?.thumbnail || fallbackThumbnail,
-            state: 'queued',
-            outputPath: existing?.outputPath || null,
+        return {
+            label: existing?.label || job.title || job.url,
+            thumbnail: existing?.thumbnail || job.thumbnail || fallbackThumbnail,
             cutStartTime: job.cut_start_time ?? null,
-            previewResolved: existing?.previewResolved || Boolean(fallbackThumbnail),
+            previewResolved: existing?.previewResolved || Boolean(job.thumbnail || fallbackThumbnail),
             previewLoading: existing?.previewLoading || false,
             formatLabel: existing?.formatLabel || preset?.queueLabel || job.format,
-        });
-        maybeHydrateQueueThumbnail(job.id);
+        };
     });
+    changed.forEach(maybeHydrateQueueThumbnail);
     scheduleQueueRender();
 };
 
@@ -1948,8 +1971,13 @@ const init = async () => {
         els.presetTrigger.removeAttribute('aria-busy');
     }
     await settings.sync();
-    await syncQueueStatus();
     await bindBackendEvents();
+    try {
+        applyQueueSnapshot(await api.getQueue());
+    } catch (error) {
+        appendLog('[queue] Could not restore saved queue: ' + error, true);
+    }
+    await syncQueueStatus();
     try {
         await api.initializeCli();
     } catch (err) {

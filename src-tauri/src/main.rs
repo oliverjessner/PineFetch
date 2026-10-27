@@ -56,6 +56,9 @@ mod queue;
 #[cfg(test)]
 mod queue_failure_tests;
 #[cfg(test)]
+mod queue_persistence_tests;
+mod queue_store;
+#[cfg(test)]
 mod reuse_tests;
 mod runtime;
 #[cfg(test)]
@@ -126,6 +129,9 @@ fn main() {
             }
             let state = app.state::<AppState>();
             let _ = start_link_dump_server_from_settings(app.handle(), state.inner());
+            if queue::is_queue_auto_start_enabled(&state.queue)? {
+                worker::ensure_worker(app.handle(), state.inner())?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -148,6 +154,7 @@ fn main() {
             commands::check_youtube_cookie_access,
             commands::get_queue_status,
             commands::get_queue,
+            commands::retry_interrupted_download,
             commands::set_queue_auto_start,
             commands::start_queue,
             commands::pause_queue,

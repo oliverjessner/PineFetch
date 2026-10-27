@@ -100,3 +100,82 @@ test('cancellation and removal categories match the existing queue behavior', ()
         assert.equal(isRemovable(status), ['queued', 'success', 'error', 'cancelled'].includes(status));
     }
 });
+
+test('queue snapshots restore waiting, active and interrupted jobs without starting interrupted work', async () => {
+    const { mergeQueueSnapshot } = await import('../src/app-state.js');
+    const state = createAppState();
+    const pending = { id: 'waiting', url: 'https://example.com/waiting', cut_start_time: 12 };
+    mergeQueueSnapshot(
+        state,
+        {
+            pending: [pending],
+            active: { job: { id: 'active', url: 'https://example.com/active' }, state: 'transcribing' },
+            interrupted: [
+                {
+                    job: { id: 'stopped', url: 'https://example.com/stopped' },
+                    output_path: '/saved/video.mp4',
+                    error: 'Interrupted; output preserved.',
+                },
+            ],
+        },
+        job => ({ label: job.url }),
+        10
+    );
+    assert.deepEqual(state.queueIds, ['waiting']);
+    assert.equal(state.jobs.get('active').state, 'transcribing');
+    assert.equal(state.jobs.get('stopped').state, 'error');
+    assert.equal(state.jobs.get('stopped').recovered, true);
+    assert.equal(state.jobs.get('stopped').outputPath, '/saved/video.mp4');
+    assert.match(state.jobs.get('stopped').error, /Interrupted/);
+});
+
+test('late queue snapshots preserve newer active and terminal states and suppressed removals', async () => {
+    const { mergeQueueSnapshot } = await import('../src/app-state.js');
+    const state = createAppState();
+    updateJobState(state, 'active', { state: 'transcribing' }, 10);
+    updateJobState(state, 'done', { state: 'success' }, 10);
+    state.suppressedJobIds.add('removed');
+    mergeQueueSnapshot(
+        state,
+        ['active', 'done', 'removed'].map(id => ({ id, url: 'https://example.com/' + id }))
+    );
+    assert.deepEqual(state.queueIds, []);
+    assert.equal(state.jobs.get('active').state, 'transcribing');
+    assert.equal(state.jobs.get('done').state, 'success');
+    assert.equal(state.jobs.has('removed'), false);
+    mergeQueueSnapshot(state, {
+        pending: [],
+        active: { job: { id: 'active' }, state: 'downloading' },
+        interrupted: [],
+    });
+    assert.equal(state.jobs.get('active').state, 'transcribing');
+});
+
+test('a durable removal or requeue snapshot clears recovered rows without clearing session results', async () => {
+    const { mergeQueueSnapshot } = await import('../src/app-state.js');
+    const state = createAppState();
+    updateJobState(state, 'done', { state: 'success' }, 1);
+    mergeQueueSnapshot(state, {
+        pending: [],
+        interrupted: [{ job: { id: 'old', url: 'https://example.com/old' }, error: 'Interrupted' }],
+    });
+    mergeQueueSnapshot(state, { pending: [{ id: 'new', url: 'https://example.com/old' }], interrupted: [] });
+    assert.equal(state.jobs.has('old'), false);
+    assert.equal(state.jobs.get('done').state, 'success');
+    assert.equal(state.jobs.get('new').state, 'queued');
+    assert.deepEqual(state.queueIds, ['new']);
+});
+
+test('older queue revisions cannot hide newly accepted waiting jobs', async () => {
+    const { mergeQueueSnapshot } = await import('../src/app-state.js');
+    const state = createAppState();
+    mergeQueueSnapshot(state, {
+        revision: 4,
+        pending: [{ id: 'new', url: 'https://example.com/new' }],
+        interrupted: [],
+    });
+    mergeQueueSnapshot(state, { revision: 3, pending: [], interrupted: [] });
+    assert.deepEqual(state.queueIds, ['new']);
+    assert.equal(state.jobs.get('new').state, 'queued');
+    assert.equal(state.queueRevision, 4);
+});

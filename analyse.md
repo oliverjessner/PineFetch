@@ -4,8 +4,6 @@ Stand: v2.7.0. Offene Aufgaben in grober Prioritätsreihenfolge; die bisherigen 
 
 ## Zuerst
 
-- [ ] **E3 — Warteschlange und Queue-Modus über Neustarts erhalten:** Ein Neustart verliert derzeit wartende Jobs und setzt den gewählten Startmodus zurück. Gespeicherte Jobs, Reihenfolge und Einstellungen verhindern, dass Nutzer ihre vorbereitete Arbeit erneut zusammenstellen müssen.
-
 - [ ] **D2 — Creator über stabile Identitäten zuordnen:** Gleich benannte Creator können derzeit vermischt werden, während eine Umbenennung dieselbe Quelle aufteilen kann. Stabile Plattformidentitäten halten Videos und gespeicherte Insights beim richtigen Creator.
 
 - [ ] **E5 — Playlists erst nach bewusster Bestätigung übernehmen:** Ein eingefügter Link oder der Fensterfokus kann derzeit unbeabsichtigt eine ganze Playlist starten. Eine Vorschau mit Auswahl zwischen Einzelvideo und Playlist gibt Nutzern Kontrolle über Downloads, Speicher und Rechenzeit.

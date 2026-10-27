@@ -17,7 +17,15 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 10;
+pub(super) const SCHEMA_VERSION: i64 = 11;
+
+// NULL + known=0 is a legacy row, eligible only for exact-stem resolution.
+// NULL + known=1 explicitly records a new transcript without retained video.
+const TRANSCRIPT_MEDIA_SQL: &str = r#"
+ALTER TABLE transcriptions ADD COLUMN media_path TEXT;
+ALTER TABLE transcriptions ADD COLUMN media_path_known INTEGER NOT NULL DEFAULT 0
+    CHECK (media_path_known IN (0,1) AND (media_path_known=1 OR media_path IS NULL));
+"#;
 
 const ID_IMPORT_SQL: &str =
     "ALTER TABLE app_config ADD COLUMN id_import_enabled INTEGER NOT NULL DEFAULT 0;";
@@ -42,8 +50,18 @@ const OPTIONAL_CAPTION_FILES_SQL: &str = r#"
 
 #[cfg(test)]
 pub(crate) fn restore_schema8_caption_fixture(conn: &Connection) {
+    restore_schema10_transcript_fixture(conn);
     conn.execute_batch(
         &OPTIONAL_CAPTION_FILES_SQL.replace("caption_path TEXT,", "caption_path TEXT NOT NULL,"),
+    )
+    .unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn restore_schema10_transcript_fixture(conn: &Connection) {
+    conn.execute_batch(
+        "ALTER TABLE transcriptions DROP COLUMN media_path_known;
+         ALTER TABLE transcriptions DROP COLUMN media_path;",
     )
     .unwrap();
 }
@@ -248,6 +266,7 @@ pub(super) enum MigrationPoint {
     CreatorSubtitles,
     OptionalCaptionFiles,
     IdImport,
+    TranscriptMedia,
 }
 
 pub(super) fn initialize_with_hook(
@@ -374,6 +393,13 @@ pub(super) fn initialize_with_hook(
         tx.pragma_update(None, "user_version", 10)
             .map_err(|e| e.to_string())?;
         hook(MigrationPoint::IdImport)?;
+    }
+    if version < 11 {
+        tx.execute_batch(TRANSCRIPT_MEDIA_SQL)
+            .map_err(|e| format!("SQLite migration 11 failed: {e}"))?;
+        tx.pragma_update(None, "user_version", 11)
+            .map_err(|e| e.to_string())?;
+        hook(MigrationPoint::TranscriptMedia)?;
     }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
@@ -577,6 +603,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             .execute_batch(ID_IMPORT_SQL)
             .map_err(|e| e.to_string())?;
     }
+    if version >= 11 {
+        reference
+            .execute_batch(TRANSCRIPT_MEDIA_SQL)
+            .map_err(|e| e.to_string())?;
+    }
     reference
         .execute_batch("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .map_err(|e| e.to_string())?;
@@ -748,6 +779,13 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             && !canonical.contains("check(\"type\"in('text','textwithtimestamps'))")
         {
             return Err(format!("{} (transcript type constraint)", fail()));
+        }
+        if table == "transcriptions"
+            && version >= 11
+            && !canonical
+                .contains("check(media_path_knownin(0,1)and(media_path_known=1ormedia_pathisnull))")
+        {
+            return Err(format!("{} (transcript media constraint)", fail()));
         }
         if table == "job_completions"
             && !canonical.contains("check(statein('processing','output_ready','complete'))")

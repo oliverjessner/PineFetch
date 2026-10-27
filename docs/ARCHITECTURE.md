@@ -189,13 +189,25 @@ Schema changes use explicit ordered migrations. Legacy JSON formats, completion
 receipts, backup policy and file ownership rules remain in place. See [DATA-INTEGRITY.md](DATA-INTEGRITY.md)
 for those guarantees and their temporary-database/fault-injection regressions.
 
+Schema 11 adds nullable `transcriptions.media_path` and
+`media_path_known` (default 0). Completion validates and flushes the actual
+retained video outside the writer lock, then stores its canonical path with the
+transcript in the existing completion transaction. A known source with a NULL
+path explicitly means no retained video; it must not fall back to nearby files.
+Legacy rows remain unknown and keep the exact-stem, single-candidate lookup.
+Migration does not inspect external files or guess missing references.
+History playback and OCR both resolve the source through `ocr_store::saved_path`;
+a missing explicit source remains unavailable even if a similarly named file
+exists. The TXT output stays separate, so unique export suffixes or a removed TXT
+do not change the retained-video reference.
+
 The published SHA-256 indexes on History and Captions are intentionally retained
 in 2.7.0. Current application queries resolve entry identities rather than hashes,
 but removing these schema-validated objects requires a versioned migration and
 its mandatory backup. This cleanup preserves the storage contract and efficient
 hash-based database inspection. Isolated SQL comparisons show real write and
 space costs; they do not establish a download-workflow bottleneck that warrants
-changing the schema in this release.
+changing the hash-index schema in this release.
 
 Local OCR uses `ocr` for background orchestration and an independent process
 registry, `ocr_rules` for frame-local reading order/media/protocol validation and

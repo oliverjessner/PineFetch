@@ -564,7 +564,14 @@ pub(super) fn insert_transcription_in_db(
     language: &str,
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
-    insert_transcription_in_conn(&conn, history_entry_id, text, transcription_type, language)
+    insert_transcription_in_conn(
+        &conn,
+        history_entry_id,
+        text,
+        transcription_type,
+        language,
+        None,
+    )
 }
 
 pub(super) fn insert_transcription_in_conn(
@@ -573,20 +580,22 @@ pub(super) fn insert_transcription_in_conn(
     text: &str,
     transcription_type: &str,
     language: &str,
+    media_path: Option<&str>,
 ) -> Result<(), String> {
     let language = language.trim().to_ascii_lowercase();
     if language.is_empty() {
         return Err("Transcription language is required".to_string());
     }
     conn.execute(
-        "INSERT INTO transcriptions (id, history_entry_id, text, \"type\", language)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO transcriptions (id, history_entry_id, text, \"type\", language, media_path, media_path_known)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
         params![
             Uuid::new_v4().to_string(),
             history_entry_id,
             text,
             transcription_type,
             language,
+            media_path,
         ],
     )
     .map_err(|e| format!("Transcription insert failed: {e}"))?;

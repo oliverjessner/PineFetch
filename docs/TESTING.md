@@ -42,6 +42,14 @@ access blocked during inference. It requires macOS and sandbox tooling; it fails
 if that isolation is unavailable. See [WHISPER_RUNTIME.md](WHISPER_RUNTIME.md) for
 bundle-resource checks and the remaining clean-device acceptance boundary.
 
+Transcript/video-reference regressions use isolated file-backed databases and
+the real completion, unique-output publication and shared playback/OCR source
+resolver. They cover second/third exports, restart, missing exports or sources,
+nearby unrelated files, audio-only transcripts, atomic rollback/retry, deletion
+and schema-10-to-11 backup/migration refusal. Their media bytes are synthetic
+filesystem fixtures; they do not claim real video decoding or native player UI
+coverage.
+
 The pyramid has five levels:
 
 1. **Unit:** URL/domain/timestamp parsing, presets, process arguments, metadata

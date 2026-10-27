@@ -86,7 +86,7 @@ pub(crate) struct CompletionData<'a> {
     pub(crate) entry: &'a HistoryEntry,
     pub(crate) captions: &'a [SavedCaption],
     pub(crate) subtitles: &'a [crate::subtitles::SavedSubtitle],
-    pub(crate) transcript: Option<(&'a str, &'a str)>,
+    pub(crate) transcript: Option<(&'a str, &'a str, Option<&'a str>)>,
 }
 pub(crate) fn commit(
     conn: &rusqlite::Connection,
@@ -134,7 +134,7 @@ pub(crate) fn commit(
     }
     insert_history_entry_in_conn(&tx, entry)?;
     hook(CompletionPoint::History)?;
-    if let Some((text, language)) = data.transcript {
+    if let Some((text, language, media_path)) = data.transcript {
         insert_transcription_in_conn(
             &tx,
             &job.id,
@@ -145,6 +145,7 @@ pub(crate) fn commit(
                 "text"
             },
             language,
+            media_path,
         )?;
     }
     hook(CompletionPoint::Transcript)?;

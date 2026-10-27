@@ -1,5 +1,8 @@
 # 2.7.0
 
+- Kept every transcript export linked to its actual retained video, including repeated exports with unique filenames, so History playback and OCR keep using the correct source.
+- Added atomic media-reference persistence and a backed-up schema-11 migration. Older transcripts retain conservative source lookup; new audio-only transcripts never select a neighboring video.
+
 - Replaced the Homebrew-linked Whisper virtual environment with checksum-pinned standalone CPython, its standard library and hash-pinned binary dependencies.
 - Added native dependency auditing, wheel relocation, isolated decoding checks and atomic runtime replacement with rollback; Python no longer needs to be installed separately.
 - Added an explicit moved-runtime decode and real model inference check with Homebrew access blocked. Documented the existing macOS 14 minimum of the transcription dependencies and reject older systems before downloading media.

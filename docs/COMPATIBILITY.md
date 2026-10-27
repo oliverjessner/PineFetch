@@ -7,6 +7,13 @@ media and show the requirement. The first use of a Whisper model requires a mode
 download. See [runtime preparation and validation](WHISPER_RUNTIME.md) for the
 tested packaging scope and platform limits.
 
+With **Keep video with transcript**, each new transcript stays linked to its
+actual saved video, including repeated exports. Removing a TXT export does not
+break that link; moving or removing the video makes playback and OCR unavailable
+while the stored transcript remains readable. Older entries without a saved
+reference use only an exact, unambiguous filename match. New transcripts created
+without a retained video do not select neighboring files.
+
 Paste a video link into the **URL** field on PineFetch's Download screen. PineFetch passes it to yt-dlp. The platforms below have extractors in yt-dlp 2026.08.19; individual videos may still be unavailable. See yt-dlp's [full supported-sites list](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md).
 
 Here are our first class citizen listed:

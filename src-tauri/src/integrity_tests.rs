@@ -1806,6 +1806,7 @@ fn integration_optional_caption_file_migration_preserves_rows_settings_and_rolls
 fn integration_id_import_migration_defaults_off_preserves_settings_and_rolls_back() {
     let fixture = Fixture::new();
     let conn = fixture.db();
+    crate::database::restore_schema10_transcript_fixture(&conn);
     conn.execute_batch("ALTER TABLE app_config DROP COLUMN id_import_enabled; PRAGMA user_version=9;
         UPDATE app_config SET youtube_cookie_browser='chrome', save_creator_subtitles=1, magic_import_enabled=0;").unwrap();
     let before = schema(&conn);
@@ -1831,4 +1832,388 @@ fn integration_id_import_migration_defaults_off_preserves_settings_and_rolls_bac
         .unwrap();
     database::initialize(&conn).unwrap();
     assert!(load_config_from_db(&conn).unwrap().id_import_enabled);
+}
+
+#[test]
+fn integration_transcript_exports_keep_the_same_video_after_collisions_and_restart() {
+    let f = Fixture::new();
+    let state = app_state(f.db());
+    let video = fs::canonicalize(&f.0)
+        .unwrap()
+        .join("Grüße interview_t2.mp4");
+    let original = b"synthetic retained video bytes";
+    fs::write(&video, original).unwrap();
+    let target = video.with_extension("txt");
+    let mut paths = Vec::new();
+    for index in 1..=3 {
+        let temporary = f.path(&format!("transcript-{index}.part"));
+        let text = format!("Export {index}: Grüße 🌲\n");
+        fs::write(&temporary, &text).unwrap();
+        let output = crate::files::publish_unique_output(&temporary, &target).unwrap();
+        let mut job = job(&format!("retained-{index}"), &f.0, true);
+        job.download_video_with_transcript = true;
+        completion::begin(&state.db, &job).unwrap();
+        completion::complete_files_with_hook(
+            &state.db,
+            &job,
+            completion::CompletionFiles {
+                path: output.to_str(),
+                retained_media_path: video.to_str(),
+                info: None,
+                captions: &[],
+                subtitles: &[],
+                language: Some("de"),
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(&output).unwrap(), text);
+        assert_eq!(
+            crate::ocr_store::saved_path(&state.db, &job.id).unwrap(),
+            video.to_str().unwrap()
+        );
+        assert_eq!(
+            crate::history::local_history_media_path(&state.db, &job.id).unwrap(),
+            fs::canonicalize(&video).unwrap()
+        );
+        paths.push(output);
+    }
+    assert!(paths[1].ends_with("Grüße interview_t2__2.txt"));
+    assert!(paths[2].ends_with("Grüße interview_t2__3.txt"));
+    drop(state);
+    let reopened = app_state(f.db());
+    for index in 1..=3 {
+        assert_eq!(
+            crate::ocr_store::saved_path(&reopened.db, &format!("retained-{index}")).unwrap(),
+            video.to_str().unwrap()
+        );
+    }
+    assert_eq!(fs::read(&video).unwrap(), original);
+    fs::remove_file(&paths[1]).unwrap();
+    assert_eq!(
+        crate::history::local_history_media_path(&reopened.db, "retained-2").unwrap(),
+        fs::canonicalize(&video).unwrap()
+    );
+}
+
+fn complete_retained_transcript(
+    state: &AppState,
+    job: &DownloadJob,
+    transcript: &Path,
+    video: Option<&Path>,
+    hook: impl FnMut(completion::CompletionPoint) -> Result<(), String>,
+) -> Result<(), String> {
+    completion::complete_files_with_hook(
+        &state.db,
+        job,
+        completion::CompletionFiles {
+            path: transcript.to_str(),
+            retained_media_path: video.and_then(Path::to_str),
+            info: None,
+            captions: &[],
+            subtitles: &[],
+            language: Some("de"),
+        },
+        hook,
+    )
+}
+
+#[test]
+fn integration_transcript_media_is_explicit_and_never_replaced_by_a_neighbor() {
+    let f = Fixture::new();
+    let state = app_state(f.db());
+    let video = f.path("actual source.mkv");
+    let transcript = f.path("different name__2.txt");
+    fs::write(&video, b"retained source").unwrap();
+    fs::write(&transcript, "Saved transcript").unwrap();
+    for extension in ["mp4", "webm"] {
+        fs::write(transcript.with_extension(extension), b"unrelated video").unwrap();
+    }
+    let mut job = job("explicit-media", &f.0, true);
+    job.download_video_with_transcript = true;
+    completion::begin(&state.db, &job).unwrap();
+    complete_retained_transcript(&state, &job, &transcript, Some(&video), |_| Ok(())).unwrap();
+    let expected = fs::canonicalize(&video).unwrap();
+    assert_eq!(
+        crate::history::local_history_media_path(&state.db, &job.id).unwrap(),
+        expected
+    );
+    assert_eq!(
+        crate::ocr_store::saved_path(&state.db, &job.id).unwrap(),
+        expected.to_str().unwrap()
+    );
+    fs::remove_file(&transcript).unwrap();
+    assert_eq!(
+        crate::history::local_history_media_path(&state.db, &job.id).unwrap(),
+        expected
+    );
+    fs::remove_file(&video).unwrap();
+    assert!(crate::history::local_history_media_path(&state.db, &job.id)
+        .unwrap_err()
+        .contains("missing"));
+    assert!(crate::ocr_store::saved_path(&state.db, &job.id)
+        .unwrap_err()
+        .contains("missing"));
+    assert!(transcript.with_extension("mp4").is_file());
+    assert!(transcript.with_extension("webm").is_file());
+    let content = crate::history::get_history_transcript_from_db(&state.db, &job.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(content.text, "Saved transcript");
+    assert!(!content.file_available);
+}
+
+#[test]
+fn integration_new_transcripts_without_retained_video_do_not_guess_from_siblings() {
+    let f = Fixture::new();
+    let state = app_state(f.db());
+    let transcript = f.path("audio-only.txt");
+    let neighbor = transcript.with_extension("mp4");
+    fs::write(&transcript, "Audio transcript").unwrap();
+    fs::write(&neighbor, b"different download").unwrap();
+    let job = job("audio-only", &f.0, true);
+    completion::begin(&state.db, &job).unwrap();
+    completion::complete(&state.db, &job, transcript.to_str(), None, &[], Some("de")).unwrap();
+    let metadata: (Option<String>, bool) = state
+        .db
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT media_path, media_path_known FROM transcriptions WHERE history_entry_id=?1",
+            [&job.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(metadata, (None, true));
+    for result in [
+        crate::ocr_store::saved_path(&state.db, &job.id).map(|_| ()),
+        crate::history::local_history_media_path(&state.db, &job.id).map(|_| ()),
+    ] {
+        assert!(result.unwrap_err().contains("No downloaded video"));
+    }
+    assert_eq!(fs::read(&neighbor).unwrap(), b"different download");
+}
+
+#[test]
+fn integration_retained_video_reference_rolls_back_retries_and_is_not_reassigned() {
+    let f = Fixture::new();
+    let state = app_state(f.db());
+    let video = f.path("original.mp4");
+    let other = f.path("another.mp4");
+    fs::write(&video, b"original video").unwrap();
+    fs::write(&other, b"other video").unwrap();
+    for (index, failure) in [
+        completion::CompletionPoint::History,
+        completion::CompletionPoint::Transcript,
+        completion::CompletionPoint::Captions,
+        completion::CompletionPoint::BeforeCommit,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let output = f.path(&format!("retry-{index}__2.txt"));
+        fs::write(&output, "Atomic transcript").unwrap();
+        let mut job = job(&format!("retry-{index}"), &f.0, true);
+        job.download_video_with_transcript = true;
+        completion::begin(&state.db, &job).unwrap();
+        assert!(
+            complete_retained_transcript(&state, &job, &output, Some(&video), |point| {
+                if point == failure {
+                    Err("synthetic retained-media rollback".into())
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err()
+            .contains("synthetic retained-media rollback")
+        );
+        {
+            let conn = state.db.lock().unwrap();
+            let counts: (i64, i64, String) = conn
+                .query_row(
+                    "SELECT (SELECT COUNT(*) FROM history_entries WHERE id=?1),
+                 (SELECT COUNT(*) FROM transcriptions WHERE history_entry_id=?1),
+                 state FROM job_completions WHERE job_id=?1",
+                    [&job.id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(counts, (0, 0, "output_ready".into()));
+        }
+        assert_eq!(fs::read_to_string(&output).unwrap(), "Atomic transcript");
+        complete_retained_transcript(&state, &job, &output, Some(&video), |_| Ok(())).unwrap();
+        // An idempotent replay must preserve the first committed association.
+        complete_retained_transcript(&state, &job, &output, Some(&other), |_| Ok(())).unwrap();
+        assert_eq!(
+            crate::history::local_history_media_path(&state.db, &job.id).unwrap(),
+            fs::canonicalize(&video).unwrap()
+        );
+        delete_history_entry_from_db(&state.db, &job.id).unwrap();
+        assert_eq!(
+            state
+                .db
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM transcriptions WHERE history_entry_id=?1",
+                    [&job.id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+    assert_eq!(fs::read(&video).unwrap(), b"original video");
+    assert_eq!(fs::read(&other).unwrap(), b"other video");
+}
+
+#[test]
+fn integration_retained_video_completion_refuses_missing_or_invalid_sources() {
+    let f = Fixture::new();
+    let state = app_state(f.db());
+    let output = f.path("transcript.txt");
+    let directory = f.path("directory.mp4");
+    let missing = f.path("missing.mp4");
+    fs::write(&output, "Original transcript").unwrap();
+    fs::create_dir(&directory).unwrap();
+    for (index, path) in [
+        None,
+        Some(missing.as_path()),
+        Some(output.as_path()),
+        Some(directory.as_path()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut job = job(&format!("invalid-{index}"), &f.0, true);
+        job.download_video_with_transcript = true;
+        completion::begin(&state.db, &job).unwrap();
+        assert!(complete_retained_transcript(&state, &job, &output, path, |_| Ok(())).is_err());
+        assert!(
+            crate::history::get_history_details_from_db(&state.db, &job.id)
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(count(&state.db.lock().unwrap(), "transcriptions"), 0);
+    assert_eq!(fs::read_to_string(&output).unwrap(), "Original transcript");
+}
+
+#[test]
+fn integration_transcript_media_migration_preserves_legacy_rows_backup_and_rollback() {
+    let f = Fixture::new();
+    let conn = f.db();
+    database::restore_schema10_transcript_fixture(&conn);
+    conn.execute_batch("PRAGMA user_version=10;
+        INSERT INTO history_entries(id,url,created_at,medium) VALUES ('legacy','https://example.com/legacy',1,'transcript');
+        INSERT INTO transcriptions(id,history_entry_id,text,type,language) VALUES ('legacy-text','legacy','Grüße 🌲','text','de');").unwrap();
+    let video = fs::canonicalize(&f.0).unwrap().join("legacy.mp4");
+    let transcript = video.with_extension("txt");
+    fs::write(&video, b"old retained video").unwrap();
+    conn.execute(
+        "UPDATE history_entries SET output_path=?1 WHERE id='legacy'",
+        [transcript.to_str()],
+    )
+    .unwrap();
+    let before = schema(&conn);
+    assert!(database::initialize_with_hook(&conn, |point| {
+        if point == MigrationPoint::TranscriptMedia {
+            Err("synthetic media migration failure".into())
+        } else {
+            Ok(())
+        }
+    })
+    .unwrap_err()
+    .contains("synthetic media migration failure"));
+    assert_eq!(version(&conn), 10);
+    assert_eq!(schema(&conn), before);
+    assert_eq!(f.backups().len(), 1);
+    let backup =
+        Connection::open_with_flags(&f.backups()[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(version(&backup), 10);
+    assert_eq!(
+        backup
+            .query_row(
+                "SELECT id,text FROM transcriptions WHERE history_entry_id='legacy'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            )
+            .unwrap(),
+        ("legacy-text".into(), "Grüße 🌲".into())
+    );
+    drop(backup);
+    database::initialize(&conn).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let row: (String, String, Option<String>, bool) = conn.query_row(
+        "SELECT id,text,media_path,media_path_known FROM transcriptions WHERE history_entry_id='legacy'", [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).unwrap();
+    assert_eq!(row, ("legacy-text".into(), "Grüße 🌲".into(), None, false));
+    let state = app_state(conn);
+    assert_eq!(
+        crate::ocr_store::saved_path(&state.db, "legacy").unwrap(),
+        video.to_str().unwrap()
+    );
+    // Legacy ambiguity and unique-output suffixes remain conservative after upgrade.
+    let other = video.with_extension("webm");
+    fs::write(&other, b"another possible legacy source").unwrap();
+    assert!(crate::ocr_store::saved_path(&state.db, "legacy")
+        .unwrap_err()
+        .contains("Several downloaded videos"));
+    fs::remove_file(other).unwrap();
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE history_entries SET output_path=?1 WHERE id='legacy'",
+            [f.path("legacy__2.txt").to_str()],
+        )
+        .unwrap();
+    assert!(crate::ocr_store::saved_path(&state.db, "legacy")
+        .unwrap_err()
+        .contains("No downloaded video"));
+    drop(state);
+    let backups = f.backups().len();
+    let reopened = f.db();
+    assert_eq!(version(&reopened), SCHEMA_VERSION);
+    assert_eq!(f.backups().len(), backups);
+    assert_eq!(fs::read(&video).unwrap(), b"old retained video");
+}
+
+#[test]
+fn integration_transcript_media_layout_requires_columns_and_known_state_constraint() {
+    for missing in ["columns", "constraint"] {
+        let f = Fixture::new();
+        let conn = f.db();
+        if missing == "columns" {
+            database::restore_schema10_transcript_fixture(&conn);
+        } else {
+            let sql: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name='transcriptions'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let changed = sql.replace(
+                "CHECK (media_path_known IN (0,1) AND (media_path_known=1 OR media_path IS NULL))",
+                "",
+            );
+            assert_ne!(sql, changed);
+            conn.execute_batch("PRAGMA writable_schema=ON;").unwrap();
+            conn.execute(
+                "UPDATE sqlite_master SET sql=?1 WHERE name='transcriptions'",
+                [changed],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        let before = fs::read(f.path("pinefetch.sqlite3")).unwrap();
+        assert!(database::open(&f.path("pinefetch.sqlite3"))
+            .unwrap_err()
+            .contains("transcriptions"));
+        assert_eq!(fs::read(f.path("pinefetch.sqlite3")).unwrap(), before);
+        assert!(f.backups().is_empty());
+    }
 }

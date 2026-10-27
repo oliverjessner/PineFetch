@@ -294,6 +294,7 @@ mod tests {
         crate::completion::begin(&state.db, &job).unwrap();
         let files = || CompletionFiles {
             path: media.to_str(),
+            retained_media_path: None,
             info: None,
             captions: &[],
             subtitles: &tracks,

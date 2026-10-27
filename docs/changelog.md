@@ -1,5 +1,9 @@
 # 2.7.0
 
+- Persisted waiting downloads, their order and complete job options, plus Auto-start and Pause, across application restarts.
+- Restored unfinished jobs as Interrupted with preserved output paths and an explicit Queue again action. Completed receipts prevent automatic reprocessing after a crash.
+- Saved queue changes atomically before acknowledgement, protected each profile with an operating-system lock and added restart, process-exit, storage-failure and browser regressions.
+
 - Kept every transcript export linked to its actual retained video, including repeated exports with unique filenames, so History playback and OCR keep using the correct source.
 - Added atomic media-reference persistence and a backed-up schema-11 migration. Older transcripts retain conservative source lookup; new audio-only transcripts never select a neighboring video.
 

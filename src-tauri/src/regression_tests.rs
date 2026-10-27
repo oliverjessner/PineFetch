@@ -530,12 +530,12 @@ fn browser_import_skips_a_link_while_its_download_is_active() {
     let request = build_link_dump_download_request(&state.config, &normalized).unwrap();
     let first = build_download_job(&state.config, request.clone()).unwrap();
     let second = build_download_job(&state.config, request).unwrap();
-    state.queue.pending.lock().unwrap().push_back(first);
+    state.queue.data.lock().unwrap().pending.push_back(first);
 
     let (active, paused) = next_worker_job(&state.queue, &state.processes.current_job_id).unwrap();
     assert!(active.is_some());
     assert!(!paused);
-    assert!(state.queue.pending.lock().unwrap().is_empty());
+    assert!(state.queue.data.lock().unwrap().pending.is_empty());
 
     let mut summary = LinkDumpQueueSummary {
         received: 1,
@@ -543,10 +543,11 @@ fn browser_import_skips_a_link_while_its_download_is_active() {
         skipped: 0,
         invalid: 0,
     };
-    let mut queue = state.queue.pending.lock().unwrap();
-    let active_key = state.queue.active_video_key.lock().unwrap();
+    let mut data = state.queue.data.lock().unwrap();
+    let active_key = data.active_video_key.clone();
+    let queue = &mut data.pending;
     let added = insert_unique_video_jobs(
-        &mut queue,
+        queue,
         active_key.as_deref(),
         vec![(normalized.key, second)],
         &mut summary,
@@ -2089,14 +2090,14 @@ fn paused_queue_keeps_pending_jobs_until_resumed() {
         cut_start_time: None,
         filename_suffix: None,
     };
-    state.queue.pending.lock().unwrap().push_back(job);
-    *state.queue.worker_running.lock().unwrap() = true;
+    state.queue.data.lock().unwrap().pending.push_back(job);
+    state.queue.data.lock().unwrap().worker_running = true;
 
     set_queue_paused(&state.queue, true).unwrap();
     let (next, paused) = next_worker_job(&state.queue, &state.processes.current_job_id).unwrap();
     assert!(next.is_none());
     assert!(paused);
-    assert_eq!(state.queue.pending.lock().unwrap().len(), 1);
+    assert_eq!(state.queue.data.lock().unwrap().pending.len(), 1);
     assert!(!snapshot_queue_status(&state.queue).unwrap().worker_running);
     assert!(snapshot_queue_status(&state.queue).unwrap().paused);
 
@@ -2104,7 +2105,7 @@ fn paused_queue_keeps_pending_jobs_until_resumed() {
     let (next, paused) = next_worker_job(&state.queue, &state.processes.current_job_id).unwrap();
     assert_eq!(next.unwrap().id, "pending");
     assert!(!paused);
-    assert!(state.queue.pending.lock().unwrap().is_empty());
+    assert!(state.queue.data.lock().unwrap().pending.is_empty());
 }
 
 #[test]

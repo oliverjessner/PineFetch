@@ -298,7 +298,8 @@ mod tests {
             .collect::<Vec<_>>();
         let queue = crate::queue::QueueState::default();
         crate::queue::enqueue_jobs(&queue, result.jobs).unwrap();
-        let queued = queue.pending.lock().unwrap();
+        let data = queue.data.lock().unwrap();
+        let queued = &data.pending;
         assert_eq!(
             queued.iter().map(|job| job.id.clone()).collect::<Vec<_>>(),
             ids

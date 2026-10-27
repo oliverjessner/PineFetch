@@ -20,7 +20,6 @@ use crate::link_dump_store::revoke_link_dump_secret_in_db;
 use crate::link_dump_store::update_link_dump_settings_in_db;
 use crate::metadata::load_info_with_yt_dlp;
 use crate::models::AppConfig;
-use crate::models::DownloadJob;
 use crate::models::DownloadRequest;
 use crate::models::GeneratedLinkDumpSecret;
 use crate::models::HistoryCaptionContent;
@@ -520,29 +519,30 @@ pub(crate) fn get_queue_status(state: State<AppState>) -> Result<QueueStatus, St
 }
 
 #[tauri::command]
-pub(crate) fn get_queue(state: State<AppState>) -> Result<Vec<DownloadJob>, String> {
-    let queue = state
-        .queue
-        .pending
-        .lock()
-        .map_err(|_| "Queue lock poisoned")?;
-    Ok(queue.iter().cloned().collect())
+pub(crate) fn get_queue(state: State<AppState>) -> Result<crate::queue::QueueSnapshot, String> {
+    crate::queue::snapshot_queue(&state.queue)
 }
 
+#[tauri::command]
+pub(crate) fn retry_interrupted_download(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+) -> Result<String, String> {
+    let job = crate::queue::retry_interrupted(&state.queue, &id)?;
+    crate::events::emit_queue(&app, &state.queue)?;
+    if crate::queue::is_queue_auto_start_enabled(&state.queue)? {
+        ensure_worker(&app, state.inner())?;
+    }
+    Ok(job.id)
+}
 #[tauri::command]
 pub(crate) fn set_queue_auto_start(
     app: AppHandle,
     state: State<AppState>,
     enabled: bool,
 ) -> Result<QueueStatus, String> {
-    {
-        let mut auto_start = state
-            .queue
-            .auto_start
-            .lock()
-            .map_err(|_| "Queue auto-start lock poisoned")?;
-        *auto_start = enabled;
-    }
+    crate::queue::set_queue_auto_start(&state.queue, enabled)?;
 
     if enabled {
         ensure_worker(&app, state.inner())?;

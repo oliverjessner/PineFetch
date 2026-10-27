@@ -79,8 +79,9 @@ pub(super) fn enqueue_download_jobs(
 
 pub(super) fn stop_active_download_on_exit(state: &AppState) {
     state.processes.shutting_down.store(true, Ordering::SeqCst);
-    if let Ok(mut paused) = state.queue.paused.lock() {
-        *paused = true;
+    if let Ok(mut queue) = state.queue.data.lock() {
+        // Shutdown stops this worker without replacing the user's saved mode.
+        queue.stopping = true;
     }
     if let Ok(current) = state.processes.current_job_id.lock() {
         if let Some(id) = current.as_ref() {
@@ -132,9 +133,9 @@ pub(super) fn stop_active_download_on_exit(state: &AppState) {
     } else {
         while state
             .queue
-            .worker_running
+            .data
             .lock()
-            .map(|running| *running)
+            .map(|data| data.worker_running)
             .unwrap_or(false)
             && Instant::now() < deadline
         {
@@ -288,7 +289,19 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                 &state_handle.processes.current_job_id,
             ) {
                 Ok(next) => next,
-                Err(_) => break,
+                Err(error) => {
+                    crate::queue::worker_failed(&state_handle.queue);
+                    emit_log(
+                        &app_handle,
+                        LogEvent {
+                            id: String::new(),
+                            line: format!("[queue] {error}"),
+                            is_error: true,
+                        },
+                    );
+                    emit_queue_status(&app_handle, &state_handle.queue);
+                    break;
+                }
             };
 
             let job = match job_opt {
@@ -371,6 +384,10 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                             output_path: run_result.output_path.clone(),
                         });
                     } else if job.transcribe_text {
+                        crate::queue::set_active_phase(
+                            &state_handle.queue,
+                            DownloadState::Transcribing,
+                        );
                         if job.download_video_with_transcript {
                             if let Some(video_path) = run_result.output_path.as_deref() {
                                 emit_log(

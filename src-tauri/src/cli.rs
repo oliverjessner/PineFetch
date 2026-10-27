@@ -155,15 +155,7 @@ fn build_request(state: &AppState, link: &str, preset: &str) -> Result<DownloadR
 // Remove under the same lock used by the worker: never cancel an active job
 // because a queue index changed between resolving it and removing it.
 fn remove_waiting_job(state: &AppState, number: usize) -> Result<DownloadJob, String> {
-    let mut queue = state
-        .queue
-        .pending
-        .lock()
-        .map_err(|_| "Queue lock poisoned")?;
-    number
-        .checked_sub(1)
-        .and_then(|index| queue.remove(index))
-        .ok_or_else(|| format!("No waiting queue item at position {number}"))
+    crate::queue::remove_waiting_at(&state.queue, number)
 }
 
 fn terminal_text(value: &str) -> String {
@@ -188,21 +180,25 @@ fn job_preset(job: &DownloadJob) -> &str {
 }
 
 fn list_queue(state: &AppState) -> Result<String, String> {
-    let queue = state
-        .queue
-        .pending
-        .lock()
-        .map_err(|_| "Queue lock poisoned")?;
-    if queue.is_empty() {
+    let data = state.queue.data.lock().map_err(|_| "Queue lock poisoned")?;
+    if data.pending.is_empty() && data.interrupted.is_empty() {
         return Ok("No waiting downloads.".into());
     }
     let mut output = String::from("#\tPRESET\tLINK");
-    for (index, job) in queue.iter().enumerate() {
+    for (index, job) in data.pending.iter().enumerate() {
         output.push_str(&format!(
             "\n{}\t{}\t{}",
             index + 1,
             job_preset(job),
             terminal_text(&job.url)
+        ));
+    }
+    for (index, entry) in data.interrupted.iter().enumerate() {
+        output.push_str(&format!(
+            "\n{}\t{} (interrupted)\t{}",
+            data.pending.len() + index + 1,
+            job_preset(&entry.job),
+            terminal_text(&entry.job.url)
         ));
     }
     Ok(output)
@@ -909,7 +905,7 @@ mod tests {
                 build_request(&state, &format!("https://example.com/{index}"), "best").unwrap(),
             )
             .unwrap();
-            state.queue.pending.lock().unwrap().push_back(job);
+            state.queue.data.lock().unwrap().pending.push_back(job);
         }
         *state.processes.current_job_id.lock().unwrap() = Some("active".into());
         assert!(list_queue(&state)
@@ -924,7 +920,7 @@ mod tests {
             "https://example.com/3"
         );
         assert_eq!(
-            state.queue.pending.lock().unwrap()[0].url,
+            state.queue.data.lock().unwrap().pending[0].url,
             "https://example.com/2"
         );
         assert!(remove_waiting_job(&state, 0).is_err());

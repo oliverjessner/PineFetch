@@ -23,12 +23,21 @@ pub(crate) struct AppState {
     pub(crate) link_dump_server: Mutex<LinkDumpServerRuntime>,
 }
 impl AppState {
+    #[cfg(test)]
     pub(crate) fn new(config: AppConfig, connection: Connection) -> Self {
         let db = Arc::new(Database::new(connection));
+        Self::assemble(config, db, QueueState::default())
+    }
+    pub(crate) fn restore(config: AppConfig, connection: Connection) -> Result<Self, String> {
+        let db = Arc::new(Database::new(connection));
+        let queue = QueueState::restore(Arc::clone(&db))?;
+        Ok(Self::assemble(config, db, queue))
+    }
+    fn assemble(config: AppConfig, db: Arc<Database>, queue: QueueState) -> Self {
         Self {
             config: ConfigState::new(config, Arc::clone(&db)),
             db,
-            queue: QueueState::default(),
+            queue,
             processes: ProcessState::default(),
             ocr: Arc::new(crate::ocr::OcrState::default()),
             ocr_preview: crate::ocr_preview::OcrPreviewState::default(),

@@ -2187,7 +2187,7 @@ fn integration_transcript_media_layout_requires_columns_and_known_state_constrai
         let f = Fixture::new();
         let conn = f.db();
         if missing == "columns" {
-            database::restore_schema10_transcript_fixture(&conn);
+            conn.execute_batch("ALTER TABLE transcriptions DROP COLUMN media_path_known; ALTER TABLE transcriptions DROP COLUMN media_path;").unwrap();
         } else {
             let sql: String = conn
                 .query_row(

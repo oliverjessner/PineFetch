@@ -90,6 +90,8 @@ export const installScreenshotBridge = ({ videos, version, ocr = null, social = 
                         return structuredClone(config);
                     case 'get_navigation_request':
                         return null;
+                    case 'get_queue':
+                        return structuredClone(queue);
                     case 'get_queue_status':
                         return structuredClone(queueStatus);
                     case 'initialize_cli':

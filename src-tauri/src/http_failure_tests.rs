@@ -242,10 +242,11 @@ impl LoopbackServer {
                         Ok((url.key.clone(), job))
                     })
                     .collect::<Result<Vec<_>, String>>()?;
-                let mut queue = state.queue.pending.lock().unwrap();
-                let active = state.queue.active_video_key.lock().unwrap();
+                let mut data = state.queue.data.lock().unwrap();
+                let active = data.active_video_key.clone();
+                let queue = &mut data.pending;
                 summary.added += crate::queue::insert_unique_video_jobs(
-                    &mut queue,
+                    queue,
                     active.as_deref(),
                     candidates,
                     summary,
@@ -325,7 +326,8 @@ fn integration_loopback_requests_use_real_auth_normalization_and_queue_deduplica
     assert_eq!(response["added"], 1);
     assert_eq!(response["skipped"], 2);
     assert_eq!(response["invalid"], 1);
-    let queue = state.queue.pending.lock().unwrap();
+    let data = state.queue.data.lock().unwrap();
+    let queue = &data.pending;
     assert_eq!(queue.len(), 2);
     assert_eq!(queue[0].url, VIDEO_URL);
     assert_eq!(queue[1].url, "https://www.instagram.com/reel/Fixture123/");
@@ -365,7 +367,7 @@ fn integration_loopback_missing_wrong_revoked_and_deleted_secrets_never_enqueue(
             );
             assert_eq!(status, 401);
             assert_eq!(response["ok"], false);
-            assert!(state.queue.pending.lock().unwrap().is_empty());
+            assert!(state.queue.data.lock().unwrap().pending.is_empty());
         }
     }
 }
@@ -410,7 +412,7 @@ fn integration_loopback_malformed_requests_have_controlled_status_and_leave_queu
         let (status, response) = server.exchange(&bytes, false);
         assert_eq!(status, expected);
         assert_eq!(response["ok"], false);
-        assert!(state.queue.pending.lock().unwrap().is_empty());
+        assert!(state.queue.data.lock().unwrap().pending.is_empty());
     }
     let (status, response) =
         server.exchange(&request("OPTIONS", "/addVideoLinkToQueue", &[]), false);
@@ -420,7 +422,7 @@ fn integration_loopback_malformed_requests_have_controlled_status_and_leave_queu
         server.exchange(&request("POST", "/addVideoLinkToQueue", &valid), true);
     assert_eq!(status, 500);
     assert_eq!(response["ok"], false);
-    assert!(state.queue.pending.lock().unwrap().is_empty());
+    assert!(state.queue.data.lock().unwrap().pending.is_empty());
 }
 
 #[test]
@@ -477,7 +479,7 @@ fn integration_loopback_auth_database_failure_returns_controlled_error_and_allow
         );
         assert_eq!(status, 500);
         assert_eq!(response["ok"], false);
-        assert!(state.queue.pending.lock().unwrap().is_empty());
+        assert!(state.queue.data.lock().unwrap().pending.is_empty());
     }
     state
         .db

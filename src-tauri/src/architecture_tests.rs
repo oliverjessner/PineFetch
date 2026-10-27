@@ -154,11 +154,11 @@ fn queue_pause_resume_and_idle_preserve_fifo_and_auto_start_defaults() {
     let current = Mutex::new(None);
     enqueue_jobs(&queue, vec![job("one"), job("two")]).unwrap();
     assert!(snapshot_queue_status(&queue).unwrap().auto_start);
-    *queue.worker_running.lock().unwrap() = true;
+    queue.data.lock().unwrap().worker_running = true;
     set_queue_paused(&queue, true).unwrap();
     let (next, paused) = next_worker_job(&queue, &current).unwrap();
     assert!(next.is_none() && paused);
-    assert_eq!(queue.pending.lock().unwrap().len(), 2);
+    assert_eq!(queue.data.lock().unwrap().pending.len(), 2);
     assert!(!snapshot_queue_status(&queue).unwrap().worker_running);
     set_queue_paused(&queue, false).unwrap();
     assert_eq!(
@@ -182,9 +182,10 @@ fn cancelling_a_waiting_job_preserves_the_other_jobs_and_their_order() {
     assert!(!remove_queued_job(&queue, "two").unwrap());
     assert_eq!(
         queue
-            .pending
+            .data
             .lock()
             .unwrap()
+            .pending
             .iter()
             .map(|job| job.id.as_str())
             .collect::<Vec<_>>(),
@@ -198,7 +199,7 @@ fn cancellation_wins_before_persistence_and_retains_the_output_path() {
     let queue = QueueState::default();
     *processes.current_job_id.lock().unwrap() = Some("one".into());
     *processes.cancel_requested.lock().unwrap() = Some("one".into());
-    *queue.active_video_key.lock().unwrap() = Some("youtube:synthetic".into());
+    queue.data.lock().unwrap().active_video_key = Some("youtube:synthetic".into());
     let called = Cell::new(false);
     let outcome =
         finalize_active_job_event(&processes, &queue, event(DownloadState::Success), || {
@@ -214,7 +215,7 @@ fn cancellation_wins_before_persistence_and_retains_the_output_path() {
     assert!(outcome.error.unwrap().contains("output file preserved"));
     assert!(processes.current_job_id.lock().unwrap().is_none());
     assert!(processes.cancel_requested.lock().unwrap().is_none());
-    assert!(queue.active_video_key.lock().unwrap().is_none());
+    assert!(queue.data.lock().unwrap().active_video_key.is_none());
 }
 
 #[test]

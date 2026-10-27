@@ -9,19 +9,29 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::BTreeMap;
 
 pub(crate) fn saved_path(db: &Database, id: &str) -> Result<String, String> {
-    let stored: Option<(Option<String>, bool)> = {
+    let stored: Option<(Option<String>, bool, Option<String>, bool)> = {
         let conn = db.lock().map_err(|_| "SQLite lock poisoned")?;
         conn.query_row(
-            "SELECT output_path, COALESCE(medium='transcript',0) OR
-             EXISTS(SELECT 1 FROM transcriptions WHERE history_entry_id=?1)
-             FROM history_entries WHERE id=?1",
+            "SELECT history.output_path,
+             COALESCE(history.medium='transcript',0) OR transcription.history_entry_id IS NOT NULL,
+             transcription.media_path, COALESCE(transcription.media_path_known,0)
+             FROM history_entries AS history
+             LEFT JOIN transcriptions AS transcription ON transcription.history_entry_id=history.id
+             WHERE history.id=?1",
             [id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?
     };
-    let (path, is_transcript) = stored.ok_or("This history entry no longer exists.")?;
+    let (path, is_transcript, media_path, media_path_known) =
+        stored.ok_or("This history entry no longer exists.")?;
+    if media_path_known {
+        // An explicit missing/unavailable source must never select a nearby file.
+        let media_path = media_path.ok_or(crate::ocr_source::NO_VIDEO)?;
+        crate::ocr_source::validate(std::path::Path::new(&media_path))?;
+        return Ok(media_path);
+    }
     let path = path
         .filter(|p| !p.trim().is_empty())
         .ok_or(crate::ocr_source::NO_VIDEO)?;

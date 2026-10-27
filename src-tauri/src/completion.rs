@@ -54,6 +54,7 @@ pub(super) fn complete_with_hook(
         job,
         CompletionFiles {
             path,
+            retained_media_path: None,
             info,
             captions,
             subtitles: &[],
@@ -65,6 +66,7 @@ pub(super) fn complete_with_hook(
 
 pub(crate) struct CompletionFiles<'a> {
     pub(crate) path: Option<&'a str>,
+    pub(crate) retained_media_path: Option<&'a str>,
     pub(crate) info: Option<&'a InfoResponse>,
     pub(crate) captions: &'a [SavedCaption],
     pub(crate) subtitles: &'a [crate::subtitles::SavedSubtitle],
@@ -79,6 +81,7 @@ pub(super) fn complete_files_with_hook(
 ) -> Result<(), String> {
     let CompletionFiles {
         path,
+        retained_media_path,
         info,
         captions,
         subtitles,
@@ -89,6 +92,26 @@ pub(super) fn complete_files_with_hook(
         output_ready(state, job, Some(path))?;
         // File reads/hashing and external processing are outside writer locks.
         sync_output(Path::new(path))?;
+        let retained_media_path = match (
+            job.transcribe_text && job.download_video_with_transcript,
+            retained_media_path,
+        ) {
+            (true, Some(media)) => {
+                let media = fs::canonicalize(require_output(Some(media))?)
+                    .map_err(|e| format!("Required retained video unavailable: {e}"))?;
+                crate::ocr_source::validate(&media)?;
+                sync_output(&media)?;
+                Some(
+                    media
+                        .into_os_string()
+                        .into_string()
+                        .map_err(|_| "The retained video path is not valid Unicode")?,
+                )
+            }
+            (true, None) => return Err("Required retained video path is missing".into()),
+            (false, Some(_)) => return Err("Unexpected retained video for this job".into()),
+            (false, None) => None,
+        };
         let entry = prepare_history_entry(job, Some(path), info)?;
         let transcript = if job.transcribe_text {
             let language = language
@@ -126,9 +149,9 @@ pub(super) fn complete_files_with_hook(
                 entry: &entry,
                 captions,
                 subtitles,
-                transcript: transcript
-                    .as_ref()
-                    .map(|(text, language)| (text.as_str(), *language)),
+                transcript: transcript.as_ref().map(|(text, language)| {
+                    (text.as_str(), *language, retained_media_path.as_deref())
+                }),
             },
             hook,
         )

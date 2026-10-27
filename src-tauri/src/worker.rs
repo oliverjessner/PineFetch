@@ -431,6 +431,10 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                             &job,
                                             completion::CompletionFiles {
                                                 path: Some(&transcript_path),
+                                                retained_media_path: run_result
+                                                    .output_path
+                                                    .as_deref()
+                                                    .filter(|_| job.download_video_with_transcript),
                                                 info: run_result.info.as_ref(),
                                                 captions: &run_result.captions,
                                                 subtitles: &run_result.subtitles,
@@ -473,6 +477,7 @@ pub(super) fn ensure_worker(app: &AppHandle, state: &AppState) -> Result<(), Str
                                 &job,
                                 completion::CompletionFiles {
                                     path: run_result.output_path.as_deref(),
+                                    retained_media_path: None,
                                     info: run_result.info.as_ref(),
                                     captions: &run_result.captions,
                                     subtitles: &run_result.subtitles,

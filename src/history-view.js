@@ -19,6 +19,7 @@ export const createHistoryView = ({
 }) => {
     const state = Object.seal({
         historyOffset: 0,
+        historyCursor: null,
         historyHasMore: false,
         historyTotalCount: null,
         historyLoading: false,
@@ -277,6 +278,7 @@ export const createHistoryView = ({
 
     const invalidateHistoryCache = () => {
         state.historyDirty = true;
+        state.historyCursor = null;
         state.historyRevision += 1;
         state.historyTotalCount = null;
         updateHistoryResultCount();
@@ -451,7 +453,7 @@ export const createHistoryView = ({
         try {
             const page = await api.getHistory({
                 limit: historyPageSize,
-                offset,
+                ...(append && state.historyCursor ? { cursor: state.historyCursor, offset: 0 } : { offset }),
                 ...(requestedQuery ? { query: requestedQuery } : {}),
                 searchField: requestedSearchField,
                 ...(requestedSource ? { source: requestedSource } : {}),
@@ -470,7 +472,12 @@ export const createHistoryView = ({
             state.historyTotalCount = Number.isSafeInteger(totalCount) && totalCount >= 0 ? totalCount : null;
 
             const fragment = document.createDocumentFragment();
-            entries.forEach(entry => fragment.appendChild(createHistoryItem(entry)));
+            const visibleIds = new Set(append ? [...els.historyList.children].map(row => row.dataset.historyId) : []);
+            for (const entry of entries) {
+                if (visibleIds.has(entry.id)) continue;
+                visibleIds.add(entry.id);
+                fragment.appendChild(createHistoryItem(entry));
+            }
             if (append) {
                 els.historyList.appendChild(fragment);
             } else {
@@ -488,6 +495,7 @@ export const createHistoryView = ({
             }
             els.historyHint.hidden = entries.length > 0 || append;
             state.historyOffset = offset + entries.length;
+            state.historyCursor = page?.next_cursor || null;
             state.historyHasMore = hasMore;
             state.historyLoaded = true;
             needsFollowUpRefresh = state.historyRevision !== requestedRevision;

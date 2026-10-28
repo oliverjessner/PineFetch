@@ -21,7 +21,7 @@ All Rust modules live in `src-tauri/src`.
 | `process`                                                                                           | Process groups, child registration, timeout/cancellation, output draining and structured process errors.                                       |
 | `files`, `hashing`                                                                                  | Owned temporary files, no-clobber publication, flushing, local path validation, legacy JSON reads and hashing.                                 |
 | `database`                                                                                          | Connection ownership, guarded writer transactions, schema compatibility, migrations and snapshots.                                             |
-| `config`, `history`, `link_dump_store`, `completion_store`                                          | SQL for each data area; completion writes related history/transcript/caption rows atomically.                                                  |
+| `config`, `history`, `history_query`, `link_dump_store`, `completion_store`                         | SQL for each data area; completion writes related history/transcript/caption rows atomically.                                                  |
 | `completion`                                                                                        | Validate and flush produced files, prepare history metadata, then invoke the completion transaction.                                           |
 | `commands`, `cli`, `browser_import`, `events`                                                       | Tauri commands, CLI transport, Link Dump HTTP/server integration and the desktop event adapter.                                                |
 
@@ -140,7 +140,7 @@ described in [WHISPER_RUNTIME.md](WHISPER_RUNTIME.md).
 | yt-dlp arguments                                       | `yt_dlp::build_download_args`, `build_filename_probe_args` and `build_info_args`; private helpers share Deno, audio extraction and platform sorting flags without changing their order. |
 | FFmpeg/Whisper arguments and Whisper stdout            | `media_tools`; builders and `parse_transcription_line` require no process or desktop. Native Whisper input paths retain their `OsStr` representation.                                   |
 | Progress, output paths, captions and metadata          | Existing pure parsers in `yt_dlp`; process runners emit events only after parsing.                                                                                                      |
-| History row interpretation                             | Private `history::map_history_entry`: list/search and detail queries use the same column mapping and normalization, with no additional queries.                                         |
+| History row interpretation                             | `history::map_history_entry`: list/search and detail queries use the same column mapping and normalization, with no additional queries.                                                 |
 | Frontend display formatting                            | `src/formatters.js`: duration, file size, history source, upload date and local date/time formatting. Views retain their input-specific date parsing and fallbacks.                     |
 
 The shared URL contract is in `test/fixtures/url-contracts.json`. Rust tests in
@@ -206,6 +206,27 @@ Tauri's setup hook only installs the initialized state and starts services.
 Schema changes use explicit ordered migrations. Legacy JSON formats, completion
 receipts, backup policy and file ownership rules remain in place. See [DATA-INTEGRITY.md](DATA-INTEGRITY.md)
 for those guarantees and their temporary-database/fault-injection regressions.
+
+Schema 13 replaces the old completion/account lookup indexes with three ordered
+indexes: global time/creation/ID, source plus that order, and exact creator within
+source plus that order. Expression, collation and direction definitions are
+validated on reopening. Migration uses the existing backup and transaction rules.
+
+`history_query` builds only the selected filter predicates and binds every value.
+History and Account share opaque cursors with the raw signed SQLite ordering keys,
+filter signature and initial result count. Follow-up pages use three disjoint,
+individually limited index ranges; the merge contains at most three pages before
+metadata/OCR enrichment. This avoids full sorts and expression-led tuple scans,
+including large groups with equal timestamps. A read transaction keeps the first
+count and page consistent. Lookahead determines whether more rows exist; the
+initial count is retained until refresh. Newer inserts and deleted boundary rows
+do not shift the remaining positions. Existing offset requests remain supported.
+Contains searches retain literal LIKE semantics and may still scan matching
+ranges; this is not an FTS migration or a frozen archive snapshot. History,
+statistics and Account read commands use the blocking executor rather than the
+UI thread. Platform statistics aggregate saved sources in SQL and parse URLs only
+for legacy blank-source groups. See [HISTORY_PERFORMANCE.md](HISTORY_PERFORMANCE.md)
+for reproducible synthetic measurements and test boundaries.
 
 Schema 12 adds the queue snapshot with the existing mandatory migration backup,
 layout validation and rollback. It does not change saved History or completion

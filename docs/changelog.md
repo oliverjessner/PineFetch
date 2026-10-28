@@ -1,5 +1,9 @@
 # 2.7.0
 
+- Accelerated History and saved Account pages with matching order/source/creator indexes and focused, parameterized search queries.
+- Made Load more continue from the last saved position, retaining the initial count and avoiding shifted pages after new downloads or deletions. History reads now run outside the UI thread.
+- Grouped platform totals in SQLite and limited legacy URL fallback to entries without a source. Added a backed-up schema-13 migration, large-archive measurements and pagination regressions.
+
 - Persisted waiting downloads, their order and complete job options, plus Auto-start and Pause, across application restarts.
 - Restored unfinished jobs as Interrupted with preserved output paths and an explicit Queue again action. Completed receipts prevent automatic reprocessing after a crash.
 - Saved queue changes atomically before acknowledgement, protected each profile with an operating-system lock and added restart, process-exit, storage-failure and browser regressions.

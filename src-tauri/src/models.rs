@@ -217,6 +217,7 @@ pub(crate) struct HistoryPage {
     pub(crate) ocr_statuses: Vec<HistoryOcrSummary>,
     pub(crate) has_more: bool,
     pub(crate) total_count: u64,
+    pub(crate) next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

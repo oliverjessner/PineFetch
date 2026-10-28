@@ -11,7 +11,7 @@ use crate::history::get_history_caption_from_db;
 use crate::history::get_history_details_from_db;
 use crate::history::get_history_stats_from_db;
 use crate::history::get_history_transcript_from_db;
-use crate::history::search_history_page_from_db;
+use crate::history_query::{read_page, HistoryFilter};
 use crate::link_dump_store::create_link_dump_secret_in_db;
 use crate::link_dump_store::delete_link_dump_secret_in_db;
 use crate::link_dump_store::get_link_dump_settings;
@@ -197,32 +197,41 @@ pub(crate) fn get_yt_dlp_installed_version(
     crate::runtime::installed_yt_dlp_version(app, &state.config, path, &state.processes)
 }
 
+// Preserve the existing flat IPC filters/offset while adding an optional cursor.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub(crate) fn get_history(
-    state: State<AppState>,
+pub(crate) async fn get_history(
+    state: State<'_, AppState>,
     limit: Option<u32>,
     offset: Option<u32>,
     query: Option<String>,
     search_field: Option<String>,
     source: Option<String>,
     exact_user: Option<bool>,
+    cursor: Option<String>,
 ) -> Result<HistoryPage, String> {
     let limit = limit.unwrap_or(20).clamp(1, 100);
     let offset = offset.unwrap_or(0);
-    search_history_page_from_db(
-        &state.db,
-        limit,
-        offset,
+    let db = state.db.clone();
+    let filter = HistoryFilter::new(
         query.as_deref(),
         search_field.as_deref(),
         source.as_deref(),
         exact_user.unwrap_or(false),
-    )
+    )?;
+    tauri::async_runtime::spawn_blocking(move || {
+        read_page(&db, limit, offset, filter, cursor.as_deref())
+    })
+    .await
+    .map_err(|e| format!("History request failed: {e}"))?
 }
 
 #[tauri::command]
-pub(crate) fn get_history_stats(state: State<AppState>) -> Result<HistoryStats, String> {
-    get_history_stats_from_db(&state.db)
+pub(crate) async fn get_history_stats(state: State<'_, AppState>) -> Result<HistoryStats, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || get_history_stats_from_db(&db))
+        .await
+        .map_err(|e| format!("History statistics request failed: {e}"))?
 }
 
 // The asset protocol starts with an empty scope. Authorize only the exact
@@ -731,12 +740,18 @@ pub(crate) fn restart_link_dump_server(
 }
 
 #[tauri::command]
-pub(crate) fn get_history_account(
-    state: State<AppState>,
+pub(crate) async fn get_history_account(
+    state: State<'_, AppState>,
     id: String,
     offset: Option<u32>,
+    cursor: Option<String>,
 ) -> Result<crate::accounts::AccountPage, String> {
-    crate::accounts::get(&state.db, &id, offset.unwrap_or(0))
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::accounts::get_page(&db, &id, offset.unwrap_or(0), cursor.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Account request failed: {e}"))?
 }
 #[tauri::command]
 pub(crate) async fn load_history_account_insights(

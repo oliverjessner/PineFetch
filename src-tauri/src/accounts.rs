@@ -1,6 +1,6 @@
 //! Account navigation reads local History; network actions are always explicit.
 use crate::database::{self, Database};
-use crate::history::search_history_page_from_db;
+use crate::history_query::{read_page, HistoryFilter};
 use crate::models::HistoryPage;
 use crate::process::ProcessState;
 use crate::social_insights::{self, SocialInsightsTools};
@@ -126,16 +126,23 @@ fn snapshot(db: &Database, ctx: &Context) -> Result<Option<AccountSnapshot>, Str
     })
     .transpose()
 }
+#[cfg(test)]
 pub(crate) fn get(db: &Database, id: &str, offset: u32) -> Result<AccountPage, String> {
+    get_page(db, id, offset, None)
+}
+pub(crate) fn get_page(
+    db: &Database,
+    id: &str,
+    offset: u32,
+    cursor: Option<&str>,
+) -> Result<AccountPage, String> {
     let ctx = current(db, id)?;
-    let saved = search_history_page_from_db(
+    let saved = read_page(
         db,
         20,
         offset,
-        Some(&ctx.uploader),
-        Some("user"),
-        Some(&ctx.source),
-        true,
+        HistoryFilter::new(Some(&ctx.uploader), Some("user"), Some(&ctx.source), true)?,
+        cursor,
     )?;
     let insights = snapshot(db, &ctx)?;
     Ok(AccountPage {

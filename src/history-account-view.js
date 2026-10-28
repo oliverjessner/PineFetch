@@ -7,6 +7,7 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
         id: null,
         request: 0,
         offset: 0,
+        cursor: null,
         reading: false,
         profile: '',
         openingProfile: false,
@@ -90,8 +91,8 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
         item.append(badge, button);
         return item;
     };
-    const savedRow = entry =>
-        row({
+    const savedRow = entry => {
+        const item = row({
             title: entry.title || entry.filename || entry.url,
             filename: entry.filename || '',
             type:
@@ -102,6 +103,9 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
             label: 'Open video details',
             activate: button => openVideo(entry.id, button),
         });
+        item.dataset.historyId = entry.id;
+        return item;
+    };
     const loadSaved = async (append = false) => {
         if (!state.id || state.reading || !api.available) return;
         const id = state.id,
@@ -113,7 +117,12 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
         els.historyAccountSavedList.setAttribute('aria-busy', 'true');
         status(els.historyAccountStatus, append ? 'Loading more saved downloads…' : 'Loading account…');
         try {
-            const page = await api.getHistoryAccount({ id, offset: append ? state.offset : 0 });
+            const page = await api.getHistoryAccount({
+                id,
+                ...(append && state.cursor
+                    ? { cursor: state.cursor, offset: 0 }
+                    : { offset: append ? state.offset : 0 }),
+            });
             if (state.id !== id || state.request !== request) return;
             const total = page.saved.total_count.toLocaleString();
             els.historyAccountTitle.textContent = page.uploader;
@@ -126,8 +135,14 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
             els.historyAccountSavedCount.textContent = total;
             els.historyAccountSavedCount.setAttribute('aria-label', `${total} saved downloads`);
             if (!append) els.historyAccountSavedList.replaceChildren();
-            els.historyAccountSavedList.append(...page.saved.entries.map(savedRow));
+            const visibleIds = new Set([...els.historyAccountSavedList.children].map(row => row.dataset.historyId));
+            for (const entry of page.saved.entries) {
+                if (visibleIds.has(entry.id)) continue;
+                visibleIds.add(entry.id);
+                els.historyAccountSavedList.append(savedRow(entry));
+            }
             state.offset = (append ? state.offset : 0) + page.saved.entries.length;
+            state.cursor = page.saved.next_cursor || null;
             els.historyAccountSavedEmpty.hidden = els.historyAccountSavedList.childElementCount > 0;
             els.historyAccountMoreSavedBtn.hidden = !page.saved.has_more;
             if (page.insights?.profile_url) setProfile(page.insights.profile_url);
@@ -263,6 +278,7 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
         state.openingProfile = false;
         state.remoteBusy = false;
         state.offset = 0;
+        state.cursor = null;
         state.remoteOffset = 0;
         state.remoteMore = false;
         state.discovery = 'idle';

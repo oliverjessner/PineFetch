@@ -9,7 +9,6 @@ use crate::models::HistoryCaptionContent;
 use crate::models::HistoryCaptionSummary;
 use crate::models::HistoryDetails;
 use crate::models::HistoryEntry;
-use crate::models::HistoryOcrSummary;
 use crate::models::HistoryPage;
 use crate::models::HistorySourceCount;
 use crate::models::HistoryStats;
@@ -68,125 +67,13 @@ pub(super) fn search_history_page_from_db(
     source: Option<&str>,
     exact_user: bool,
 ) -> Result<HistoryPage, String> {
-    let pattern = history_search_pattern(query);
-    let search_field = match search_field
-        .map(str::trim)
-        .filter(|field| !field.is_empty())
-    {
-        None | Some("title") => "title",
-        Some("description") => "description",
-        Some("user") => "user",
-        Some("transcript") => "transcript",
-        Some(field) => return Err(format!("Unsupported history search field: {field}")),
-    };
-    let exact_uploader = if exact_user && search_field == "user" {
-        query.map(str::trim).filter(|query| !query.is_empty())
-    } else {
-        None
-    };
-    let source = source
-        .map(str::trim)
-        .filter(|source| !source.is_empty())
-        .map(str::to_ascii_lowercase);
-    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
-    let total: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM history_entries AS history
-             WHERE (?1 IS NULL
-                OR (?2 = 'title' AND history.title LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
-                OR (?2 = 'user' AND (
-                    (?4 IS NULL AND history.uploader LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
-                    OR history.uploader = ?4 COLLATE BINARY
-                ))
-                OR (?2 = 'description' AND EXISTS (
-                    SELECT 1 FROM captions
-                    WHERE captions.history_entry_id = history.id
-                      AND captions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-                ))
-                OR (?2 = 'transcript' AND EXISTS (
-                    SELECT 1 FROM transcriptions
-                    WHERE transcriptions.history_entry_id = history.id
-                      AND transcriptions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-                )))
-               AND (?3 IS NULL OR history.source = ?3 COLLATE NOCASE)",
-            params![pattern, search_field, source, exact_uploader],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("History read failed: {e}"))?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, url, title, uploader, filename, thumbnail, upload_date, timestamp, duration_seconds, file_size_bytes, sha256, medium, source, platform, output_path, pinefetch_version, created_at, completed_at,
-                    ocr.last_attempt_id, ocr.last_attempt_at, ocr.last_attempt_status, ocr.result_created_at
-             FROM history_entries AS history
-             LEFT JOIN history_ocr AS ocr ON ocr.history_entry_id = history.id
-             WHERE (?1 IS NULL
-                OR (?2 = 'title' AND history.title LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
-                OR (?2 = 'user' AND (
-                    (?6 IS NULL AND history.uploader LIKE ?1 ESCAPE '\\' COLLATE NOCASE)
-                    OR history.uploader = ?6 COLLATE BINARY
-                ))
-                OR (?2 = 'description' AND EXISTS (
-                    SELECT 1 FROM captions
-                    WHERE captions.history_entry_id = history.id
-                      AND captions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-                ))
-                OR (?2 = 'transcript' AND EXISTS (
-                    SELECT 1 FROM transcriptions
-                    WHERE transcriptions.history_entry_id = history.id
-                      AND transcriptions.text LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-                )))
-               AND (?3 IS NULL OR history.source = ?3 COLLATE NOCASE)
-             ORDER BY COALESCE(completed_at, created_at) DESC, created_at DESC, id DESC
-             LIMIT ?4 OFFSET ?5",
-        )
-        .map_err(|e| format!("History read failed: {e}"))?;
-
-    let rows = stmt
-        .query_map(
-            params![
-                pattern,
-                search_field,
-                source,
-                i64::from(limit),
-                i64::from(offset),
-                exact_uploader,
-            ],
-            |row| {
-                let entry = map_history_entry(row)?;
-                let attempt_id: Option<String> = row.get(18)?;
-                let ocr = attempt_id
-                    .map(|attempt_id| {
-                        Ok::<_, rusqlite::Error>(HistoryOcrSummary {
-                            history_id: entry.id.clone(),
-                            attempt_id,
-                            attempt_at: i64_to_millis(row.get(19)?),
-                            status: row.get(20)?,
-                            result_created_at: optional_i64_to_millis(row.get(21)?),
-                        })
-                    })
-                    .transpose()?;
-                Ok((entry, ocr))
-            },
-        )
-        .map_err(|e| format!("History read failed: {e}"))?;
-
-    let mut entries = Vec::new();
-    let mut ocr_statuses = Vec::new();
-    for row in rows {
-        let (entry, ocr) = row.map_err(|e| format!("History read failed: {e}"))?;
-        entries.push(entry);
-        if let Some(ocr) = ocr {
-            ocr_statuses.push(ocr);
-        }
-    }
-
-    let loaded_count = u64::from(offset).saturating_add(entries.len() as u64);
-    Ok(HistoryPage {
-        entries,
-        ocr_statuses,
-        has_more: loaded_count < total.max(0) as u64,
-        total_count: total.max(0) as u64,
-    })
+    crate::history_query::read_page(
+        state,
+        limit,
+        offset,
+        crate::history_query::HistoryFilter::new(query, search_field, source, exact_user)?,
+        None,
+    )
 }
 
 pub(super) fn history_search_pattern(query: Option<&str>) -> Option<String> {
@@ -385,27 +272,50 @@ pub(super) fn get_history_stats_from_db(
         )
         .map_err(|e| format!("History stats read failed: {e}"))?;
 
+    // Most entries already have a source. Group the covering source index in
+    // SQLite instead of copying and parsing every archived URL on each refresh.
     let mut stmt = conn
-        .prepare("SELECT source, url, platform FROM history_entries")
+        .prepare("SELECT source,COUNT(*) FROM history_entries GROUP BY source COLLATE NOCASE")
         .map_err(|e| format!("History stats read failed: {e}"))?;
     let rows = stmt
         .query_map([], |row| {
-            Ok((
-                row.get::<_, Option<String>>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-            ))
+            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?))
         })
         .map_err(|e| format!("History stats read failed: {e}"))?;
     let mut counts = BTreeMap::<String, u64>::new();
+    let mut fallback_sources = Vec::new();
     for row in rows {
-        let (source, url, platform) = row.map_err(|e| format!("History stats read failed: {e}"))?;
-        let source = trim_optional_string(source)
-            .map(|value| value.to_ascii_lowercase())
-            .or_else(|| source_from_url(&url))
-            .or_else(|| trim_optional_string(platform).map(|value| value.to_ascii_lowercase()))
-            .unwrap_or_else(|| "unknown".to_string());
-        *counts.entry(source).or_default() += 1;
+        let (source, count) = row.map_err(|e| format!("History stats read failed: {e}"))?;
+        if let Some(normalized) = trim_optional_string(source.clone()) {
+            *counts.entry(normalized.to_ascii_lowercase()).or_default() += count.max(0) as u64;
+        } else {
+            fallback_sources.push(source);
+        }
+    }
+    // Bind the exact blank groups: Rust's Unicode trim also accepts whitespace
+    // that SQLite's default TRIM does not. Chunk only pathological legacy data.
+    for sources in fallback_sources.chunks(128) {
+        let predicate = (1..=sources.len())
+            .map(|n| format!("source IS ?{n} COLLATE NOCASE"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT url,platform FROM history_entries WHERE {predicate}"
+            ))
+            .map_err(|e| format!("History stats read failed: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(sources), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })
+            .map_err(|e| format!("History stats read failed: {e}"))?;
+        for row in rows {
+            let (url, platform) = row.map_err(|e| format!("History stats read failed: {e}"))?;
+            let source = source_from_url(&url)
+                .or_else(|| trim_optional_string(platform).map(|value| value.to_ascii_lowercase()))
+                .unwrap_or_else(|| "unknown".to_string());
+            *counts.entry(source).or_default() += 1;
+        }
     }
     stats.source_counts = counts
         .into_iter()
@@ -692,7 +602,7 @@ pub(super) fn import_legacy_history_with_hook(
         .map_err(|e| format!("History import commit failed: {e}"))
 }
 
-fn map_history_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
+pub(super) fn map_history_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
     let created_at: i64 = row.get(16)?;
     let completed_at: Option<i64> = row.get(17)?;
     Ok(normalize_history_entry(HistoryEntry {

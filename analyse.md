@@ -6,15 +6,9 @@ Stand: v2.7.0. Offene Aufgaben in grober Prioritätsreihenfolge; die bisherigen 
 
 - [ ] **D2 — Creator über stabile Identitäten zuordnen:** Gleich benannte Creator können derzeit vermischt werden, während eine Umbenennung dieselbe Quelle aufteilen kann. Stabile Plattformidentitäten halten Videos und gespeicherte Insights beim richtigen Creator.
 
-- [ ] **E5 — Playlists erst nach bewusster Bestätigung übernehmen:** Ein eingefügter Link oder der Fensterfokus kann derzeit unbeabsichtigt eine ganze Playlist starten. Eine Vorschau mit Auswahl zwischen Einzelvideo und Playlist gibt Nutzern Kontrolle über Downloads, Speicher und Rechenzeit.
-
-- [ ] **E6 — Schnittanfang, Dauer und Zeitangaben zuverlässig machen:** Der gewünschte Startpunkt wird beim schnellen Schnitt nicht immer genau eingehalten, und die gespeicherte Dauer kann weiterhin vom Original stammen. Verlässliche Schnittdaten halten Video, Untertitel, Transkript und OCR zeitlich zusammen.
-
 - [ ] **D1 — History- und Accountabfragen für große Archive beschleunigen:** Große Bestände verursachen bereits messbare Wartezeiten beim Laden und Blättern. Passende Abfragen, Indizes und eine stabile Seitennavigation halten das Archiv auch bei vielen Downloads bedienbar.
 
 - [ ] **E7 — Fehler direkt bei der betroffenen Aktion erklären:** Manche Fehler sind nur im Settings-Log sichtbar und lassen Nutzer ohne verständlichen nächsten Schritt zurück. Hinweise mit Wiederholen, Einstellungen öffnen oder Zielordner wählen erleichtern die Behebung ohne technische Logsuche.
-
-- [ ] **Release auf einem sauberen Mac prüfen:** Die bestandene Sandbox-Abnahme ersetzt keinen Test auf einem separaten Mac ohne Entwicklerinstallation. Eine Prüfung auf unterstützten macOS-Versionen mit Transkription und OCR zeigt, ob das ausgelieferte Paket auch dort zuverlässig funktioniert.
 
 ## Danach
 

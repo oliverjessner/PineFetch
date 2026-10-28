@@ -150,6 +150,25 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             for (const handler of listeners.get(name) || []) handler({ payload });
         },
     };
+    const localPage = (entries, args, limit) => {
+        const cursor = args.cursor ? JSON.parse(args.cursor) : null;
+        const remaining = cursor ? new Set(cursor.remaining) : null;
+        const candidates = remaining ? entries.filter(entry => remaining.has(entry.id)) : entries;
+        const offset = args.offset || 0;
+        const end = offset + limit;
+        return {
+            entries: candidates.slice(offset, end),
+            total_count: cursor?.total ?? entries.length,
+            has_more: candidates.length > end,
+            next_cursor:
+                candidates.length > end
+                    ? JSON.stringify({
+                          remaining: candidates.slice(end).map(entry => entry.id),
+                          total: cursor?.total ?? entries.length,
+                      })
+                    : null,
+        };
+    };
     globalThis.__pinefetchUi = ui;
     Object.defineProperty(globalThis.navigator, 'clipboard', {
         value: {
@@ -291,13 +310,7 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
                 if (args.exactUser) return entry.uploader === args.query;
                 return entry.uploader?.toLowerCase().includes(args.query.toLowerCase());
             });
-            const offset = args.offset || 0;
-            const end = offset + args.limit;
-            const page = {
-                entries: filtered.slice(offset, end),
-                has_more: filtered.length > end,
-                total_count: filtered.length,
-            };
+            const page = localPage(filtered, args, args.limit);
             if (ui.historyDeleteFixtures && ui.holdHistoryRead) {
                 ui.holdHistoryRead = false;
                 await new Promise(resolve => {
@@ -392,15 +405,10 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             const entry = entries.find(entry => entry.id === args.id);
             if (!entry) throw new Error('Missing fixture account');
             const matching = entries.filter(row => row.uploader === entry.uploader && row.source === entry.source);
-            const offset = args.offset || 0;
             const page = {
                 source: entry.source,
                 uploader: entry.uploader,
-                saved: {
-                    entries: matching.slice(offset, offset + 20),
-                    total_count: matching.length,
-                    has_more: matching.length > offset + 20,
-                },
+                saved: localPage(matching, args, 20),
                 insights: structuredClone(ui.accountRecords[entry.uploader] || null),
             };
             if (ui.holdAccountRead) {
@@ -1590,12 +1598,26 @@ try {
             assert(Math.abs(countBounds.y + countBounds.height / 2 - titleBounds.y - titleBounds.height / 2) < 6);
             assert(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth));
             await page.setViewportSize({ width: 1400, height: 960 });
+            await page.evaluate(async () => {
+                const current = await globalThis.__TAURI__.core.invoke('get_history', { offset: 0, limit: 100 });
+                globalThis.__paginationOriginalHistory = current.entries;
+                globalThis.__pinefetchUi.setHistoryEntries([
+                    { ...current.entries.find(entry => entry.uploader === 'Blender'), id: 'new-creator-video' },
+                    ...current.entries,
+                ]);
+            });
             await page.locator('#loadMoreHistoryBtn').click();
             await page.locator('[data-history-id="creator-24"]').waitFor();
             assert.equal(await page.locator('.pinefetch-history-item').count(), 25);
-            assert.equal((await latestHistoryArgs()).offset, 20);
+            assert.equal(await page.locator('[data-history-id="new-creator-video"]').count(), 0);
+            assert.equal((await latestHistoryArgs()).offset, 0);
+            assert.equal(typeof (await latestHistoryArgs()).cursor, 'string');
             assert.equal(await resultCount.textContent(), '25 found');
             assert.equal((await latestHistoryArgs()).exactUser, true);
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.setHistoryEntries(globalThis.__paginationOriginalHistory);
+                delete globalThis.__paginationOriginalHistory;
+            });
 
             // Detail navigation preserves the exact query, all loaded rows and
             // the actual list nodes/scroll position without a History reload.
@@ -3234,6 +3256,11 @@ try {
                 () => globalThis.document.querySelector('#historyAccountSavedList').childElementCount === 27
             );
             assert(await page.locator('#historyAccountMoreSavedBtn').isHidden());
+            const accountContinuation = await page.evaluate(
+                () => globalThis.__pinefetchUi.commands.findLast(call => call.command === 'get_history_account').args
+            );
+            assert.equal(accountContinuation.offset, 0);
+            assert.equal(typeof accountContinuation.cursor, 'string');
             assert.equal(await page.locator('#historyAccountSavedCount').textContent(), '27');
             const accountMetrics = page.locator('#historyAccountSocialMetrics');
             assert.match(await accountMetrics.innerText(), /Subscribers[\s\S]*12[,.]345/);

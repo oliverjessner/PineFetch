@@ -60,6 +60,16 @@ requeue, removal and reload in Chromium and WebKit using controlled native
 responses. Browser persistence is a fixture; the Rust tests prove the real
 database and process boundaries.
 
+History/Account archive regressions use isolated SQLite profiles with 200,000
+synthetic downloads and a separate 20,000-row timestamp collision case. They
+check cursor order, concurrent inserts/deletions, exact creator/platform scoping,
+raw 64-bit/null timestamps, invalid/filter-mismatched cursors, migration
+backup/rollback and schema index definitions. SQLite VM-step assertions guard
+against deep-page scans and repeated counts; wall-clock times are diagnostic,
+not flaky timing gates. The UI suite checks native cursor forwarding, count
+retention, insertion between pages and filter resets in Chromium and WebKit
+using controlled responses. See [HISTORY_PERFORMANCE.md](HISTORY_PERFORMANCE.md).
+
 The pyramid has five levels:
 
 1. **Unit:** URL/domain/timestamp parsing, presets, process arguments, metadata

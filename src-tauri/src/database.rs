@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 12;
+pub(super) const SCHEMA_VERSION: i64 = 13;
 
 const QUEUE_SQL: &str = r#"
 CREATE TABLE queue_state (
@@ -79,7 +79,15 @@ pub(crate) fn restore_schema10_transcript_fixture(conn: &Connection) {
 
 #[cfg(test)]
 pub(crate) fn restore_schema11_queue_fixture(conn: &Connection) {
+    restore_schema12_history_indexes_fixture(conn);
     conn.execute_batch("DROP TABLE queue_state;").unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn restore_schema12_history_indexes_fixture(conn: &Connection) {
+    conn.execute_batch("DROP INDEX idx_history_order; DROP INDEX idx_history_source_order; DROP INDEX idx_history_creator_order;
+        CREATE INDEX idx_history_entries_completed_at ON history_entries(completed_at,created_at);
+        CREATE INDEX idx_history_account_lookup ON history_entries(source,uploader);").unwrap();
 }
 
 const CREATOR_SUBTITLES_SQL: &str =
@@ -284,6 +292,7 @@ pub(super) enum MigrationPoint {
     IdImport,
     TranscriptMedia,
     Queue,
+    HistoryIndexes,
 }
 
 pub(super) fn initialize_with_hook(
@@ -425,6 +434,13 @@ pub(super) fn initialize_with_hook(
             .map_err(|error| error.to_string())?;
         hook(MigrationPoint::Queue)?;
     }
+    if version < 13 {
+        tx.execute_batch(crate::history_query::INDEX_SQL)
+            .map_err(|error| format!("SQLite migration 13 failed: {error}"))?;
+        tx.pragma_update(None, "user_version", 13)
+            .map_err(|error| error.to_string())?;
+        hook(MigrationPoint::HistoryIndexes)?;
+    }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
             "SQLite upgrade has no step for the supported schema version; rolled back".into(),
@@ -552,10 +568,19 @@ fn foreign_keys(conn: &Connection, table: &str) -> rusqlite::Result<Vec<Vec<Stri
     rows.collect()
 }
 
-fn indexes(
-    conn: &Connection,
-    table: &str,
-) -> rusqlite::Result<BTreeMap<String, (bool, Vec<String>)>> {
+#[derive(PartialEq, Eq)]
+struct IndexColumn {
+    name: Option<String>,
+    descending: bool,
+    collation: String,
+}
+#[derive(PartialEq, Eq)]
+struct IndexDefinition {
+    unique: bool,
+    columns: Vec<IndexColumn>,
+    expression_sql: Option<String>,
+}
+fn indexes(conn: &Connection, table: &str) -> rusqlite::Result<BTreeMap<String, IndexDefinition>> {
     let mut stmt = conn.prepare("SELECT name, \"unique\" FROM pragma_index_list(?1)")?;
     let names = stmt
         .query_map([table], |r| {
@@ -565,11 +590,41 @@ fn indexes(
     names
         .into_iter()
         .map(|(name, unique)| {
-            let mut stmt = conn.prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")?;
-            let fields = stmt
-                .query_map([&name], |r| r.get::<_, String>(0))?
+            let mut stmt = conn.prepare(
+                "SELECT name,desc,coll FROM pragma_index_xinfo(?1) WHERE key=1 ORDER BY seqno",
+            )?;
+            let columns = stmt
+                .query_map([&name], |r| {
+                    Ok(IndexColumn {
+                        name: r.get(0)?,
+                        descending: r.get(1)?,
+                        collation: r.get(2)?,
+                    })
+                })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok((name, (unique, fields)))
+            let expression_sql = if columns.iter().any(|column| column.name.is_none()) {
+                let sql: String = conn.query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='index' AND name=?1",
+                    [&name],
+                    |r| r.get(0),
+                )?;
+                Some(
+                    sql.chars()
+                        .filter(|c| !c.is_whitespace())
+                        .flat_map(char::to_lowercase)
+                        .collect(),
+                )
+            } else {
+                None
+            };
+            Ok((
+                name,
+                IndexDefinition {
+                    unique,
+                    columns,
+                    expression_sql,
+                },
+            ))
         })
         .collect()
 }
@@ -635,6 +690,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
     if version >= 12 {
         reference
             .execute_batch(QUEUE_SQL)
+            .map_err(|error| error.to_string())?;
+    }
+    if version >= 13 {
+        reference
+            .execute_batch(crate::history_query::INDEX_SQL)
             .map_err(|error| error.to_string())?;
     }
     reference
@@ -792,8 +852,9 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
                 return Err(format!("{} (index {name})", fail()));
             }
         }
-        for (name, (unique, fields)) in wanted_indexes {
-            if (version > 0 || unique) && actual_indexes.get(&name) != Some(&(unique, fields)) {
+        for (name, definition) in wanted_indexes {
+            if (version > 0 || definition.unique) && actual_indexes.get(&name) != Some(&definition)
+            {
                 return Err(format!("{} (missing index {name})", fail()));
             }
         }

@@ -6,8 +6,6 @@ Stand: v2.7.0. Offene Aufgaben in grober Prioritätsreihenfolge; die bisherigen 
 
 - [ ] **D2 — Creator über stabile Identitäten zuordnen:** Gleich benannte Creator können derzeit vermischt werden, während eine Umbenennung dieselbe Quelle aufteilen kann. Stabile Plattformidentitäten halten Videos und gespeicherte Insights beim richtigen Creator.
 
-- [ ] **D1 — History- und Accountabfragen für große Archive beschleunigen:** Große Bestände verursachen bereits messbare Wartezeiten beim Laden und Blättern. Passende Abfragen, Indizes und eine stabile Seitennavigation halten das Archiv auch bei vielen Downloads bedienbar.
-
 - [ ] **E7 — Fehler direkt bei der betroffenen Aktion erklären:** Manche Fehler sind nur im Settings-Log sichtbar und lassen Nutzer ohne verständlichen nächsten Schritt zurück. Hinweise mit Wiederholen, Einstellungen öffnen oder Zielordner wählen erleichtern die Behebung ohne technische Logsuche.
 
 ## Danach

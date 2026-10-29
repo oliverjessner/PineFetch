@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createBrowserAuthentication, browserPermissionHelp } from '../src/browser-authentication.js';
+import {
+    createBrowserAuthentication,
+    browserPermissionHelp,
+    browserAccessFailure,
+} from '../src/browser-authentication.js';
 
 const setup = api => {
     const element = () => ({
@@ -34,6 +38,7 @@ test('restores saved browser, enables fresh cookie reads, and disconnects with a
     const { els, view } = setup({
         checkYoutubeCookieAccess: async args => {
             checks.push(args);
+            return { public_access: 'checked', authentication: 'not_verified' };
         },
         getConfig: async () => ({ youtube_cookie_browser: 'firefox' }),
         patchConfig: async ({ changes }) => {
@@ -54,7 +59,7 @@ test('restores saved browser, enables fresh cookie reads, and disconnects with a
     assert.deepEqual(calls, [{ youtube_cookie_browser: 'brave' }]);
     assert.deepEqual(checks, [{ browser: 'brave' }]);
     assert.match(els.browserAuthStatus.textContent, /new YouTube requests/);
-    assert.equal(els.browserAuthState.textContent, 'Connected');
+    assert.equal(els.browserAuthState.textContent, 'Public access checked');
     els.disconnectBrowserAuthBtn.click();
     await settle();
     assert.equal(calls[1].youtube_cookie_browser, null);
@@ -144,11 +149,11 @@ test('enable waits for access approval, prevents duplicate checks, and preserves
     assert.equal(checks, 1);
     assert.equal(saves, 0);
     assert.equal(els.browserAuthBrowser.disabled, true);
-    assert.match(els.browserAuthStatus.textContent, /Checking browser access/);
+    assert.match(els.browserAuthStatus.textContent, /Checking public YouTube access/);
     rejectCheck(new Error('synthetic private error'));
     await settle();
     assert.equal(saves, 0);
-    assert.equal(els.browserAuthState.textContent, 'Connection failed');
+    assert.equal(els.browserAuthState.textContent, 'Check failed');
     assert.match(els.browserAuthConnection.textContent, /Firefox/);
     assert.equal(els.disconnectBrowserAuthBtn.disabled, false);
     assert.equal(els.browserAuthBrowser.disabled, false);
@@ -166,11 +171,11 @@ test('permission guidance matches the operating system', () => {
     assert.match(browserPermissionHelp('unknown'), /Your system/);
 });
 
-test('an access check cannot publish Connected before the browser selection is persisted', async () => {
+test('an access check cannot publish success before the browser selection is persisted', async () => {
     let rejectSave;
     const { els, view } = setup({
         getConfig: async () => ({ youtube_cookie_browser: 'firefox' }),
-        checkYoutubeCookieAccess: async () => {},
+        checkYoutubeCookieAccess: async () => ({ public_access: 'checked', authentication: 'not_verified' }),
         patchConfig: () =>
             new Promise((resolve, reject) => {
                 rejectSave = reject;
@@ -185,8 +190,83 @@ test('an access check cannot publish Connected before the browser selection is p
     assert.equal(els.browserAuthBrowser.disabled, true);
     rejectSave(new Error('private backend detail'));
     await settle();
-    assert.equal(els.browserAuthState.textContent, 'Connection failed');
+    assert.equal(els.browserAuthState.textContent, 'Save failed');
     assert.match(els.browserAuthConnection.textContent, /Firefox/);
     assert.doesNotMatch(els.browserAuthStatus.textContent, /private/);
     assert.equal(els.disconnectBrowserAuthBtn.disabled, false);
+});
+
+test('every safe failure category has actionable guidance without displaying raw diagnostics', async () => {
+    const cases = {
+        YT_DLP_UNAVAILABLE: /path in Settings/,
+        INVALID_BROWSER: /listed browsers/,
+        PROFILE_UNAVAILABLE: /found or read.*Chrome and Chromium/,
+        PERMISSION_DENIED: /system denied access/,
+        BROWSER_LOCKED: /Close the selected browser/,
+        COOKIE_DECRYPTION: /could not be decrypted.*Firefox/,
+        COOKIES_UNAVAILABLE: /No cookies.*most recently used profile/,
+        NETWORK_DNS: /DNS/,
+        NETWORK_TLS: /clock, certificates/,
+        NETWORK_TIMEOUT: /request timed out/,
+        NETWORK_CONNECTION: /firewall/,
+        RATE_LIMITED: /Wait before retrying/,
+        SIGN_IN_REQUIRED: /challenge.*does not verify/,
+        ACCESS_REJECTED: /rejected the public request/,
+        CHECK_TIMEOUT: /pending system permission prompt/,
+        CHECK_FAILED: /could not be completed/,
+    };
+    for (const [code, expected] of Object.entries(cases)) {
+        assert.match(browserAccessFailure(code), expected);
+        let saves = 0;
+        const { els, view } = setup({
+            getConfig: async () => ({ youtube_cookie_browser: 'firefox' }),
+            checkYoutubeCookieAccess: async () => {
+                throw code;
+            },
+            patchConfig: async () => {
+                saves++;
+            },
+        });
+        await view.load();
+        els.browserAuthBrowser.value = 'chrome';
+        els.connectBrowserAuthBtn.click();
+        await settle();
+        assert.match(els.browserAuthStatus.textContent, expected);
+        assert.match(els.browserAuthStatus.textContent, /saved connection has not changed/);
+        assert.equal(els.browserAuthState.textContent, 'Check failed');
+        assert.match(els.browserAuthConnection.textContent, /Firefox/);
+        assert.equal(saves, 0);
+    }
+    for (const raw of [
+        'private cookie token /secret/profile',
+        new Error('private cookie token'),
+        { code: 'private cookie token' },
+        '__proto__',
+        null,
+    ]) {
+        assert.doesNotMatch(browserAccessFailure(raw), /private cookie token|secret\/profile|__proto__/);
+        assert.match(browserAccessFailure(raw), /could not be completed/);
+    }
+    assert.match(browserPermissionHelp('macOS'), /PineFetch.*Full Disk Access/);
+});
+
+test('empty or contradictory success reports never save a browser or claim authentication', async () => {
+    for (const report of [
+        undefined,
+        null,
+        {},
+        { public_access: 'checked' },
+        { public_access: 'checked', authentication: 'verified' },
+    ]) {
+        const { els, view } = setup({
+            getConfig: async () => ({}),
+            checkYoutubeCookieAccess: async () => report,
+            patchConfig: () => assert.fail('An invalid report must not save a connection'),
+        });
+        await view.load();
+        els.connectBrowserAuthBtn.click();
+        await settle();
+        assert.equal(els.browserAuthState.textContent, 'Check failed');
+        assert.match(els.browserAuthConnection.textContent, /No browser connection/);
+    }
 });

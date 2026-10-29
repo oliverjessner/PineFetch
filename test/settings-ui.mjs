@@ -151,8 +151,8 @@ const installSettingsFixture = () => {
                 });
                 ui.releaseAccess = null;
             }
-            if (ui.failAccess) throw new Error('Synthetic private cookie diagnostic');
-            return;
+            if (ui.failAccess) throw typeof ui.failAccess === 'string' ? ui.failAccess : 'PERMISSION_DENIED';
+            return { public_access: 'checked', authentication: 'not_verified' };
         }
         return original(command, args);
     };
@@ -368,7 +368,7 @@ try {
                 0
             );
             assert.equal(await page.locator('.pinefetch-browser-troubleshooting').getAttribute('open'), null);
-            assert.match(await page.locator('#settingsBrowserPanel').innerText(), /does not verify/);
+            assert.match(await page.locator('#settingsBrowserPanel').innerText(), /YouTube sign-in: Not verified/);
             await snapshot('settings-browser');
             await page.locator('#browserAuthBrowser').selectOption('chrome');
             assert.equal(await page.locator('#browserAuthState').textContent(), 'Browser saved');
@@ -383,10 +383,11 @@ try {
             assert(await page.locator('#disconnectBrowserAuthBtn').isDisabled());
             await page.evaluate(() => globalThis.__settingsUi.releaseAccess());
             await page.waitForFunction(
-                () => globalThis.document.getElementById('browserAuthState').textContent === 'Connection failed'
+                () => globalThis.document.getElementById('browserAuthState').textContent === 'Check failed'
             );
             assert.equal((await persisted()).youtube_cookie_browser, 'firefox');
-            assert.doesNotMatch(await page.locator('#browserAuthStatus').textContent(), /private/);
+            assert.match(await page.locator('#browserAuthStatus').textContent(), /system denied access/);
+            assert.doesNotMatch(await page.locator('#browserAuthStatus').textContent(), /Synthetic private/);
             await page.locator('.pinefetch-browser-troubleshooting summary').click();
             assert.match(await page.locator('#browserAuthHelp').innerText(), /most recently used profile/);
             assert.match(await page.locator('#browserAuthPermissionHelp').innerText(), /Keychain/);
@@ -400,9 +401,44 @@ try {
             assert.equal(await page.locator('#browserAuthState').textContent(), 'Saving…');
             await page.evaluate(() => globalThis.__settingsUi.releaseSave());
             await page.waitForFunction(
-                () => globalThis.document.getElementById('browserAuthState').textContent === 'Connected'
+                () => globalThis.document.getElementById('browserAuthState').textContent === 'Public access checked'
             );
             assert.equal((await persisted()).youtube_cookie_browser, 'chrome');
+            assert.match(await page.locator('#browserAuthStatus').textContent(), /sign-in is not verified/);
+            await snapshot('settings-browser-public-checked');
+
+            // Failures remain actionable at narrow widths and never overwrite the saved browser.
+            await page.setViewportSize({ width: 390, height: 900 });
+            for (const [code, expected] of [
+                ['PROFILE_UNAVAILABLE', /found or read/],
+                ['COOKIE_DECRYPTION', /could not be decrypted/],
+                ['NETWORK_DNS', /DNS/],
+                ['NETWORK_TLS', /clock, certificates/],
+                ['CHECK_TIMEOUT', /pending system permission prompt/],
+                ['synthetic-private-token /private/profile/Cookies', /could not be completed/],
+            ]) {
+                await page.evaluate(code => {
+                    globalThis.__settingsUi.failAccess = code;
+                }, code);
+                await page.locator('#browserAuthBrowser').selectOption('brave');
+                await page.locator('#connectBrowserAuthBtn').click();
+                await page.waitForFunction(
+                    () => globalThis.document.getElementById('browserAuthState').textContent === 'Check failed'
+                );
+                assert.match(await page.locator('#browserAuthStatus').textContent(), expected);
+                assert.doesNotMatch(
+                    await page.locator('#settingsBrowserPanel').innerText(),
+                    /synthetic-private-token|private\/profile/
+                );
+                assert.equal((await persisted()).youtube_cookie_browser, 'chrome');
+                assert.match(await page.locator('#browserAuthConnection').textContent(), /Chrome/);
+                await noOverflow();
+            }
+            await snapshot('settings-browser-compact-error');
+            await page.setViewportSize({ width: 1400, height: 960 });
+            await page.evaluate(() => {
+                globalThis.__settingsUi.failAccess = false;
+            });
 
             // Keep navigation state for this window; restore values after reload.
             await page.locator('#viewDownloadBtn').click();

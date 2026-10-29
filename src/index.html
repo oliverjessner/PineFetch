@@ -619,7 +619,9 @@
                                                 </button>
                                             </div>
                                             <p class="oj-helper">
-                                                An access check does not verify that you are signed in to YouTube.
+                                                YouTube sign-in: Not verified. This check only retrieves public video
+                                                metadata; it does not verify access to private, age-restricted or
+                                                members-only videos.
                                             </p>
                                             <p
                                                 id="browserAuthStatus"
@@ -633,10 +635,13 @@
                                                 <div class="oj-stack">
                                                     <p id="browserAuthHelp" class="oj-helper">
                                                         Sign in to YouTube in this browser first. Connect Browser checks
-                                                        access without downloading a video. Cookies are read from the
-                                                        most recently used profile for each request; only your browser
-                                                        selection is saved. Authentication does not guarantee avoiding
-                                                        rate limits.
+                                                        a public video without downloading media. A successful check
+                                                        does not verify your sign-in or access to protected content.
+                                                        Cookies are read from the most recently used profile for each
+                                                        request; only your browser selection is saved. This check keeps
+                                                        profile paths, cookie values and raw diagnostic output out of
+                                                        the interface and PineFetch log. Browser cookies do not
+                                                        guarantee avoiding rate limits.
                                                     </p>
                                                     <p id="browserAuthPermissionHelp" class="oj-helper"></p>
                                                 </div>

@@ -1,15 +1,5 @@
 # PineFetch – Todo
 
-Stand: v2.7.0. Offene Aufgaben in grober Prioritätsreihenfolge; die bisherigen Kennungen bleiben erhalten.
-
-## Zuerst
-
-- [ ] **D2 — Creator über stabile Identitäten zuordnen:** Gleich benannte Creator können derzeit vermischt werden, während eine Umbenennung dieselbe Quelle aufteilen kann. Stabile Plattformidentitäten halten Videos und gespeicherte Insights beim richtigen Creator.
-
-- [ ] **E7 — Fehler direkt bei der betroffenen Aktion erklären:** Manche Fehler sind nur im Settings-Log sichtbar und lassen Nutzer ohne verständlichen nächsten Schritt zurück. Hinweise mit Wiederholen, Einstellungen öffnen oder Zielordner wählen erleichtern die Behebung ohne technische Logsuche.
-
-## Danach
-
 - [ ] **E8 — Keywords mit Fundstellen verbinden und Untertitel einbeziehen:** Gezählt wird bereits vorhandener Text, aber Nutzer können nicht direkt zur passenden Stelle springen und Creator-Untertitel fehlen als Quelle. Verlinkte Fundstellen und klar getrennte Untertitelsprachen machen die Ergebnisse überprüfbar und vollständiger.
 
 - [ ] **E10 — TXT-Import mit Fortschritt, Zeilenfehlern und Abbruch ergänzen:** Bei großen Linklisten fehlen konkrete Fehler pro Zeile und die Möglichkeit, die weitere Übernahme zu stoppen. Fortschritt und gezieltes Wiederholen fehlerhafter Zeilen sparen Arbeit und verhindern unnötige Doppelimporte.

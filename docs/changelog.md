@@ -1,4 +1,4 @@
-# 2.7.0
+# 3.0.0
 
 - Replaced the browser “Connected” label with “Public access checked” and explicitly kept YouTube sign-in and access to protected videos unverified.
 - Added private-data-safe browser diagnostics for profile and permission issues, locked databases, cookie decryption, empty cookie stores, network failures, sign-in challenges and rate limits, with actionable retry guidance.

@@ -4,8 +4,6 @@
 
 - [ ] **E10 — TXT-Import mit Fortschritt, Zeilenfehlern und Abbruch ergänzen:** Bei großen Linklisten fehlen konkrete Fehler pro Zeile und die Möglichkeit, die weitere Übernahme zu stoppen. Fortschritt und gezieltes Wiederholen fehlerhafter Zeilen sparen Arbeit und verhindern unnötige Doppelimporte.
 
-- [ ] **E11 — Wiedergabe-Vorschauen automatisch begrenzen:** Alte Vorschaukopien werden bisher nicht über ein Größen- oder Altersbudget bereinigt und können mit dem Archiv wachsen. Eine sichere Bereinigung unbenutzter Vorschauen hält Speicher frei und bewahrt Originaldateien sowie laufende Wiedergaben.
-
 - [ ] **E12 — Unterstützte Profilvideos einheitlich behandeln:** Unterschiedliche Plattformregeln können gelieferte Videolinks verwerfen und ein Profil dadurch fälschlich leer erscheinen lassen. Passende Prüfungen und klare Hinweise unterscheiden echte leere Profile von nicht unterstützten Abrufen.
 
 - [ ] **E14 — Gesammelte Prozessausgaben begrenzen:** Für vollständig eingelesene Prozessausgaben fehlt noch ein Gesamtbudget, obwohl Streaming-Abschluss und einzelne Streamingzeilen bereits begrenzt sind. Ein Limit während des Einlesens schützt den Arbeitsspeicher vor ungewöhnlich großen Toolausgaben.

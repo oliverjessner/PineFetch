@@ -25,6 +25,7 @@ export const createTauriClient = tauri => {
         getHistorySubtitle: args => invoke('get_history_subtitle', args),
         getHistoryDetails: args => invoke('get_history_details', args),
         getHistoryMedia: args => invoke('get_history_media', args),
+        releaseHistoryMedia: args => invoke('release_history_media', args),
         fileSource: path => tauri?.core?.convertFileSrc?.(path) || null,
         getHistoryKeywords: args => invoke('get_history_keywords', args),
         getHistorySocialInsights: args => invoke('get_history_social_insights', args),

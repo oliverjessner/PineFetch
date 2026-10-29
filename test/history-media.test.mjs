@@ -39,8 +39,9 @@ const setup = (api = {}, appendLog = () => {}) => {
         api: {
             getHistoryMedia: async ({ compatible } = {}) => {
                 if (compatible) throw new Error('Synthetic conversion failure');
-                return '/saved/video.webm';
+                return { path: '/saved/video.webm', lease_id: null };
             },
+            releaseHistoryMedia: async () => {},
             fileSource: path => path,
             ...api,
         },
@@ -67,7 +68,7 @@ test('loads only the video resolved from the History ID and retains it across ta
     const { media, video } = setup({
         getHistoryMedia: async args => {
             calls.push(args);
-            return '/saved/Grüße #1.mp4';
+            return { path: '/saved/Grüße #1.mp4', lease_id: null };
         },
         fileSource: path => `asset:${path}`,
     });
@@ -89,7 +90,7 @@ test('a missing local video shows a notice and allows retry after reopening the 
     const { media, video, status } = setup({
         getHistoryMedia: async () => {
             if (missing) throw new Error('The saved video is unavailable');
-            return '/saved/video.mp4';
+            return { path: '/saved/video.mp4', lease_id: null };
         },
     });
     t.after(media.pause);
@@ -113,7 +114,9 @@ test('a stalled decoder prepares local MP4 once and preserves the selected time'
     const { media, video, status } = setup({
         getHistoryMedia: args => {
             calls.push(args);
-            return args.compatible ? new Promise(resolve => (finish = resolve)) : Promise.resolve('/saved/video.webm');
+            return args.compatible
+                ? new Promise(resolve => (finish = resolve))
+                : Promise.resolve({ path: '/saved/video.webm', lease_id: null });
         },
     });
     t.after(media.pause);
@@ -126,7 +129,7 @@ test('a stalled decoder prepares local MP4 once and preserves the selected time'
     // Preparation has its own native process deadline, not the decoder's 12s deadline.
     t.mock.timers.tick(60000);
     assert.equal(calls.length, 2);
-    finish('/cache/playback.mp4');
+    finish({ path: '/cache/playback.mp4', lease_id: null });
     await Promise.resolve();
     assert.equal(video.src, '/cache/playback.mp4');
     video.readyState = 1;
@@ -146,12 +149,14 @@ test('leaving during preparation ignores the derivative reply and starts no deco
     let finish;
     const { media, video } = setup({
         getHistoryMedia: ({ compatible }) =>
-            compatible ? new Promise(resolve => (finish = resolve)) : Promise.resolve('/saved/video.webm'),
+            compatible
+                ? new Promise(resolve => (finish = resolve))
+                : Promise.resolve({ path: '/saved/video.webm', lease_id: null }),
     });
     await media.activate();
     video.dispatchEvent(new Event('error'));
     media.setEntry(null);
-    finish('/cache/old-playback.mp4');
+    finish({ path: '/cache/old-playback.mp4', lease_id: null });
     await Promise.resolve();
     t.mock.timers.tick(12000);
     assert.equal(video.src, null);
@@ -245,7 +250,7 @@ test('leaving a pending load cancels timeout and ignores late native replies', a
     root.addEventListener('pinefetch:media-unavailable', () => unavailable++);
     const loading = media.activate();
     media.setEntry(null);
-    resolve('/old/video.webm');
+    resolve({ path: '/old/video.webm', lease_id: null });
     await loading;
     video.dispatchEvent(new Event('error'));
     t.mock.timers.tick(12000);
@@ -267,4 +272,112 @@ test('switching tabs while the decoder is loading cancels its timeout and allows
     await media.activate();
     decoded(video);
     assert.equal(media.hasVideo(), true);
+});
+
+test('a loaded preview stays pinned while paused and releases only after its source is detached', async () => {
+    const released = [];
+    const { media, video } = setup({
+        getHistoryMedia: async () => ({ path: '/cache/preview.mp4', lease_id: 'loaded-preview' }),
+        releaseHistoryMedia: async args => {
+            assert.equal(video.src, null, 'detach the decoder before releasing its file');
+            released.push(args);
+        },
+    });
+    await media.activate();
+    decoded(video);
+    media.pause();
+    await media.activate();
+    assert.deepEqual(released, []);
+    media.setEntry(null);
+    media.setEntry(null);
+    assert.deepEqual(released, [{ leaseId: 'loaded-preview' }]);
+});
+
+test('leaving a pending decoder load releases the preview and late decode events cannot retain it', async () => {
+    const released = [];
+    const { media, video } = setup({
+        getHistoryMedia: async () => ({ path: '/cache/preview.mp4', lease_id: 'loading-preview' }),
+        releaseHistoryMedia: async args => released.push(args.leaseId),
+    });
+    await media.activate();
+    media.pause();
+    decoded(video);
+    media.setEntry(null);
+    assert.deepEqual(released, ['loading-preview']);
+});
+
+test('obsolete replies release their own native reference without releasing the current player', async () => {
+    let finish;
+    const released = [];
+    const { media, video } = setup({
+        getHistoryMedia: ({ id }) =>
+            id === 'video'
+                ? new Promise(resolve => {
+                      finish = resolve;
+                  })
+                : Promise.resolve({ path: '/cache/new.mp4', lease_id: 'current' }),
+        releaseHistoryMedia: async args => released.push(args.leaseId),
+    });
+    const previous = media.activate();
+    media.setEntry({ id: 'new' });
+    await media.activate();
+    decoded(video);
+    finish({ path: '/cache/old.mp4', lease_id: 'obsolete' });
+    await previous;
+    assert.deepEqual(released, ['obsolete']);
+    assert.equal(video.src, '/cache/new.mp4');
+    media.setEntry(null);
+    assert.deepEqual(released, ['obsolete', 'current']);
+});
+
+test('replacement, failed decoding and obsolete conversion replies release each reference exactly once', async () => {
+    const released = [];
+    let finish;
+    const { media, video } = setup({
+        getHistoryMedia: ({ compatible }) =>
+            compatible
+                ? new Promise(resolve => {
+                      finish = resolve;
+                  })
+                : Promise.resolve({ path: '/cache/first.mp4', lease_id: 'first' }),
+        releaseHistoryMedia: async args => released.push(args.leaseId),
+    });
+    await media.activate();
+    video.dispatchEvent(new Event('error'));
+    assert.deepEqual(released, ['first']);
+    media.setEntry(null);
+    finish({ path: '/cache/late.mp4', lease_id: 'late' });
+    await Promise.resolve();
+    assert.deepEqual(released, ['first', 'late']);
+    media.setEntry({ id: 'new' });
+    await media.activate();
+    video.dispatchEvent(new Event('error'));
+    finish({ path: '/cache/second.mp4', lease_id: 'second' });
+    await Promise.resolve();
+    video.dispatchEvent(new Event('error'));
+    video.dispatchEvent(new Event('error'));
+    assert.deepEqual(released, ['first', 'late', 'first', 'second']);
+    media.setEntry(null);
+});
+
+test('an unusable file URL releases the reference and release failures cannot leak backend details', async () => {
+    const logs = [];
+    let released = 0;
+    const { media } = setup(
+        {
+            getHistoryMedia: async () => ({ path: '/cache/preview.mp4', lease_id: 'unusable' }),
+            fileSource: () => '',
+            releaseHistoryMedia: async () => {
+                released++;
+                throw new Error('/private/cache/backend-detail');
+            },
+        },
+        text => logs.push(text)
+    );
+    await media.activate();
+    await Promise.resolve();
+    assert.equal(released, 1);
+    assert(logs.some(text => text.includes('Could not release')));
+    assert(logs.every(text => !text.includes('backend-detail')));
+    media.setEntry(null);
 });

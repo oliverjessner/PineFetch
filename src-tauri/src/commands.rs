@@ -241,7 +241,12 @@ pub(crate) async fn get_history_media(
     app: AppHandle,
     id: String,
     compatible: Option<bool>,
-) -> Result<String, String> {
+) -> Result<crate::playback_cache::PlaybackSource, String> {
+    let generation = app
+        .state::<AppState>()
+        .history_media
+        .generation
+        .load(std::sync::atomic::Ordering::SeqCst);
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let source = crate::history::local_history_media_path(&state.db, &id)?;
@@ -251,42 +256,103 @@ pub(crate) async fn get_history_media(
             .app_cache_dir()
             .map_err(|e| format!("Playback cache unavailable: {e}"))?
             .join("history-media");
-        let path = if let Some(path) = crate::history_media::cached(&directory, &source)? {
-            path
-        } else if compatible.unwrap_or(false) {
-            let configured = state
-                .config
-                .lock()
-                .map_err(|_| "Config lock poisoned")?
-                .yt_dlp_path
-                .clone();
-            let tools =
-                crate::runtime::resolve_ffmpeg_location(&app, configured.as_deref().unwrap_or(""))
-                    .ok_or("FFmpeg is required to prepare this video for local playback.")?;
-            state.history_media.prepare(
-                &directory,
-                &source,
-                &std::path::Path::new(&tools).join(crate::runtime::ffmpeg_tool_name()),
-                &state.processes,
-            )?
-        } else {
-            source.clone()
+        let publish = |path: std::path::PathBuf,
+                       cache: &mut crate::playback_cache::PlaybackCache|
+         -> Result<crate::playback_cache::PlaybackSource, String> {
+            if crate::history::local_history_media_path(&state.db, &id)? != source
+                || crate::ocr::fingerprint(&source)? != identity
+            {
+                return Err(
+                    "The saved video changed while preparing playback. Reopen the tab.".into(),
+                );
+            }
+            let path =
+                fs::canonicalize(path).map_err(|e| format!("Playback file unavailable: {e}"))?;
+            let value = path
+                .to_str()
+                .ok_or("The saved video path is not valid Unicode")?
+                .to_owned();
+            if generation
+                != state
+                    .history_media
+                    .generation
+                    .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err("The playback page was closed. Reopen the History entry.".into());
+            }
+            app.asset_protocol_scope()
+                .allow_file(&path)
+                .map_err(|_| "The saved video could not be opened")?;
+            let lease_id = if path != source {
+                Some(cache.acquire(&path, generation)?)
+            } else {
+                None
+            };
+            Ok(crate::playback_cache::PlaybackSource {
+                path: value,
+                lease_id,
+            })
         };
-        if crate::history::local_history_media_path(&state.db, &id)? != source
-            || crate::ocr::fingerprint(&source)? != identity
         {
-            return Err("The saved video changed while preparing playback. Reopen the tab.".into());
+            let mut cache = state
+                .history_media
+                .cache
+                .lock()
+                .map_err(|_| "Playback lock poisoned")?;
+            if let Some(path) = crate::history_media::cached(&directory, &source)? {
+                return publish(path, &mut cache);
+            }
+            if !compatible.unwrap_or(false) {
+                return publish(source.clone(), &mut cache);
+            }
         }
-        let path = fs::canonicalize(path).map_err(|e| format!("Playback file unavailable: {e}"))?;
-        app.asset_protocol_scope()
-            .allow_file(&path)
-            .map_err(|_| "The saved video could not be opened")?;
-        path.into_os_string()
-            .into_string()
-            .map_err(|_| "The saved video path is not valid Unicode".into())
+        // A long conversion never holds the cache/lease mutex. Other History
+        // players can open their originals, release references or finish loading.
+        let _conversion = state
+            .history_media
+            .conversion
+            .lock()
+            .map_err(|_| "Playback lock poisoned")?;
+        let configured = state
+            .config
+            .lock()
+            .map_err(|_| "Config lock poisoned")?
+            .yt_dlp_path
+            .clone();
+        let tools =
+            crate::runtime::resolve_ffmpeg_location(&app, configured.as_deref().unwrap_or(""))
+                .ok_or("FFmpeg is required to prepare this video for local playback.")?;
+        let prepared = crate::history_media::prepare(
+            &directory,
+            &source,
+            &std::path::Path::new(&tools).join(crate::runtime::ffmpeg_tool_name()),
+            &state.processes,
+            &state.history_media.cache,
+        )?;
+        let mut cache = state
+            .history_media
+            .cache
+            .lock()
+            .map_err(|_| "Playback lock poisoned")?;
+        publish(prepared.path.clone(), &mut cache)
     })
     .await
     .map_err(|e| format!("Local playback failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn release_history_media(app: AppHandle, lease_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .history_media
+            .cache
+            .lock()
+            .map_err(|_| "Playback lock poisoned")?
+            .release(&lease_id);
+        Ok(())
+    })
+    .await
+    .map_err(|_| "Playback preview could not be released")?
 }
 
 #[tauri::command]

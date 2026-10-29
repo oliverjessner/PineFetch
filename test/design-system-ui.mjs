@@ -681,18 +681,21 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             ui.emit('history:ocr', { ...progress, status: 'cancelled' });
             return;
         }
+        if (command === 'release_history_media') return;
         if (command === 'get_history_media') {
             if (args.compatible) {
                 if (!ui.compatibleVideo) throw new Error('Synthetic playback preparation failure');
-                return '/__history-preview.mp4';
+                return { path: '/__history-preview.mp4', lease_id: 'fixture-preview-' + crypto.randomUUID() };
             }
-            return ui.localVideo === 'broken'
-                ? '/__history-failed.mp4'
-                : ui.localVideo === 'unsupported'
-                  ? '/__history-unsupported.mp4'
-                  : ui.localVideo
-                    ? '/__history-preview.mp4'
-                    : null;
+            const path =
+                ui.localVideo === 'broken'
+                    ? '/__history-failed.mp4'
+                    : ui.localVideo === 'unsupported'
+                      ? '/__history-unsupported.mp4'
+                      : ui.localVideo
+                        ? '/__history-preview.mp4'
+                        : null;
+            return { path, lease_id: null };
         }
         if (command === 'get_history_transcript') {
             return {

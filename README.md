@@ -51,6 +51,8 @@ To use your signed-in YouTube account, open **Settings → Browser**, select you
 
 The check distinguishes profile/storage permissions, locked databases, cookie decryption, DNS/TLS/connection problems, timeouts and rate limits, with steps to retry. Missing browser storage can also mean denied system access. On macOS, review **System Settings → Privacy & Security → Full Disk Access** for PineFetch and any Keychain prompt, then reopen the app. Only safe diagnostic categories from this check reach the interface; its profile paths, cookie values and raw tool output stay out of the UI and PineFetch log. Browser cookies do not guarantee avoiding rate limits.
 
+Local playback may create compatible video previews in PineFetch’s cache. Unused previews are limited to **2 GiB** and **30 days since their last use**; cleanup runs at startup and once per minute. Loaded previews stay protected, including paused players, so the limit can be exceeded while they are in use. Evicted previews are recreated when needed. Original downloads are preserved; no cleanup runs in a cache directory used for History originals.
+
 ## CLI
 
 Manage the download queue, list recent downloads and view statistics from your terminal.

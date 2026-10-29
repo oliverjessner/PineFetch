@@ -13,7 +13,9 @@ use std::time::Duration;
 #[derive(Default)]
 pub(crate) struct HistoryMediaState {
     // Transcript, Subtitles and OCR can request the same derivative simultaneously.
-    conversion: Mutex<()>,
+    pub(crate) cache: Mutex<crate::playback_cache::PlaybackCache>,
+    pub(crate) conversion: Mutex<()>,
+    pub(crate) generation: std::sync::atomic::AtomicU64,
 }
 
 fn cache_path(directory: &Path, source: &Path, identity: &Fingerprint) -> PathBuf {
@@ -63,7 +65,41 @@ fn playback_command(tool: &Path, source: &Path, output: &Path) -> Command {
     command
 }
 
+// This short-lived file pin bridges publication and the caller's player lease.
+// It is acquired only after FFmpeg exits (Windows byte locks block writers).
+pub(crate) struct PreparedPlayback {
+    pub(crate) path: PathBuf,
+    _pin: fs::File,
+}
+
+impl Drop for PreparedPlayback {
+    fn drop(&mut self) {
+        let _ = self._pin.unlock();
+    }
+}
+
+fn pin(path: PathBuf) -> Result<PreparedPlayback, String> {
+    let file = fs::File::open(&path).map_err(|_| "The playback preview is unavailable.")?;
+    file.try_lock_shared()
+        .map_err(|_| "The playback preview is busy.")?;
+    Ok(PreparedPlayback { path, _pin: file })
+}
+
+struct PreparingPreview<'a> {
+    temporary: OwnedTemporaryFile,
+    cache: &'a Mutex<crate::playback_cache::PlaybackCache>,
+}
+
+impl Drop for PreparingPreview<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.end_temporary(&self.temporary.path);
+        }
+    }
+}
+
 impl HistoryMediaState {
+    #[cfg(test)]
     pub(crate) fn prepare(
         &self,
         directory: &Path,
@@ -75,42 +111,66 @@ impl HistoryMediaState {
             .conversion
             .lock()
             .map_err(|_| "Playback lock poisoned")?;
-        if processes.shutting_down.load(Ordering::SeqCst) {
-            return Err("Application is shutting down.".into());
-        }
-        crate::ocr_source::validate(source)?;
-        let before = fingerprint(source)?;
-        let destination = cache_path(directory, source, &before);
+        prepare(directory, source, ffmpeg, processes, &self.cache)
+            .map(|prepared| prepared.path.clone())
+    }
+}
+
+// Caller serializes conversions. Active temporary files and the publication pin
+// allow cleanup to continue safely while FFmpeg is working.
+pub(crate) fn prepare(
+    directory: &Path,
+    source: &Path,
+    ffmpeg: &Path,
+    processes: &ProcessState,
+    cache: &Mutex<crate::playback_cache::PlaybackCache>,
+) -> Result<PreparedPlayback, String> {
+    if processes.shutting_down.load(Ordering::SeqCst) {
+        return Err("Application is shutting down.".into());
+    }
+    crate::ocr_source::validate(source)?;
+    let before = fingerprint(source)?;
+    let destination = cache_path(directory, source, &before);
+    let preparing = {
+        let mut guard = cache.lock().map_err(|_| "Playback lock poisoned")?;
         if is_mp4(&destination) {
-            return Ok(destination);
+            return pin(destination);
         }
         fs::create_dir_all(directory).map_err(|e| format!("Playback cache unavailable: {e}"))?;
         let temporary = OwnedTemporaryFile::create_at(
             directory.join(format!("{}.tmp.mp4", uuid::Uuid::new_v4())),
         )?;
-        let output = process::run_command_output(
-            playback_command(ffmpeg, source, &temporary.path),
-            None,
-            Some(processes),
-            Some(Duration::from_secs(30 * 60)),
-        )
-        .map_err(|e| format!("Local playback preparation failed: {e}"))?;
-        if !output.status.success() || !is_mp4(&temporary.path) {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let reason = stderr.lines().rev().find(|line| !line.trim().is_empty());
-            return Err(format!(
-                "Local playback preparation failed: {}",
-                reason.unwrap_or("FFmpeg did not produce a playable MP4.")
-            ));
-        }
-        if fingerprint(source)? != before {
-            return Err("The saved video changed while preparing playback. Reopen the tab.".into());
-        }
-        temporary.sync()?;
-        fs::rename(&temporary.path, &destination)
-            .map_err(|e| format!("Could not save playback cache: {e}"))?;
-        Ok(destination)
+        guard.begin_temporary(temporary.path.clone());
+        PreparingPreview { temporary, cache }
+    };
+    let temporary = &preparing.temporary;
+    let output = process::run_command_output(
+        playback_command(ffmpeg, source, &temporary.path),
+        None,
+        Some(processes),
+        Some(Duration::from_secs(30 * 60)),
+    )
+    .map_err(|e| format!("Local playback preparation failed: {e}"))?;
+    if !output.status.success() || !is_mp4(&temporary.path) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = stderr.lines().rev().find(|line| !line.trim().is_empty());
+        return Err(format!(
+            "Local playback preparation failed: {}",
+            reason.unwrap_or("FFmpeg did not produce a playable MP4.")
+        ));
     }
+    if fingerprint(source)? != before {
+        return Err("The saved video changed while preparing playback. Reopen the tab.".into());
+    }
+    temporary.sync()?;
+    // Cache cleanup and publication cannot interleave. The file pin stays live
+    // after rename and until the caller has acquired its longer-lived lease.
+    let _guard = cache.lock().map_err(|_| "Playback lock poisoned")?;
+    let mut prepared = pin(temporary.path.clone())?;
+    fs::rename(&temporary.path, &destination)
+        .map_err(|e| format!("Could not save playback cache: {e}"))?;
+    prepared.path = destination;
+    Ok(prepared)
 }
 
 #[cfg(all(test, unix))]
@@ -244,6 +304,66 @@ printf '\000\000\000\040ftypisom000000000000000000000000' > "$output"
             .prepare(&directory, &source, &tool, &processes)
             .unwrap();
         assert_ne!(changed, prepared);
+    }
+
+    #[test]
+    fn integration_conversion_keeps_player_leases_available_and_protects_its_temporary_file() {
+        let root = crate::test_support::TempRoot::new("playback-concurrent");
+        let source = root.path("source.webm");
+        fs::write(&source, b"original video").unwrap();
+        let directory = root.path("cache");
+        let tool = fixture_tool(
+            &root,
+            &format!(
+                r#"{SUCCESS}
+printf ready > "$source.ready"
+count=0
+while [ ! -f "$source.continue" ]; do
+    count=$((count + 1))
+    [ "$count" -lt 500 ] || exit 1
+    sleep 0.01
+done
+"#
+            ),
+        );
+        let state = std::sync::Arc::new(HistoryMediaState::default());
+        let processes = std::sync::Arc::new(ProcessState::default());
+        let worker_state = state.clone();
+        let worker_processes = processes.clone();
+        let worker_source = source.clone();
+        let worker_directory = directory.clone();
+        let worker = std::thread::spawn(move || {
+            worker_state.prepare(&worker_directory, &worker_source, &tool, &worker_processes)
+        });
+        let ready = source.with_extension("webm.ready");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !ready.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let started = ready.exists();
+        let leases_available = state.cache.try_lock().is_ok();
+        let conversion_protected = state.conversion.try_lock().is_err();
+        state
+            .cache
+            .lock()
+            .unwrap()
+            .prune(&directory, 0, Duration::ZERO, std::time::SystemTime::now())
+            .unwrap();
+        let temporary_protected = fs::read_dir(&directory).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with(".tmp.mp4")
+        });
+        fs::write(source.with_extension("webm.continue"), b"continue").unwrap();
+        let prepared = worker.join().unwrap().unwrap();
+        assert!(started && leases_available && conversion_protected && temporary_protected);
+        assert!(is_mp4(&prepared));
+        assert_eq!(fs::read(&source).unwrap(), b"original video");
+        assert!(processes.utility_children.lock().unwrap().is_empty());
     }
 
     #[cfg(unix)]

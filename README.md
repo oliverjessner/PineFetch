@@ -107,9 +107,9 @@ Load available views, likes, comments and account metrics when you need them, th
 
 ## Send links from your browser
 
-Connect [PineFetch Link Dump](https://github.com/oliverjessner/PineFetch-Link-Dump) to send supported video links from your browser to the download queue. Enable the connection in **Browser Import** and generate a connection secret to pair the extension.
+Connect [PineFetch Link Dump](https://github.com/oliverjessner/PineFetch-Link-Dump) to send supported video links from your browser to the download queue. Enable the connection in **Settings → Browser Import** and generate a connection secret to pair the extension.
 
-![PineFetch Browser Import with local server controls and extension connections](src/images/mockups/browser_import.webp)
+![PineFetch Settings Browser Import with local server controls and extension connections](src/images/mockups/browser_import.webp)
 
 ## Who it is for
 

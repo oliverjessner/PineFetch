@@ -128,11 +128,17 @@ try {
             globalThis.document.activeElement?.blur();
         });
         await page.mouse.move(0, 0);
+        await page.evaluate(
+            () =>
+                new Promise(resolve =>
+                    globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))
+                )
+        );
         const png = await page.screenshot({ animations: 'disabled', caret: 'hide' });
         assert.deepEqual(errors, [], 'The screenshot page reported errors.');
-        assert.equal(
-            await page.locator('.pinefetch-log-line.oj-status-error').count(),
-            0,
+        assert.deepEqual(
+            await page.locator('.pinefetch-log-line.oj-status-error').allTextContents(),
+            [],
             'A screenshot fixture command failed.'
         );
         await sharp(png).webp({ quality: 90, effort: 6 }).toFile(join(outputDirectory, filename));
@@ -222,7 +228,8 @@ try {
     await page.locator('#historyAccountHistoryBtn').click();
     await page.locator('#historyView').waitFor();
 
-    await page.locator('#viewLinkDumpBtn').click();
+    await page.locator('#viewSettingsBtn').click();
+    await page.locator('#settingsImportTab').click();
     await page.waitForFunction(
         () => globalThis.document.querySelector('#linkDumpServerStatusBadge').textContent === 'Running'
     );

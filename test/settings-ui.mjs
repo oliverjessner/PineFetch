@@ -48,6 +48,20 @@ const installSettingsFixture = () => {
         download_video_with_transcript: true,
         youtube_cookie_browser: 'firefox',
     };
+    let importState = JSON.parse(sessionStorage.getItem('import-fixture') || 'null') || {
+        settings: { server_enabled: true, host: '127.0.0.1', port: 2255 },
+        server_status: { status: 'running', url: 'http://127.0.0.1:2255' },
+        secrets: [
+            {
+                id: 'saved-extension',
+                name: 'Saved extension',
+                status: 'active',
+                created_at: '2026-09-20 10:00:00',
+                last_used_at: null,
+            },
+        ],
+    };
+    const saveImport = () => sessionStorage.setItem('import-fixture', JSON.stringify(importState));
     const ui = {
         calls: [],
         holdSave: false,
@@ -61,10 +75,58 @@ const installSettingsFixture = () => {
             for (const handler of listeners.get(name) || []) handler({ payload });
         },
         copied: '',
+        failOverview: false,
+        holdOverview: false,
+        releaseOverview: null,
+        importState: () => structuredClone(importState),
     };
     globalThis.__settingsUi = ui;
     globalThis.__TAURI__.core.invoke = async (command, args = {}) => {
         ui.calls.push({ command, args: structuredClone(args) });
+        if (command === 'get_link_dump_overview') {
+            if (ui.failOverview) throw new Error('Fixture import unavailable');
+            if (ui.holdOverview) {
+                ui.holdOverview = false;
+                await new Promise(resolve => {
+                    ui.releaseOverview = resolve;
+                });
+                ui.releaseOverview = null;
+            }
+            return structuredClone(importState);
+        }
+        if (command === 'update_link_dump_settings') {
+            importState.settings = { ...importState.settings, ...args.patch };
+            importState.server_status = {
+                status: args.patch.server_enabled ? 'running' : 'stopped',
+                url: 'http://127.0.0.1:' + args.patch.port,
+            };
+            saveImport();
+            return structuredClone(importState);
+        }
+        if (command === 'restart_link_dump_server') return structuredClone(importState.server_status);
+        if (command === 'create_link_dump_secret') {
+            importState.secrets.push({
+                id: 'new-extension',
+                name: args.name,
+                status: 'active',
+                created_at: '2026-10-29 10:00:00',
+                last_used_at: null,
+            });
+            saveImport();
+            return { secret: 'fixture-only-secret' };
+        }
+        if (command === 'revoke_link_dump_secret') {
+            importState.secrets = importState.secrets.map(row =>
+                row.id === args.id ? { ...row, status: 'revoked' } : row
+            );
+            saveImport();
+            return structuredClone(importState.secrets);
+        }
+        if (command === 'delete_link_dump_secret') {
+            importState.secrets = importState.secrets.filter(row => row.id !== args.id);
+            saveImport();
+            return structuredClone(importState.secrets);
+        }
         if (command === 'get_config') return structuredClone(saved);
         if (command === 'patch_config') {
             const fail = ui.failSave;
@@ -151,6 +213,7 @@ try {
             await open();
             await page.clock.install();
             assert.equal(await page.locator('#settingsSaveStatus').textContent(), '');
+            assert.equal(await page.locator('#viewLinkDumpBtn').count(), 0);
             assert.equal(await section('Downloads').getAttribute('aria-selected'), 'true');
             for (const [id, checked] of [
                 ['idImportEnabled', true],
@@ -162,6 +225,18 @@ try {
             assert.equal(await page.locator('#fasterWhisperModelValue').textContent(), 'High (medium)');
             const sidebarWidth = (await page.locator('.pinefetch-settings-sidebar').boundingBox()).width;
             assert(sidebarWidth >= 200 && sidebarWidth <= 230);
+            const leftBounds = await page.locator('.pinefetch-panel-left').boundingBox();
+            const settingsBounds = await page.locator('#settingsView').boundingBox();
+            assert(settingsBounds.x - leftBounds.x < 32, 'Settings should start at the panel left padding');
+            const track = await page.locator('label[for="idImportEnabled"] .oj-switch-track').boundingBox();
+            const copy = await page.locator('#idImportEnabledLabel').boundingBox();
+            assert(track.x < copy.x, 'Switches should precede their labels on the left');
+            const modelBounds = await page.locator('#fasterWhisperModelTrigger').boundingBox();
+            const modelLabel = await page.locator('#fasterWhisperModelLabel').boundingBox();
+            assert(
+                Math.abs(modelBounds.x - modelLabel.x) < 2,
+                'Setting fields should align with the left edge of their labels'
+            );
             await snapshot('settings-downloads');
 
             // Existing OJ tabs own roving focus, arrows and active panel semantics.
@@ -366,9 +441,86 @@ try {
             assert.equal((await persisted()).youtube_cookie_browser, null);
             assert(await page.locator('#disconnectBrowserAuthBtn').isDisabled());
 
+            // Import is part of Settings. Its independent settings/secrets flow
+            // remains lazy, cached, retryable and reachable from the Dock route.
+            const overviewCalls = () =>
+                page.evaluate(
+                    () => globalThis.__settingsUi.calls.filter(call => call.command === 'get_link_dump_overview').length
+                );
+            assert.equal(await overviewCalls(), 0);
+            await page.evaluate(() => {
+                globalThis.__settingsUi.failOverview = true;
+            });
+            await section('Import').click();
+            await page.waitForFunction(() =>
+                globalThis.document.getElementById('linkDumpServerStatusText').textContent.includes('unavailable')
+            );
+            await section('Downloads').click();
+            await page.evaluate(() => {
+                globalThis.__settingsUi.failOverview = false;
+                globalThis.__settingsUi.holdOverview = true;
+            });
+            await section('Import').click();
+            await page.waitForFunction(() => typeof globalThis.__settingsUi.releaseOverview === 'function');
+            await section('Downloads').click();
+            await section('Import').click();
+            assert.equal(await overviewCalls(), 2);
+            await page.evaluate(() => globalThis.__settingsUi.releaseOverview());
+            await page.waitForFunction(
+                () => globalThis.document.getElementById('linkDumpServerStatusBadge').textContent === 'Running'
+            );
+            assert(await page.locator('#linkDumpConnectionsPanel').isVisible());
+            await snapshot('settings-import');
+            const port = page.locator('#linkDumpPort');
+            await port.fill('0');
+            await page.locator('#saveLinkDumpServerBtn').click();
+            await page.waitForFunction(() =>
+                globalThis.document
+                    .getElementById('linkDumpServerStatusText')
+                    .textContent.includes('between 1 and 65535')
+            );
+            await port.fill('2256');
+            await section('Browser').click();
+            await section('Import').click();
+            assert.equal(await port.inputValue(), '2256');
+            assert.equal(await overviewCalls(), 2);
+            await page.locator('#saveLinkDumpServerBtn').click();
+            await page.waitForFunction(() => globalThis.__settingsUi.importState().settings.port === 2256);
+            await page.locator('#restartLinkDumpServerBtn').click();
+            await page.locator('#linkDumpSecretName').fill('New extension');
+            await page.locator('#generateLinkDumpSecretBtn').click();
+            await page.locator('#generatedLinkDumpSecretPanel').waitFor();
+            await section('Files').click();
+            await section('Import').click();
+            assert.equal(await page.locator('#generatedLinkDumpSecret').inputValue(), 'fixture-only-secret');
+            await page.locator('#copyGeneratedLinkDumpSecretBtn').click();
+            await page.waitForFunction(() => globalThis.__settingsUi.copied === 'fixture-only-secret');
+            assert(await page.locator('#generatedLinkDumpSecretPanel').isHidden());
+            const connection = page.locator('.pinefetch-link-dump-secret-item').filter({ hasText: 'New extension' });
+            await connection.getByRole('button', { name: 'Revoke', exact: true }).click();
+            await page.locator('dialog[open]').getByRole('button', { name: 'Revoke', exact: true }).click();
+            await page.waitForFunction(
+                () =>
+                    globalThis.__settingsUi.importState().secrets.find(row => row.id === 'new-extension').status ===
+                    'revoked'
+            );
+            await connection.getByRole('button', { name: 'Delete', exact: true }).click();
+            await page.locator('dialog[open]').getByRole('button', { name: 'Delete', exact: true }).click();
+            await connection.waitFor({ state: 'hidden' });
+            await page.reload();
+            await page.waitForFunction(() => globalThis.__pinefetchScreenshot?.ready);
+            await page.evaluate(() =>
+                globalThis.__settingsUi.emit('navigation:requested', { revision: 1, view: 'linkDump' })
+            );
+            await page.locator('#settingsImportPanel').waitFor();
+            await page.waitForFunction(() => globalThis.document.getElementById('linkDumpPort').value === '2256');
+            assert.equal(await page.locator('#viewSettingsBtn').getAttribute('aria-current'), 'page');
+            assert.equal(await page.locator('.pinefetch-link-dump-secret-item').count(), 1);
+            assert.equal(await page.locator('#browserAuthState').textContent(), 'Not connected');
+
             for (const width of [1000, 760, 600, 390]) {
                 await page.setViewportSize({ width, height: 900 });
-                for (const name of ['Downloads', 'Files', 'Browser', 'Diagnostics']) {
+                for (const name of ['Downloads', 'Files', 'Browser', 'Import', 'Diagnostics']) {
                     await section(name).click();
                     await onePanel();
                     await noOverflow();

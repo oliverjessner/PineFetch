@@ -324,10 +324,17 @@ or introduce event/resource callbacks if a second execution host needs them.
 Settings use the existing OJ tab implementation for the vertical category sidebar,
 including roving keyboard focus and one active panel. At compact widths, the same
 controls become a two-column navigation grid with horizontal key handling; the
-selected category survives view switches in the current window. Downloads contain
+selected category survives view switches in the current window. The workspace
+starts at the left panel padding; switches precede their labels and fields/actions
+align to the left instead of the end of their rows. Downloads contain
 ID/Magic import, timestamp cuts, transcription quality and queue notifications.
 Files & Metadata contain caption TXT, creator subtitle and thumbnail exports.
-Browser owns the unchanged cookie-access check/patch flow. Diagnostics retains
+Browser owns the unchanged cookie-access check/patch flow. Browser Import contains
+the existing server, extension and connection controls. Its overview loads lazily
+through the same cached import controller, with failure retry and in-flight read
+deduplication. Category switches retain draft fields and one-time generated
+secrets. The former top-level `linkDump` navigation request remains a supported
+Dock/startup alias that opens Settings and selects Browser Import. Diagnostics retains
 the yt-dlp path, installed/latest versions and the log. The download composer's
 folder, preset and keep-video controls keep their existing locations and bindings.
 

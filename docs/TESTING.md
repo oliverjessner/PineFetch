@@ -282,7 +282,11 @@ images demonstrate the production interface, not a live database or network run.
 WebKit with isolated native responses. It covers category keyboard/focus state,
 all existing settings, dropdown changes, queued saves, rollback and delayed-save
 feedback, saved-vs-checked browser states, connection/disconnection, log copy/clear,
-reload and 1400/1000/760/600/390-pixel layouts. Its session storage is fixture data;
+reload and 1400/1000/760/600/390-pixel layouts. Browser Import coverage includes
+lazy cached overview loading, retry and in-flight deduplication, unsaved port and
+secret retention across tabs, server save/restart, secret copy/revoke/delete and
+restoration through the native Dock navigation request. Geometry checks enforce
+left alignment for the workspace, switches and fields. Its session storage is fixture data;
 reload proves frontend restoration, not a live native application restart or real
 browser permissions. The unchanged native config/cookie tests cover their storage
 and process contracts separately. Export review PNGs with

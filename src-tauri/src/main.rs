@@ -51,6 +51,7 @@ mod ocr_tests;
 #[cfg(test)]
 mod persistence_failure_tests;
 mod platform;
+mod playback_cache;
 mod presets;
 mod process;
 #[cfg(test)]
@@ -131,11 +132,37 @@ fn main() {
                 eprintln!("Could not install Dock menu: {err}");
             }
             let state = app.state::<AppState>();
+            if crate::playback_cache::start_maintenance(app.handle().clone()).is_err() {
+                eprintln!("Playback cache maintenance could not be started.");
+            }
             let _ = start_link_dump_server_from_settings(app.handle(), state.inner());
             if queue::is_queue_auto_start_enabled(&state.queue)? {
                 worker::ensure_worker(app.handle(), state.inner())?;
             }
             Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            if webview.label() != "main"
+                || !matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            {
+                return;
+            }
+            let Some(state) = webview.try_state::<AppState>() else {
+                return;
+            };
+            let generation = state
+                .history_media
+                .generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            let app = webview.app_handle().clone();
+            // Unload IPC is not guaranteed. Revoke references from the old page
+            // natively, without blocking the UI behind a running conversion.
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Ok(mut cache) = app.state::<AppState>().history_media.cache.lock() {
+                    cache.release_before(generation);
+                }
+            });
         })
         .invoke_handler(tauri::generate_handler![
             cli::initialize_cli,
@@ -172,6 +199,7 @@ fn main() {
             commands::load_history_account_videos,
             commands::get_history_details,
             commands::get_history_media,
+            commands::release_history_media,
             commands::get_history_keywords,
             commands::get_history_social_insights,
             commands::load_history_social_insights,

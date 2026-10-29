@@ -219,6 +219,8 @@ export const installScreenshotBridge = ({ videos, version, ocr = null, social = 
                         )
                             throw new Error('Missing screenshot OCR frame.');
                         return ocr.frame;
+                    case 'release_history_media':
+                        return;
                     case 'get_history_media':
                         // Screenshot profiles use fixture images, not playable local files.
                         return null;

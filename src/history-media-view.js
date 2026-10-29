@@ -12,6 +12,16 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {}, appendLog
     let compatibilityAttempted = false;
     let unavailableNotified = false;
     let loadTimer;
+    let leaseId = null;
+    const releaseLease = id => {
+        if (!id) return;
+        void api.releaseHistoryMedia({ leaseId: id }).catch(() => {
+            appendLog(
+                '[local playback] Could not release the playback preview. Reopen PineFetch to retry cleanup.',
+                true
+            );
+        });
+    };
     const clearLoadTimer = () => clearTimeout(loadTimer);
     const renderFallback = () => {
         // Keep the selected OCR frame visible until local video decoding succeeds.
@@ -31,6 +41,9 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {}, appendLog
         video.pause();
         video.removeAttribute('src');
         video.load();
+        const previous = leaseId;
+        leaseId = null;
+        releaseLease(previous);
     };
     const fallbackPlayer = message => {
         localState = 'unavailable';
@@ -39,9 +52,17 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {}, appendLog
         renderFallback();
         notifyUnavailable();
     };
-    const loadVideo = (path, request) => {
-        const url = path && api.fileSource(path);
-        if (!url) throw new Error('The local playback file could not be opened.');
+    const loadVideo = (source, request) => {
+        let url;
+        try {
+            url = source?.path && api.fileSource(source.path);
+            if (!url) throw new Error('The local playback file could not be opened.');
+        } catch (error) {
+            releaseLease(source?.lease_id);
+            throw error;
+        }
+        stopVideo();
+        leaseId = source.lease_id || null;
         localState = 'loading';
         video.hidden = false;
         video.preload = 'auto';
@@ -67,10 +88,13 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {}, appendLog
         renderFallback();
         notifyUnavailable();
         try {
-            const path = await api.getHistoryMedia({ id: entry.id, compatible: true });
-            if (request !== revision) return;
+            const source = await api.getHistoryMedia({ id: entry.id, compatible: true });
+            if (request !== revision) {
+                releaseLease(source?.lease_id);
+                return;
+            }
             status.textContent = 'Loading local playback video…';
-            loadVideo(path, request);
+            loadVideo(source, request);
         } catch (error) {
             appendLog(`[local playback] ${error}`, true);
             if (request === revision)
@@ -118,11 +142,8 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {}, appendLog
             requested = false;
             pending = 0;
             image = '';
-            video.pause();
             video.removeAttribute('poster');
-            video.removeAttribute('src');
-            video.load();
-            video.hidden = true;
+            stopVideo();
             fallback.removeAttribute('src');
             fallback.hidden = true;
             status.hidden = false;
@@ -137,13 +158,17 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {}, appendLog
             status.hidden = false;
             status.textContent = 'Loading saved video…';
             try {
-                const path = await api.getHistoryMedia({ id: entry.id });
-                if (request !== revision) return;
-                if (!path) {
+                const source = await api.getHistoryMedia({ id: entry.id });
+                if (request !== revision) {
+                    releaseLease(source?.lease_id);
+                    return;
+                }
+                if (!source?.path) {
+                    releaseLease(source?.lease_id);
                     fallbackPlayer('The saved video could not be opened. Check that the local file is available.');
                     return;
                 }
-                loadVideo(path, request);
+                loadVideo(source, request);
             } catch (error) {
                 appendLog(`[local playback] ${error}`, true);
                 if (request === revision)
@@ -164,9 +189,7 @@ export const createHistoryMediaView = ({ root, api, onTime = () => {}, appendLog
             if (localState !== 'ready') {
                 requested = false;
                 localState = 'idle';
-                video.removeAttribute('src');
-                video.load();
-                video.hidden = true;
+                stopVideo();
             }
             video.pause();
         },

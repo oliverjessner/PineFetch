@@ -1,5 +1,9 @@
 # 3.0.0
 
+- Automatically trim unused local playback previews to 2 GiB and remove previews unused for 30 days, with cleanup at startup and once per minute.
+- Protect loaded players with shared file leases, release obsolete replies and closed views, and clear old-page references on reload without blocking playback during conversion.
+- Preserve originals, linked files and foreign cache contents; recover interrupted preview conversions safely and recreate evicted previews when needed.
+
 - Replaced the browser “Connected” label with “Public access checked” and explicitly kept YouTube sign-in and access to protected videos unverified.
 - Added private-data-safe browser diagnostics for profile and permission issues, locked databases, cookie decryption, empty cookie stores, network failures, sign-in challenges and rate limits, with actionable retry guidance.
 - Kept saved browser settings unchanged after failed checks, rejected incomplete success reports, and detected cookie-decryption warnings even when a public request succeeds.

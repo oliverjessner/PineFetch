@@ -18,7 +18,19 @@ export const createBrowserAuthentication = ({
 }) => {
     if (els.browserAuthPermissionHelp) els.browserAuthPermissionHelp.textContent = browserPermissionHelp(platform);
     let connectedBrowser = null;
+    let checkedBrowser = null;
+    let phase = 'idle';
     let busy = false;
+    const browserNames = {
+        brave: 'Brave',
+        chrome: 'Chrome',
+        chromium: 'Chromium',
+        edge: 'Edge',
+        firefox: 'Firefox',
+        opera: 'Opera',
+        safari: 'Safari',
+        vivaldi: 'Vivaldi',
+    };
     let loaded = false;
 
     const status = (message, error = false) => {
@@ -28,12 +40,34 @@ export const createBrowserAuthentication = ({
     const render = () => {
         els.browserAuthBrowser.disabled = busy;
         els.connectBrowserAuthBtn.disabled = busy || !api.available || !loaded;
-        els.disconnectBrowserAuthBtn.disabled = busy || !connectedBrowser;
+        els.disconnectBrowserAuthBtn.disabled = busy || !connectedBrowser || !api.available;
+        const accessChecked = connectedBrowser && checkedBrowser === connectedBrowser;
+        const labels = {
+            checking: 'Checking…',
+            saving: 'Saving…',
+            error: 'Connection failed',
+            unavailable: 'Unavailable',
+        };
+        if (els.browserAuthState) {
+            els.browserAuthState.textContent =
+                labels[phase] || (connectedBrowser ? (accessChecked ? 'Connected' : 'Browser saved') : 'Not connected');
+            els.browserAuthState.classList.toggle('oj-badge-success', phase === 'idle' && Boolean(accessChecked));
+            els.browserAuthState.classList.toggle('oj-badge-danger', phase === 'error' || phase === 'unavailable');
+        }
+        if (els.browserAuthConnection) {
+            els.browserAuthConnection.textContent = connectedBrowser
+                ? `${browserNames[connectedBrowser] || connectedBrowser} is saved for new YouTube requests.`
+                : 'No browser connection is saved.';
+        }
     };
     const showConnection = () => {
         if (connectedBrowser) {
             els.browserAuthBrowser.value = connectedBrowser;
-            status(`Browser authentication enabled for ${connectedBrowser}. Applies to new YouTube requests.`);
+            status(
+                checkedBrowser === connectedBrowser
+                    ? `Browser access checked for ${connectedBrowser}. Applies to new YouTube requests.`
+                    : 'Access has not been checked this session. Connect Browser to check it.'
+            );
         } else {
             status('Browser authentication is off.');
         }
@@ -44,14 +78,18 @@ export const createBrowserAuthentication = ({
             const config = savedConfig || (await api.getConfig());
             connectedBrowser = config.youtube_cookie_browser || null;
             loaded = true;
+            phase = 'idle';
             showConnection();
         } catch {
+            phase = 'unavailable';
             status('Browser authentication could not be loaded. Reopen Settings to retry.', true);
+            render();
         }
     };
     const save = async browser => {
         if (busy || !api.available || !loaded) return;
         busy = true;
+        phase = browser ? 'checking' : 'saving';
         render();
         let checkingAccess = Boolean(browser);
         try {
@@ -60,10 +98,16 @@ export const createBrowserAuthentication = ({
                 await api.checkYoutubeCookieAccess({ browser });
             }
             checkingAccess = false;
+            phase = 'saving';
+            status(browser ? 'Saving browser connection…' : 'Disconnecting browser…');
+            render();
             const config = await api.patchConfig({ changes: { youtube_cookie_browser: browser } });
             connectedBrowser = config.youtube_cookie_browser || null;
+            checkedBrowser = browser && browser === connectedBrowser ? browser : null;
+            phase = 'idle';
             showConnection();
         } catch (error) {
+            phase = 'error';
             status(
                 checkingAccess
                     ? String(error) === 'YT_DLP_UNAVAILABLE'

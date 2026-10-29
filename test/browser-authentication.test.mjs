@@ -13,10 +13,14 @@ const setup = api => {
         },
     });
     const els = Object.fromEntries(
-        ['browserAuthBrowser', 'connectBrowserAuthBtn', 'disconnectBrowserAuthBtn', 'browserAuthStatus'].map(key => [
-            key,
-            element(),
-        ])
+        [
+            'browserAuthBrowser',
+            'connectBrowserAuthBtn',
+            'disconnectBrowserAuthBtn',
+            'browserAuthStatus',
+            'browserAuthState',
+            'browserAuthConnection',
+        ].map(key => [key, element()])
     );
     const view = createBrowserAuthentication({ els, api: { available: true, ...api } });
     view.bindEvents();
@@ -39,6 +43,8 @@ test('restores saved browser, enables fresh cookie reads, and disconnects with a
     });
     await view.load();
     assert.equal(els.browserAuthBrowser.value, 'firefox');
+    assert.equal(els.browserAuthState.textContent, 'Browser saved');
+    assert.match(els.browserAuthConnection.textContent, /Firefox/);
     assert.deepEqual(checks, []);
     assert.equal(els.disconnectBrowserAuthBtn.disabled, false);
     els.browserAuthBrowser.value = 'brave';
@@ -48,12 +54,14 @@ test('restores saved browser, enables fresh cookie reads, and disconnects with a
     assert.deepEqual(calls, [{ youtube_cookie_browser: 'brave' }]);
     assert.deepEqual(checks, [{ browser: 'brave' }]);
     assert.match(els.browserAuthStatus.textContent, /new YouTube requests/);
+    assert.equal(els.browserAuthState.textContent, 'Connected');
     els.disconnectBrowserAuthBtn.click();
     await settle();
     assert.equal(calls[1].youtube_cookie_browser, null);
     assert.equal(checks.length, 1);
     assert.equal(els.disconnectBrowserAuthBtn.disabled, true);
     assert.equal(els.browserAuthStatus.textContent, 'Browser authentication is off.');
+    assert.equal(els.browserAuthState.textContent, 'Not connected');
 });
 
 test('failed save preserves the connection and never displays backend details', async () => {
@@ -140,6 +148,8 @@ test('enable waits for access approval, prevents duplicate checks, and preserves
     rejectCheck(new Error('synthetic private error'));
     await settle();
     assert.equal(saves, 0);
+    assert.equal(els.browserAuthState.textContent, 'Connection failed');
+    assert.match(els.browserAuthConnection.textContent, /Firefox/);
     assert.equal(els.disconnectBrowserAuthBtn.disabled, false);
     assert.equal(els.browserAuthBrowser.disabled, false);
     assert.match(els.browserAuthStatus.textContent, /saved connection has not changed/);
@@ -154,4 +164,29 @@ test('permission guidance matches the operating system', () => {
     assert.doesNotMatch(browserPermissionHelp('Windows'), /Mac login/);
     assert.match(browserPermissionHelp('Linux x86_64'), /keyring or wallet/);
     assert.match(browserPermissionHelp('unknown'), /Your system/);
+});
+
+test('an access check cannot publish Connected before the browser selection is persisted', async () => {
+    let rejectSave;
+    const { els, view } = setup({
+        getConfig: async () => ({ youtube_cookie_browser: 'firefox' }),
+        checkYoutubeCookieAccess: async () => {},
+        patchConfig: () =>
+            new Promise((resolve, reject) => {
+                rejectSave = reject;
+            }),
+    });
+    await view.load();
+    els.browserAuthBrowser.value = 'chrome';
+    els.connectBrowserAuthBtn.click();
+    await settle();
+    assert.equal(els.browserAuthState.textContent, 'Saving…');
+    assert.match(els.browserAuthConnection.textContent, /Firefox/);
+    assert.equal(els.browserAuthBrowser.disabled, true);
+    rejectSave(new Error('private backend detail'));
+    await settle();
+    assert.equal(els.browserAuthState.textContent, 'Connection failed');
+    assert.match(els.browserAuthConnection.textContent, /Firefox/);
+    assert.doesNotMatch(els.browserAuthStatus.textContent, /private/);
+    assert.equal(els.disconnectBrowserAuthBtn.disabled, false);
 });

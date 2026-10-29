@@ -25,7 +25,7 @@ Paste a link, choose a preset and a download folder, then start the queue. Add a
 - Browse creators' saved downloads and discover public profile videos.
 - Load public video and account metrics on demand and keep snapshots for offline reference.
 
-Enable **Save creator subtitles** in **Settings → Download** to keep original subtitle tracks. Open a saved video in **History → Video Details → Subtitles** to select a language, read the original timed text or copy it.
+Enable **Save creator subtitles** in **Settings → Files & Metadata** to keep original subtitle tracks. Open a saved video in **History → Video Details → Subtitles** to select a language, read the original timed text or copy it.
 
 See the [video and caption compatibility list](docs/COMPATIBILITY.md) for accepted links and caption behavior.
 
@@ -45,9 +45,9 @@ brew install yt-dlp
 
 Download the macOS DMG from the [latest release](https://github.com/oliverjessner/PineFetch/releases/latest), open it and drag PineFetch to Applications. Install yt-dlp separately if it is not already available.
 
-On first launch, choose a download folder in the Download view. If yt-dlp is not detected, set its executable path in **Settings**.
+On first launch, choose a download folder in the Download view. If yt-dlp is not detected, set its executable path in **Settings → Diagnostics**.
 
-To use your signed-in YouTube account, open **Settings → Download → Browser Authentication**, select your browser, and click **Connect Browser**. Approve any system permission prompt. PineFetch checks access without downloading a video, then saves only your browser selection. Fresh cookies are read for each YouTube download, playlist, and metadata request. Use **Disconnect** to turn authentication off. Authentication does not guarantee avoiding rate limits.
+To use your signed-in YouTube account, open **Settings → Browser**, select your browser, and click **Connect Browser**. Approve any system permission prompt. PineFetch checks access without downloading a video, then saves only your browser selection. Fresh cookies are read for each YouTube download, playlist, and metadata request. Use **Disconnect** to turn authentication off. The access check does not verify your YouTube sign-in or guarantee avoiding rate limits.
 
 ## CLI
 
@@ -63,7 +63,7 @@ See the [CLI documentation](docs/CLI.md) for all commands and options.
 
 Choose the best available video, video up to 1080p, MP3, Opus or a transcript with optional timestamps. Adjust transcription quality in Settings, keep the video alongside its transcript and optionally export caption TXT files and save thumbnails. Available captions and video descriptions are always stored in History.
 
-![PineFetch Settings with transcription quality, caption saving and thumbnail options](src/images/mockups/settings.webp)
+![PineFetch Settings with category navigation, download imports and transcription quality](src/images/mockups/settings.webp)
 
 ## Queue, history and batch imports
 

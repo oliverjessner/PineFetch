@@ -259,240 +259,469 @@
                         </div>
                     </div>
 
-                    <div id="settingsView" class="pinefetch-panel-view oj-stack" hidden>
-                        <p id="settingsSaveStatus" class="oj-status" role="status" aria-live="polite">
-                            Changes save automatically and apply to new downloads.
-                        </p>
-
-                        <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsDownloadTitle">
-                            <h3 id="settingsDownloadTitle" class="oj-heading-3">Download</h3>
-                            <label class="oj-switch" for="idImportEnabled">
-                                <span class="pinefetch-switch-copy">
-                                    <span class="pinefetch-switch-title">ID import</span>
-                                    <span class="oj-helper"
-                                        >Allow video IDs in the URL field, Magic import and TXT files. Recognize
-                                        11-character YouTube IDs automatically; use youtube:, tiktok: or instagram: for
-                                        explicit platform selection. TikTok and Instagram content must be resolvable by
-                                        the platform.</span
-                                    >
-                                </span>
-                                <input id="idImportEnabled" type="checkbox" role="switch" />
-                                <span class="oj-switch-track" aria-hidden="true"></span>
-                            </label>
-
-                            <label class="oj-switch" for="cutAtTimestampEnabled">
-                                <span class="pinefetch-switch-copy">
-                                    <span class="pinefetch-switch-title">Cut at timestamp</span>
-                                    <span class="oj-helper"
-                                        >Links with a timestamp such as t=61 start the download at that second.</span
-                                    >
-                                </span>
-                                <input id="cutAtTimestampEnabled" type="checkbox" role="switch" checked />
-                                <span class="oj-switch-track" aria-hidden="true"></span>
-                            </label>
-
-                            <label class="oj-switch" for="saveCaptions">
-                                <span class="pinefetch-switch-copy">
-                                    <span class="pinefetch-switch-title">Save caption TXT files</span>
-                                    <span class="oj-helper"
-                                        >Captions and video descriptions are always saved in History when available.
-                                        Also save .caption.txt files beside downloads.</span
-                                    >
-                                </span>
-                                <input id="saveCaptions" type="checkbox" role="switch" />
-                                <span class="oj-switch-track" aria-hidden="true"></span>
-                            </label>
-
-                            <label class="oj-switch" for="saveCreatorSubtitles">
-                                <span class="pinefetch-switch-copy">
-                                    <span class="pinefetch-switch-title">Save creator subtitles</span>
-                                    <span class="oj-helper"
-                                        >Save available creator-provided subtitles in all languages beside downloads.
-                                        Original format and timing are preserved; automatic captions are excluded. If
-                                        unavailable, the download continues without subtitles.</span
-                                    >
-                                </span>
-                                <input id="saveCreatorSubtitles" type="checkbox" role="switch" />
-                                <span class="oj-switch-track" aria-hidden="true"></span>
-                            </label>
-
-                            <label class="oj-switch" for="saveThumbnails">
-                                <span class="pinefetch-switch-copy">
-                                    <span class="pinefetch-switch-title">Save thumbnails</span>
-                                    <span class="oj-helper">Save available thumbnail images beside downloads.</span>
-                                </span>
-                                <input id="saveThumbnails" type="checkbox" role="switch" />
-                                <span class="oj-switch-track" aria-hidden="true"></span>
-                            </label>
-
-                            <section
-                                id="browserAuthentication"
-                                class="oj-panel oj-panel-compact oj-stack"
-                                aria-labelledby="browserAuthenticationTitle"
-                            >
-                                <h4 id="browserAuthenticationTitle" class="oj-heading-3">Browser Authentication</h4>
-                                <p class="oj-helper">
-                                    Use your browser's YouTube login for downloads, playlists, and video details.
-                                </p>
-                                <label class="oj-field" for="browserAuthBrowser">
-                                    <span class="oj-label">Browser</span>
-                                    <select
-                                        id="browserAuthBrowser"
-                                        class="oj-select"
-                                        aria-describedby="browserAuthHelp browserAuthPermissionHelp"
-                                    >
-                                        <option value="brave">Brave</option>
-                                        <option value="chrome">Chrome</option>
-                                        <option value="chromium">Chromium</option>
-                                        <option value="edge">Edge</option>
-                                        <option value="firefox">Firefox</option>
-                                        <option value="opera">Opera</option>
-                                        <option value="safari">Safari</option>
-                                        <option value="vivaldi">Vivaldi</option>
-                                    </select>
-                                </label>
-                                <div class="oj-cluster">
-                                    <button id="connectBrowserAuthBtn" class="oj-button" type="button" disabled>
-                                        Connect Browser
-                                    </button>
-                                    <button
-                                        id="disconnectBrowserAuthBtn"
-                                        class="oj-button oj-button-ghost"
-                                        type="button"
-                                        disabled
-                                    >
-                                        Disconnect
-                                    </button>
-                                </div>
-                                <p id="browserAuthHelp" class="oj-helper">
-                                    Sign in to YouTube in this browser first. Connect Browser checks access without
-                                    downloading a video. Cookies are read from the most recently used profile for each
-                                    request; only your browser selection is saved. Authentication does not guarantee
-                                    avoiding rate limits.
-                                </p>
-                                <p id="browserAuthPermissionHelp" class="oj-helper"></p>
-                                <p id="browserAuthStatus" class="oj-status" role="status" aria-live="polite"></p>
-                            </section>
-                        </section>
-
-                        <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsTranscriptionTitle">
-                            <h3 id="settingsTranscriptionTitle" class="oj-heading-3">Transcription</h3>
-                            <div class="oj-field">
-                                <span id="fasterWhisperModelLabel" class="oj-label">Transcription quality</span>
+                    <div id="settingsView" class="pinefetch-panel-view" hidden>
+                        <div class="oj-tabs pinefetch-settings-layout" data-oj-tabs>
+                            <div class="pinefetch-settings-sidebar">
                                 <div
-                                    id="fasterWhisperModelDropdown"
-                                    class="oj-dropdown pinefetch-choice-dropdown"
-                                    data-oj-dropdown
+                                    id="settingsCategories"
+                                    class="oj-tab-list pinefetch-settings-nav"
+                                    role="tablist"
+                                    aria-label="Settings categories"
+                                    aria-orientation="vertical"
                                 >
                                     <button
-                                        id="fasterWhisperModelTrigger"
-                                        class="oj-button oj-button-secondary pinefetch-choice-trigger"
+                                        id="settingsDownloadsTab"
+                                        class="oj-tab pinefetch-settings-tab"
                                         type="button"
-                                        data-oj-dropdown-trigger
-                                        aria-labelledby="fasterWhisperModelLabel fasterWhisperModelValue"
-                                        aria-describedby="fasterWhisperModelHelp"
+                                        role="tab"
+                                        aria-selected="true"
+                                        aria-controls="settingsDownloadsPanel"
                                     >
-                                        <span id="fasterWhisperModelValue">Fast (base)</span>
-                                        <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                                        <i class="fa-solid fa-download" aria-hidden="true"></i><span>Downloads</span>
                                     </button>
-                                    <div
-                                        id="fasterWhisperModelMenu"
-                                        class="oj-menu"
-                                        data-oj-dropdown-menu
-                                        role="menu"
-                                        aria-labelledby="fasterWhisperModelLabel"
+                                    <button
+                                        id="settingsFilesTab"
+                                        class="oj-tab pinefetch-settings-tab"
+                                        type="button"
+                                        role="tab"
+                                        aria-selected="false"
+                                        aria-controls="settingsFilesPanel"
+                                    >
+                                        <i class="fa-solid fa-file-lines" aria-hidden="true"></i
+                                        ><span>Files &amp; Metadata</span>
+                                    </button>
+                                    <button
+                                        id="settingsBrowserTab"
+                                        class="oj-tab pinefetch-settings-tab"
+                                        type="button"
+                                        role="tab"
+                                        aria-selected="false"
+                                        aria-controls="settingsBrowserPanel"
+                                    >
+                                        <i class="fa-solid fa-globe" aria-hidden="true"></i><span>Browser</span>
+                                    </button>
+                                    <button
+                                        id="settingsDiagnosticsTab"
+                                        class="oj-tab pinefetch-settings-tab"
+                                        type="button"
+                                        role="tab"
+                                        aria-selected="false"
+                                        aria-controls="settingsDiagnosticsPanel"
+                                    >
+                                        <i class="fa-solid fa-terminal" aria-hidden="true"></i><span>Diagnostics</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="pinefetch-settings-main">
+                                <div id="settingsContent" class="pinefetch-settings-content">
+                                    <section
+                                        id="settingsDownloadsPanel"
+                                        class="oj-tab-panel pinefetch-settings-category"
+                                        role="tabpanel"
+                                        aria-labelledby="settingsDownloadsTab"
+                                    >
+                                        <header class="pinefetch-settings-category-header">
+                                            <h3 id="settingsDownloadTitle" class="oj-heading-2">Downloads</h3>
+                                            <p class="oj-helper">
+                                                Import links and choose how new downloads are processed.
+                                            </p>
+                                        </header>
+                                        <div class="pinefetch-setting-block">
+                                            <label class="oj-switch pinefetch-setting-row" for="idImportEnabled">
+                                                <span class="pinefetch-switch-copy">
+                                                    <span id="idImportEnabledLabel" class="pinefetch-switch-title"
+                                                        >ID import</span
+                                                    >
+                                                    <span id="idImportEnabledHelp" class="oj-helper"
+                                                        >Allow platform-specific video IDs in links, Magic import and
+                                                        TXT files.</span
+                                                    >
+                                                </span>
+                                                <input
+                                                    id="idImportEnabled"
+                                                    type="checkbox"
+                                                    role="switch"
+                                                    aria-labelledby="idImportEnabledLabel"
+                                                    aria-describedby="idImportEnabledHelp"
+                                                />
+                                                <span class="oj-switch-track" aria-hidden="true"></span>
+                                            </label>
+                                            <details class="pinefetch-settings-help">
+                                                <summary>Supported IDs</summary>
+                                                <p class="oj-helper">
+                                                    11-character YouTube IDs are recognized automatically. Use youtube:,
+                                                    tiktok: or instagram: for explicit platform selection. TikTok and
+                                                    Instagram content must be resolvable by the platform.
+                                                </p>
+                                            </details>
+                                        </div>
+                                        <label class="oj-switch pinefetch-setting-row" for="magicImportEnabled">
+                                            <span class="pinefetch-switch-copy">
+                                                <span id="magicImportEnabledLabel" class="pinefetch-switch-title"
+                                                    >Magic import</span
+                                                >
+                                                <span id="magicImportEnabledHelp" class="oj-helper"
+                                                    >Import a clipboard link when the window activates with an empty URL
+                                                    field.</span
+                                                >
+                                            </span>
+                                            <input
+                                                id="magicImportEnabled"
+                                                type="checkbox"
+                                                role="switch"
+                                                aria-labelledby="magicImportEnabledLabel"
+                                                aria-describedby="magicImportEnabledHelp"
+                                                checked
+                                            />
+                                            <span class="oj-switch-track" aria-hidden="true"></span>
+                                        </label>
+                                        <label class="oj-switch pinefetch-setting-row" for="cutAtTimestampEnabled">
+                                            <span class="pinefetch-switch-copy">
+                                                <span id="cutAtTimestampEnabledLabel" class="pinefetch-switch-title"
+                                                    >Cut at timestamp</span
+                                                >
+                                                <span id="cutAtTimestampEnabledHelp" class="oj-helper"
+                                                    >Start at the time in the link, such as t=61 for 61 seconds.</span
+                                                >
+                                            </span>
+                                            <input
+                                                id="cutAtTimestampEnabled"
+                                                type="checkbox"
+                                                role="switch"
+                                                aria-labelledby="cutAtTimestampEnabledLabel"
+                                                aria-describedby="cutAtTimestampEnabledHelp"
+                                                checked
+                                            />
+                                            <span class="oj-switch-track" aria-hidden="true"></span>
+                                        </label>
+                                        <div class="pinefetch-setting-row pinefetch-setting-field">
+                                            <div class="pinefetch-switch-copy">
+                                                <span id="fasterWhisperModelLabel" class="pinefetch-switch-title"
+                                                    >Transcription quality</span
+                                                >
+                                                <span id="fasterWhisperModelHelp" class="oj-helper"
+                                                    >Larger models improve accuracy but need more download time, memory
+                                                    and processing time.</span
+                                                >
+                                            </div>
+                                            <div
+                                                id="fasterWhisperModelDropdown"
+                                                class="oj-dropdown pinefetch-choice-dropdown"
+                                                data-oj-dropdown
+                                            >
+                                                <button
+                                                    id="fasterWhisperModelTrigger"
+                                                    class="oj-button oj-button-secondary pinefetch-choice-trigger"
+                                                    type="button"
+                                                    data-oj-dropdown-trigger
+                                                    aria-labelledby="fasterWhisperModelLabel fasterWhisperModelValue"
+                                                    aria-describedby="fasterWhisperModelHelp"
+                                                >
+                                                    <span id="fasterWhisperModelValue">Fast (base)</span>
+                                                    <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                                                </button>
+                                                <div
+                                                    id="fasterWhisperModelMenu"
+                                                    class="oj-menu"
+                                                    data-oj-dropdown-menu
+                                                    role="menu"
+                                                    aria-labelledby="fasterWhisperModelLabel"
+                                                    hidden
+                                                ></div>
+                                            </div>
+                                        </div>
+                                        <label class="oj-switch pinefetch-setting-row" for="notificationsEnabled">
+                                            <span class="pinefetch-switch-copy">
+                                                <span id="notificationsEnabledLabel" class="pinefetch-switch-title"
+                                                    >Download notifications</span
+                                                >
+                                                <span id="notificationsEnabledHelp" class="oj-helper"
+                                                    >Notify when a queue of more than one video finishes
+                                                    successfully.</span
+                                                >
+                                            </span>
+                                            <input
+                                                id="notificationsEnabled"
+                                                type="checkbox"
+                                                role="switch"
+                                                aria-labelledby="notificationsEnabledLabel"
+                                                aria-describedby="notificationsEnabledHelp"
+                                            />
+                                            <span class="oj-switch-track" aria-hidden="true"></span>
+                                        </label>
+                                    </section>
+                                    <section
+                                        id="settingsFilesPanel"
+                                        class="oj-tab-panel pinefetch-settings-category"
+                                        role="tabpanel"
+                                        aria-labelledby="settingsFilesTab"
                                         hidden
-                                    ></div>
-                                </div>
-                                <span id="fasterWhisperModelHelp" class="oj-helper"
-                                    >Larger models improve accuracy but need more download time, memory, and processing
-                                    time.</span
-                                >
-                            </div>
-                        </section>
-
-                        <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsApplicationTitle">
-                            <h3 id="settingsApplicationTitle" class="oj-heading-3">Application</h3>
-                            <label class="oj-switch" for="magicImportEnabled">
-                                <span class="pinefetch-switch-copy">
-                                    <span class="pinefetch-switch-title">Magic import</span>
-                                    <span class="oj-helper"
-                                        >Activate the window with an empty URL field to import a URL from the
-                                        clipboard.</span
                                     >
-                                </span>
-                                <input id="magicImportEnabled" type="checkbox" role="switch" checked />
-                                <span class="oj-switch-track" aria-hidden="true"></span>
-                            </label>
-
-                            <label class="oj-switch" for="notificationsEnabled">
-                                <span class="pinefetch-switch-copy">
-                                    <span class="pinefetch-switch-title">Download notifications</span>
-                                    <span class="oj-helper"
-                                        >Notify when a queue of more than one video finishes successfully.</span
+                                        <header class="pinefetch-settings-category-header">
+                                            <h3 class="oj-heading-2">Files &amp; Metadata</h3>
+                                            <p class="oj-helper">
+                                                Choose the extra files saved alongside new downloads.
+                                            </p>
+                                        </header>
+                                        <div class="pinefetch-setting-block">
+                                            <label class="oj-switch pinefetch-setting-row" for="saveCaptions">
+                                                <span class="pinefetch-switch-copy">
+                                                    <span id="saveCaptionsLabel" class="pinefetch-switch-title"
+                                                        >Save caption TXT files</span
+                                                    >
+                                                    <span id="saveCaptionsHelp" class="oj-helper"
+                                                        >Also save available captions and descriptions as .caption.txt
+                                                        files.</span
+                                                    >
+                                                </span>
+                                                <input
+                                                    id="saveCaptions"
+                                                    type="checkbox"
+                                                    role="switch"
+                                                    aria-labelledby="saveCaptionsLabel"
+                                                    aria-describedby="saveCaptionsHelp"
+                                                />
+                                                <span class="oj-switch-track" aria-hidden="true"></span>
+                                            </label>
+                                            <details class="pinefetch-settings-help">
+                                                <summary>About saved captions</summary>
+                                                <p class="oj-helper">
+                                                    Captions and video descriptions are always saved in History when
+                                                    available, even when caption TXT files are off.
+                                                </p>
+                                            </details>
+                                        </div>
+                                        <div class="pinefetch-setting-block">
+                                            <label class="oj-switch pinefetch-setting-row" for="saveCreatorSubtitles">
+                                                <span class="pinefetch-switch-copy">
+                                                    <span id="saveCreatorSubtitlesLabel" class="pinefetch-switch-title"
+                                                        >Save creator subtitles</span
+                                                    >
+                                                    <span id="saveCreatorSubtitlesHelp" class="oj-helper"
+                                                        >Save available creator-provided subtitles alongside
+                                                        downloads.</span
+                                                    >
+                                                </span>
+                                                <input
+                                                    id="saveCreatorSubtitles"
+                                                    type="checkbox"
+                                                    role="switch"
+                                                    aria-labelledby="saveCreatorSubtitlesLabel"
+                                                    aria-describedby="saveCreatorSubtitlesHelp"
+                                                />
+                                                <span class="oj-switch-track" aria-hidden="true"></span>
+                                            </label>
+                                            <details class="pinefetch-settings-help">
+                                                <summary>Languages and formats</summary>
+                                                <p class="oj-helper">
+                                                    Save all available languages with their original format and timing.
+                                                    Automatic captions are excluded. If creator subtitles are
+                                                    unavailable, the download continues without them.
+                                                </p>
+                                            </details>
+                                        </div>
+                                        <label class="oj-switch pinefetch-setting-row" for="saveThumbnails">
+                                            <span class="pinefetch-switch-copy">
+                                                <span id="saveThumbnailsLabel" class="pinefetch-switch-title"
+                                                    >Save thumbnails</span
+                                                >
+                                                <span id="saveThumbnailsHelp" class="oj-helper"
+                                                    >Save available thumbnail images beside downloads.</span
+                                                >
+                                            </span>
+                                            <input
+                                                id="saveThumbnails"
+                                                type="checkbox"
+                                                role="switch"
+                                                aria-labelledby="saveThumbnailsLabel"
+                                                aria-describedby="saveThumbnailsHelp"
+                                            />
+                                            <span class="oj-switch-track" aria-hidden="true"></span>
+                                        </label>
+                                    </section>
+                                    <section
+                                        id="settingsBrowserPanel"
+                                        class="oj-tab-panel pinefetch-settings-category"
+                                        role="tabpanel"
+                                        aria-labelledby="settingsBrowserTab"
+                                        hidden
                                     >
-                                </span>
-                                <input id="notificationsEnabled" type="checkbox" role="switch" />
-                                <span class="oj-switch-track" aria-hidden="true"></span>
-                            </label>
-                        </section>
-
-                        <section class="oj-stack pinefetch-settings-group" aria-labelledby="settingsDiagnosticsTitle">
-                            <h3 id="settingsDiagnosticsTitle" class="oj-heading-3">Diagnostics</h3>
-                            <label class="oj-field" for="ytDlpPath">
-                                <span class="oj-label">yt-dlp path</span>
-                                <input
-                                    id="ytDlpPath"
-                                    class="oj-input"
-                                    type="text"
-                                    placeholder="Auto-detect from PATH"
-                                />
-                            </label>
-
-                            <div class="oj-field">
-                                <span class="oj-label">yt-dlp versions</span>
-                                <div class="oj-panel oj-panel-compact pinefetch-version-info">
-                                    <p id="ytDlpInstalledVersion">Installed: -</p>
-                                    <p id="ytDlpLatestVersion">Latest: -</p>
+                                        <header class="pinefetch-settings-category-header">
+                                            <h3 id="browserAuthenticationTitle" class="oj-heading-2">Browser</h3>
+                                            <p class="oj-helper">
+                                                Use your browser’s YouTube cookies for new downloads, playlists and
+                                                video details.
+                                            </p>
+                                        </header>
+                                        <div
+                                            id="browserAuthentication"
+                                            class="oj-stack"
+                                            aria-labelledby="browserAuthenticationTitle"
+                                        >
+                                            <div
+                                                class="pinefetch-browser-connection"
+                                                role="status"
+                                                aria-live="polite"
+                                                aria-atomic="true"
+                                            >
+                                                <span id="browserAuthState" class="oj-badge">Loading…</span>
+                                                <span id="browserAuthConnection" class="oj-helper"
+                                                    >Reading saved browser settings.</span
+                                                >
+                                            </div>
+                                            <div class="pinefetch-setting-row pinefetch-setting-field">
+                                                <div class="pinefetch-switch-copy">
+                                                    <label class="pinefetch-switch-title" for="browserAuthBrowser"
+                                                        >Browser</label
+                                                    >
+                                                    <span id="browserAuthSelectionHelp" class="oj-helper"
+                                                        >Choose the browser you use for YouTube.</span
+                                                    >
+                                                </div>
+                                                <select
+                                                    id="browserAuthBrowser"
+                                                    class="oj-select"
+                                                    aria-describedby="browserAuthSelectionHelp"
+                                                >
+                                                    <option value="brave">Brave</option>
+                                                    <option value="chrome">Chrome</option>
+                                                    <option value="chromium">Chromium</option>
+                                                    <option value="edge">Edge</option>
+                                                    <option value="firefox">Firefox</option>
+                                                    <option value="opera">Opera</option>
+                                                    <option value="safari">Safari</option>
+                                                    <option value="vivaldi">Vivaldi</option>
+                                                </select>
+                                            </div>
+                                            <div class="oj-cluster pinefetch-browser-actions">
+                                                <button
+                                                    id="connectBrowserAuthBtn"
+                                                    class="oj-button oj-button-primary"
+                                                    type="button"
+                                                    disabled
+                                                >
+                                                    Connect Browser
+                                                </button>
+                                                <button
+                                                    id="disconnectBrowserAuthBtn"
+                                                    class="oj-button oj-button-ghost"
+                                                    type="button"
+                                                    disabled
+                                                >
+                                                    Disconnect
+                                                </button>
+                                            </div>
+                                            <p class="oj-helper">
+                                                An access check does not verify that you are signed in to YouTube.
+                                            </p>
+                                            <p
+                                                id="browserAuthStatus"
+                                                class="oj-status"
+                                                role="status"
+                                                aria-live="polite"
+                                                aria-atomic="true"
+                                            ></p>
+                                            <details class="pinefetch-settings-help pinefetch-browser-troubleshooting">
+                                                <summary>Troubleshooting</summary>
+                                                <div class="oj-stack">
+                                                    <p id="browserAuthHelp" class="oj-helper">
+                                                        Sign in to YouTube in this browser first. Connect Browser checks
+                                                        access without downloading a video. Cookies are read from the
+                                                        most recently used profile for each request; only your browser
+                                                        selection is saved. Authentication does not guarantee avoiding
+                                                        rate limits.
+                                                    </p>
+                                                    <p id="browserAuthPermissionHelp" class="oj-helper"></p>
+                                                </div>
+                                            </details>
+                                        </div>
+                                    </section>
+                                    <section
+                                        id="settingsDiagnosticsPanel"
+                                        class="oj-tab-panel pinefetch-settings-category"
+                                        role="tabpanel"
+                                        aria-labelledby="settingsDiagnosticsTab"
+                                        hidden
+                                    >
+                                        <header class="pinefetch-settings-category-header">
+                                            <h3 id="settingsDiagnosticsTitle" class="oj-heading-2">Diagnostics</h3>
+                                            <p class="oj-helper">
+                                                Check download tools and review the application log.
+                                            </p>
+                                        </header>
+                                        <div
+                                            class="pinefetch-setting-row pinefetch-setting-field pinefetch-setting-path"
+                                        >
+                                            <div class="pinefetch-switch-copy">
+                                                <label class="pinefetch-switch-title" for="ytDlpPath"
+                                                    >yt-dlp path</label
+                                                >
+                                                <span id="ytDlpPathHelp" class="oj-helper"
+                                                    >Leave empty to auto-detect the download tool from PATH.</span
+                                                >
+                                            </div>
+                                            <input
+                                                id="ytDlpPath"
+                                                class="oj-input"
+                                                type="text"
+                                                placeholder="Auto-detect from PATH"
+                                                aria-describedby="ytDlpPathHelp"
+                                            />
+                                        </div>
+                                        <div class="pinefetch-version-info" aria-label="yt-dlp versions">
+                                            <p id="ytDlpInstalledVersion">Installed: -</p>
+                                            <p id="ytDlpLatestVersion">Latest: -</p>
+                                        </div>
+                                        <section
+                                            class="oj-panel oj-panel-compact pinefetch-terminal pinefetch-log-panel"
+                                            id="logPanel"
+                                        >
+                                            <div
+                                                class="oj-section-header pinefetch-terminal-header pinefetch-log-header"
+                                            >
+                                                <div class="pinefetch-panel-heading">
+                                                    <h3 class="oj-heading-3">Terminal Log</h3>
+                                                    <p class="oj-caption" id="logHint">stdout / stderr</p>
+                                                </div>
+                                                <div class="oj-cluster">
+                                                    <button
+                                                        id="copyLogsBtn"
+                                                        class="oj-button oj-button-ghost"
+                                                        type="button"
+                                                        disabled
+                                                    >
+                                                        Copy
+                                                    </button>
+                                                    <button
+                                                        id="clearLogsBtn"
+                                                        class="oj-button oj-button-ghost"
+                                                        type="button"
+                                                        disabled
+                                                    >
+                                                        Clear
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div
+                                                id="logBody"
+                                                class="oj-code-block oj-scroll-area pinefetch-terminal-body pinefetch-log-body"
+                                                aria-label="Terminal log"
+                                                tabindex="0"
+                                            ></div>
+                                        </section>
+                                    </section>
+                                </div>
+                                <div class="pinefetch-settings-feedback">
+                                    <p
+                                        id="settingsSaveStatus"
+                                        class="oj-status"
+                                        role="status"
+                                        aria-live="polite"
+                                        aria-atomic="true"
+                                    ></p>
                                 </div>
                             </div>
-
-                            <section
-                                class="oj-panel oj-panel-compact pinefetch-terminal pinefetch-log-panel"
-                                id="logPanel"
-                            >
-                                <div class="oj-section-header pinefetch-terminal-header pinefetch-log-header">
-                                    <div class="pinefetch-panel-heading">
-                                        <h3 class="oj-heading-3">Terminal Log</h3>
-                                        <p class="oj-caption" id="logHint">stdout / stderr</p>
-                                    </div>
-                                    <div class="oj-cluster">
-                                        <button
-                                            id="copyLogsBtn"
-                                            class="oj-button oj-button-ghost"
-                                            type="button"
-                                            disabled
-                                        >
-                                            Copy
-                                        </button>
-                                        <button
-                                            id="clearLogsBtn"
-                                            class="oj-button oj-button-ghost"
-                                            type="button"
-                                            disabled
-                                        >
-                                            Clear
-                                        </button>
-                                    </div>
-                                </div>
-                                <div
-                                    id="logBody"
-                                    class="oj-code-block oj-scroll-area pinefetch-terminal-body pinefetch-log-body"
-                                    aria-label="Terminal log"
-                                    tabindex="0"
-                                ></div>
-                            </section>
-                        </section>
+                        </div>
                     </div>
 
                     <div id="linkDumpView" class="pinefetch-panel-view oj-stack" hidden>

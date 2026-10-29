@@ -176,16 +176,16 @@ pub(crate) async fn check_youtube_cookie_access(
     app: AppHandle,
     state: State<'_, AppState>,
     browser: String,
-) -> Result<(), String> {
-    let yt_dlp =
-        resolve_yt_dlp(&app, &state.config).map_err(|_| "YT_DLP_UNAVAILABLE".to_string())?;
+) -> Result<crate::cookie_sync::BrowserAccessReport, crate::cookie_sync::BrowserAccessError> {
+    let yt_dlp = resolve_yt_dlp(&app, &state.config)
+        .map_err(|_| crate::cookie_sync::BrowserAccessError::YtDlpUnavailable)?;
     let deno = resolve_deno_executable(&app);
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         crate::cookie_sync::check_access(&yt_dlp, deno.as_deref(), &browser, &state.processes)
     })
     .await
-    .map_err(|_| "COOKIE_ACCESS_FAILED".to_string())?
+    .map_err(|_| crate::cookie_sync::BrowserAccessError::CheckFailed)?
 }
 
 #[tauri::command]

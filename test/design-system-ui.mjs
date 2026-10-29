@@ -280,7 +280,7 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
         }
         if (command === 'check_youtube_cookie_access') {
             if (ui.failBrowserAccess) throw new Error('Synthetic private cookie diagnostic');
-            return;
+            return { public_access: 'checked', authentication: 'not_verified' };
         }
         if (command === 'get_history_stats') {
             if (historyCleared) {
@@ -3890,7 +3890,7 @@ try {
             await page.waitForFunction(() =>
                 globalThis.document
                     .getElementById('browserAuthStatus')
-                    .textContent.includes('Browser access checked for chrome')
+                    .textContent.includes('Public YouTube metadata was retrieved using Chrome')
             );
             await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
             await page.waitForFunction(

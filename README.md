@@ -47,7 +47,9 @@ Download the macOS DMG from the [latest release](https://github.com/oliverjessne
 
 On first launch, choose a download folder in the Download view. If yt-dlp is not detected, set its executable path in **Settings → Diagnostics**.
 
-To use your signed-in YouTube account, open **Settings → Browser**, select your browser, and click **Connect Browser**. Approve any system permission prompt. PineFetch checks access without downloading a video, then saves only your browser selection. Fresh cookies are read for each YouTube download, playlist, and metadata request. Use **Disconnect** to turn authentication off. The access check does not verify your YouTube sign-in or guarantee avoiding rate limits.
+To use your signed-in YouTube account, open **Settings → Browser**, select your browser, and click **Connect Browser**. Approve any system permission prompt. PineFetch checks a public video without downloading media, then saves only your browser selection. **Public access checked** means that public metadata was retrieved; **YouTube sign-in remains unverified**, including access to private, age-restricted or members-only videos. Fresh cookies are read for each YouTube download, playlist, and metadata request. Use **Disconnect** to turn authentication off.
+
+The check distinguishes profile/storage permissions, locked databases, cookie decryption, DNS/TLS/connection problems, timeouts and rate limits, with steps to retry. Missing browser storage can also mean denied system access. On macOS, review **System Settings → Privacy & Security → Full Disk Access** for PineFetch and any Keychain prompt, then reopen the app. Only safe diagnostic categories from this check reach the interface; its profile paths, cookie values and raw tool output stay out of the UI and PineFetch log. Browser cookies do not guarantee avoiding rate limits.
 
 ## CLI
 

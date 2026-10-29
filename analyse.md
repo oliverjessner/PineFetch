@@ -12,8 +12,6 @@ Stand: v2.7.0. Offene Aufgaben in grober Prioritätsreihenfolge; die bisherigen 
 
 - [ ] **E8 — Keywords mit Fundstellen verbinden und Untertitel einbeziehen:** Gezählt wird bereits vorhandener Text, aber Nutzer können nicht direkt zur passenden Stelle springen und Creator-Untertitel fehlen als Quelle. Verlinkte Fundstellen und klar getrennte Untertitelsprachen machen die Ergebnisse überprüfbar und vollständiger.
 
-- [ ] **E9 — Browserzugriff verständlich prüfen und erklären:** Ein erfolgreicher öffentlicher Abruf beweist keine Anmeldung für geschützte Inhalte, und unterschiedliche Fehler erscheinen derzeit zu ähnlich. Präzise Rückmeldungen helfen bei Profil-, Rechte- und Netzwerkproblemen, ohne private Cookies offenzulegen.
-
 - [ ] **E10 — TXT-Import mit Fortschritt, Zeilenfehlern und Abbruch ergänzen:** Bei großen Linklisten fehlen konkrete Fehler pro Zeile und die Möglichkeit, die weitere Übernahme zu stoppen. Fortschritt und gezieltes Wiederholen fehlerhafter Zeilen sparen Arbeit und verhindern unnötige Doppelimporte.
 
 - [ ] **E11 — Wiedergabe-Vorschauen automatisch begrenzen:** Alte Vorschaukopien werden bisher nicht über ein Größen- oder Altersbudget bereinigt und können mit dem Archiv wachsen. Eine sichere Bereinigung unbenutzter Vorschauen hält Speicher frei und bewahrt Originaldateien sowie laufende Wiedergaben.

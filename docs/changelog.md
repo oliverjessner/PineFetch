@@ -1,5 +1,9 @@
 # 2.7.0
 
+- Replaced the browser “Connected” label with “Public access checked” and explicitly kept YouTube sign-in and access to protected videos unverified.
+- Added private-data-safe browser diagnostics for profile and permission issues, locked databases, cookie decryption, empty cookie stores, network failures, sign-in challenges and rate limits, with actionable retry guidance.
+- Kept saved browser settings unchanged after failed checks, rejected incomplete success reports, and detected cookie-decryption warnings even when a public request succeeds.
+
 - Integrated Browser Import into Settings, including local server controls, extension pairing and saved connection management; native Dock shortcuts open the new category directly.
 - Left-aligned the Settings workspace, switches, fields and actions, and kept import drafts and generated secrets available when switching categories.
 

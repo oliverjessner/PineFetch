@@ -849,7 +849,7 @@ try {
             // Dock requests restore startup selections and use the same views as the toolbar.
             for (const [index, [view, panel, button]] of [
                 ['history', '#historyView', '#viewHistoryBtn'],
-                ['linkDump', '#linkDumpView', '#viewLinkDumpBtn'],
+                ['linkDump', '#settingsImportPanel', '#viewSettingsBtn'],
                 ['settings', '#settingsView', '#viewSettingsBtn'],
                 ['download', '#downloadView', '#viewDownloadBtn'],
             ].entries()) {
@@ -3814,7 +3814,8 @@ try {
                 1
             );
 
-            await page.locator('#viewLinkDumpBtn').click();
+            await page.locator('#viewSettingsBtn').click();
+            await page.locator('#settingsImportTab').click();
             await page.locator('.pinefetch-link-dump-secret-item').waitFor();
             const revoke = page.getByRole('button', { name: 'Revoke', exact: true });
             await revoke.evaluate(node => {
@@ -3861,10 +3862,13 @@ try {
             assert.doesNotMatch(await page.locator('#browserAuthStatus').textContent(), /Synthetic private/);
             assert(await page.locator('#disconnectBrowserAuthBtn').isEnabled());
             const beforeImport = await page.evaluate(() => globalThis.__pinefetchUi.commands.length);
-            await page.locator('#viewLinkDumpBtn').click();
+            await page.locator('#viewSettingsBtn').click();
+            await page.locator('#settingsImportTab').click();
             assert(await page.locator('#linkDumpServerPanel').isVisible());
+            assert(await page.locator('#settingsImportPanel').isVisible());
             assert.equal(await page.getByRole('heading', { name: 'Browser Authentication', exact: true }).count(), 0);
             await page.locator('#viewSettingsBtn').click();
+            await page.locator('#settingsBrowserTab').click();
             assert.deepEqual(
                 await page.evaluate(
                     after =>

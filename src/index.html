@@ -32,10 +32,6 @@
                             <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
                             History
                         </button>
-                        <button id="viewLinkDumpBtn" class="oj-nav-link" type="button">
-                            <i class="fa-solid fa-globe" aria-hidden="true"></i>
-                            Browser Import
-                        </button>
                         <button id="viewSettingsBtn" class="oj-nav-link" type="button">
                             <i class="fa-solid fa-gear" aria-hidden="true"></i>
                             Settings
@@ -299,6 +295,17 @@
                                         aria-controls="settingsBrowserPanel"
                                     >
                                         <i class="fa-solid fa-globe" aria-hidden="true"></i><span>Browser</span>
+                                    </button>
+                                    <button
+                                        id="settingsImportTab"
+                                        class="oj-tab pinefetch-settings-tab"
+                                        type="button"
+                                        role="tab"
+                                        aria-selected="false"
+                                        aria-controls="settingsImportPanel"
+                                    >
+                                        <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i
+                                        ><span>Browser Import</span>
                                     </button>
                                     <button
                                         id="settingsDiagnosticsTab"
@@ -637,6 +644,186 @@
                                         </div>
                                     </section>
                                     <section
+                                        id="settingsImportPanel"
+                                        class="oj-tab-panel pinefetch-settings-category"
+                                        role="tabpanel"
+                                        aria-labelledby="settingsImportTab"
+                                        hidden
+                                    >
+                                        <header class="pinefetch-settings-category-header">
+                                            <h3 class="oj-heading-2">Browser Import</h3>
+                                            <p class="oj-helper">
+                                                Send links from your browser to the download queue and manage extension
+                                                connections.
+                                            </p>
+                                        </header>
+                                        <div id="linkDumpView" class="oj-stack pinefetch-settings-import">
+                                            <section class="pinefetch-link-dump-section" id="linkDumpServerPanel">
+                                                <header class="oj-section-header">
+                                                    <div class="pinefetch-panel-heading">
+                                                        <h4 class="oj-heading-3">Local Link Dump Server</h4>
+                                                        <p class="oj-caption" id="linkDumpServerHint">
+                                                            Browser extensions can send YouTube, TikTok, Instagram,
+                                                            Facebook, X, and Reddit links to this PineFetch instance.
+                                                        </p>
+                                                    </div>
+                                                    <span class="oj-badge" id="linkDumpServerStatusBadge">Stopped</span>
+                                                </header>
+
+                                                <div class="pinefetch-import-server-fields">
+                                                    <label class="oj-field" for="linkDumpServerUrl">
+                                                        <span class="oj-label">Server URL</span>
+                                                        <input
+                                                            id="linkDumpServerUrl"
+                                                            class="oj-input"
+                                                            type="text"
+                                                            readonly
+                                                        />
+                                                    </label>
+
+                                                    <label class="oj-field" for="linkDumpPort">
+                                                        <span class="oj-label">Port</span>
+                                                        <input
+                                                            id="linkDumpPort"
+                                                            class="oj-input"
+                                                            type="number"
+                                                            min="1"
+                                                            max="65535"
+                                                        />
+                                                    </label>
+                                                </div>
+
+                                                <label
+                                                    class="oj-switch pinefetch-setting-row"
+                                                    for="linkDumpServerEnabled"
+                                                >
+                                                    <span class="pinefetch-switch-copy">
+                                                        <span class="pinefetch-switch-title">Enable server</span>
+                                                        <span class="oj-helper">Listen on local loopback only.</span>
+                                                    </span>
+                                                    <input
+                                                        id="linkDumpServerEnabled"
+                                                        type="checkbox"
+                                                        role="switch"
+                                                        checked
+                                                    />
+                                                    <span class="oj-switch-track" aria-hidden="true"></span>
+                                                </label>
+
+                                                <div class="oj-cluster">
+                                                    <button id="saveLinkDumpServerBtn" class="oj-button" type="button">
+                                                        Save Server
+                                                    </button>
+                                                    <button
+                                                        id="restartLinkDumpServerBtn"
+                                                        class="oj-button oj-button-ghost"
+                                                        type="button"
+                                                    >
+                                                        Restart Server
+                                                    </button>
+                                                </div>
+                                                <p
+                                                    id="linkDumpServerStatusText"
+                                                    class="oj-status"
+                                                    role="status"
+                                                    aria-live="polite"
+                                                ></p>
+                                            </section>
+                                            <section class="pinefetch-link-dump-section" id="linkDumpConnectionsPanel">
+                                                <header class="oj-section-header">
+                                                    <div class="pinefetch-panel-heading">
+                                                        <h4 class="oj-heading-3">Link Dump Connections</h4>
+                                                        <p class="oj-caption">
+                                                            Connect one or more browser extensions to this PineFetch
+                                                            instance.
+                                                        </p>
+                                                    </div>
+                                                </header>
+
+                                                <div class="oj-cluster pinefetch-link-dump-generate-row">
+                                                    <label class="oj-field oj-grow" for="linkDumpSecretName">
+                                                        <span class="oj-label">Connection name</span>
+                                                        <input
+                                                            id="linkDumpSecretName"
+                                                            class="oj-input"
+                                                            type="text"
+                                                            placeholder="Chrome Extension on MacBook"
+                                                        />
+                                                    </label>
+                                                    <button
+                                                        id="generateLinkDumpSecretBtn"
+                                                        class="oj-button oj-button-primary"
+                                                        type="button"
+                                                    >
+                                                        Generate Secret
+                                                    </button>
+                                                </div>
+
+                                                <div
+                                                    id="generatedLinkDumpSecretPanel"
+                                                    class="oj-panel oj-panel-compact pinefetch-link-dump-secret-panel"
+                                                    hidden
+                                                >
+                                                    <label class="oj-field" for="generatedLinkDumpSecret">
+                                                        <span class="oj-label">New secret</span>
+                                                        <input
+                                                            id="generatedLinkDumpSecret"
+                                                            class="oj-input"
+                                                            type="text"
+                                                            readonly
+                                                        />
+                                                    </label>
+                                                    <div class="oj-cluster">
+                                                        <button
+                                                            id="copyGeneratedLinkDumpSecretBtn"
+                                                            class="oj-button"
+                                                            type="button"
+                                                        >
+                                                            Copy Secret
+                                                        </button>
+                                                    </div>
+                                                    <p class="oj-helper">
+                                                        Copy this secret now. It will not be shown again.
+                                                    </p>
+                                                </div>
+
+                                                <div
+                                                    id="linkDumpSecretList"
+                                                    class="pinefetch-link-dump-secret-list"
+                                                ></div>
+                                                <p id="linkDumpSecretHint" class="oj-helper" hidden>
+                                                    Generate a secret to connect a browser extension.
+                                                </p>
+                                                <p
+                                                    id="linkDumpSecretStatus"
+                                                    class="oj-status"
+                                                    role="status"
+                                                    aria-live="polite"
+                                                ></p>
+                                            </section>
+                                            <section class="pinefetch-link-dump-section">
+                                                <header class="oj-section-header">
+                                                    <div class="pinefetch-panel-heading">
+                                                        <h4 class="oj-heading-3">Browser Extension</h4>
+                                                        <p class="oj-caption">
+                                                            Install or inspect the Chrome extension that sends video
+                                                            links to PineFetch.
+                                                        </p>
+                                                    </div>
+                                                </header>
+                                                <a
+                                                    id="linkDumpExtensionRepoLink"
+                                                    class="oj-button oj-button-ghost pinefetch-link-dump-repo-link"
+                                                    href="https://github.com/oliverjessner/PineFetch-Link-Dump"
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                >
+                                                    Open PineFetch-Link-Dump on GitHub
+                                                </a>
+                                            </section>
+                                        </div>
+                                    </section>
+                                    <section
                                         id="settingsDiagnosticsPanel"
                                         class="oj-tab-panel pinefetch-settings-category"
                                         role="tabpanel"
@@ -723,70 +910,6 @@
                             </div>
                         </div>
                     </div>
-
-                    <div id="linkDumpView" class="pinefetch-panel-view oj-stack" hidden>
-                        <section class="oj-panel oj-panel-compact pinefetch-link-dump-section" id="linkDumpServerPanel">
-                            <header class="oj-section-header">
-                                <div class="pinefetch-panel-heading">
-                                    <h3 class="oj-heading-3">Local Link Dump Server</h3>
-                                    <p class="oj-caption" id="linkDumpServerHint">
-                                        Browser extensions can send YouTube, TikTok, Instagram, Facebook, X, and Reddit
-                                        links to this PineFetch instance.
-                                    </p>
-                                </div>
-                                <span class="oj-badge" id="linkDumpServerStatusBadge">Stopped</span>
-                            </header>
-
-                            <div class="oj-grid">
-                                <label class="oj-field" for="linkDumpServerUrl">
-                                    <span class="oj-label">Server URL</span>
-                                    <input id="linkDumpServerUrl" class="oj-input" type="text" readonly />
-                                </label>
-
-                                <label class="oj-field" for="linkDumpPort">
-                                    <span class="oj-label">Port</span>
-                                    <input id="linkDumpPort" class="oj-input" type="number" min="1" max="65535" />
-                                </label>
-                            </div>
-
-                            <label class="oj-switch" for="linkDumpServerEnabled">
-                                <span class="pinefetch-switch-copy">
-                                    <span class="pinefetch-switch-title">Enable server</span>
-                                    <span class="oj-helper">Listen on local loopback only.</span>
-                                </span>
-                                <input id="linkDumpServerEnabled" type="checkbox" role="switch" checked />
-                                <span class="oj-switch-track" aria-hidden="true"></span>
-                            </label>
-
-                            <div class="oj-cluster">
-                                <button id="saveLinkDumpServerBtn" class="oj-button" type="button">Save Server</button>
-                                <button id="restartLinkDumpServerBtn" class="oj-button oj-button-ghost" type="button">
-                                    Restart Server
-                                </button>
-                            </div>
-                            <p id="linkDumpServerStatusText" class="oj-status" role="status" aria-live="polite"></p>
-                        </section>
-
-                        <section class="oj-panel oj-panel-compact pinefetch-link-dump-section">
-                            <header class="oj-section-header">
-                                <div class="pinefetch-panel-heading">
-                                    <h3 class="oj-heading-3">Browser Extension</h3>
-                                    <p class="oj-caption">
-                                        Install or inspect the Chrome extension that sends video links to PineFetch.
-                                    </p>
-                                </div>
-                            </header>
-                            <a
-                                id="linkDumpExtensionRepoLink"
-                                class="oj-button oj-button-ghost pinefetch-link-dump-repo-link"
-                                href="https://github.com/oliverjessner/PineFetch-Link-Dump"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                            >
-                                Open PineFetch-Link-Dump on GitHub
-                            </a>
-                        </section>
-                    </div>
                 </section>
 
                 <section class="oj-panel pinefetch-panel pinefetch-panel-right">
@@ -860,66 +983,6 @@
                                 Platform totals appear after the first download.
                             </p>
                         </section>
-                    </div>
-
-                    <div id="linkDumpSideView" class="pinefetch-right-panel-view pinefetch-link-dump-side-view" hidden>
-                        <div class="oj-stack">
-                            <section
-                                class="oj-panel oj-panel-compact pinefetch-link-dump-section"
-                                id="linkDumpConnectionsPanel"
-                            >
-                                <header class="oj-section-header">
-                                    <div class="pinefetch-panel-heading">
-                                        <h3 class="oj-heading-3">Link Dump Connections</h3>
-                                        <p class="oj-caption">
-                                            Connect one or more browser extensions to this PineFetch instance.
-                                        </p>
-                                    </div>
-                                </header>
-
-                                <div class="oj-cluster pinefetch-link-dump-generate-row">
-                                    <label class="oj-field oj-grow" for="linkDumpSecretName">
-                                        <span class="oj-label">Connection name</span>
-                                        <input
-                                            id="linkDumpSecretName"
-                                            class="oj-input"
-                                            type="text"
-                                            placeholder="Chrome Extension on MacBook"
-                                        />
-                                    </label>
-                                    <button
-                                        id="generateLinkDumpSecretBtn"
-                                        class="oj-button oj-button-primary"
-                                        type="button"
-                                    >
-                                        Generate Secret
-                                    </button>
-                                </div>
-
-                                <div
-                                    id="generatedLinkDumpSecretPanel"
-                                    class="oj-panel oj-panel-compact pinefetch-link-dump-secret-panel"
-                                    hidden
-                                >
-                                    <label class="oj-field" for="generatedLinkDumpSecret">
-                                        <span class="oj-label">New secret</span>
-                                        <input id="generatedLinkDumpSecret" class="oj-input" type="text" readonly />
-                                    </label>
-                                    <div class="oj-cluster">
-                                        <button id="copyGeneratedLinkDumpSecretBtn" class="oj-button" type="button">
-                                            Copy Secret
-                                        </button>
-                                    </div>
-                                    <p class="oj-helper">Copy this secret now. It will not be shown again.</p>
-                                </div>
-
-                                <div id="linkDumpSecretList" class="pinefetch-link-dump-secret-list"></div>
-                                <p id="linkDumpSecretHint" class="oj-helper" hidden>
-                                    Generate a secret to connect a browser extension.
-                                </p>
-                                <p id="linkDumpSecretStatus" class="oj-status" role="status" aria-live="polite"></p>
-                            </section>
-                        </div>
                     </div>
                 </section>
                 <section

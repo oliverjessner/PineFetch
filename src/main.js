@@ -120,7 +120,7 @@ const els = Object.seal({
     historySourceMenu: document.getElementById('historySourceMenu'),
     historyHint: document.getElementById('historyHint'),
     settingsView: document.getElementById('settingsView'),
-    linkDumpView: document.getElementById('linkDumpView'),
+    settingsImportPanel: document.getElementById('settingsImportPanel'),
     queueProgressView: document.getElementById('queueProgressView'),
     historySummaryView: document.getElementById('historySummaryView'),
     historyVideoCount: document.getElementById('historyVideoCount'),
@@ -128,10 +128,8 @@ const els = Object.seal({
     historyTotalDuration: document.getElementById('historyTotalDuration'),
     historySourcesList: document.getElementById('historySourcesList'),
     historySourcesEmpty: document.getElementById('historySourcesEmpty'),
-    linkDumpSideView: document.getElementById('linkDumpSideView'),
     viewDownloadBtn: document.getElementById('viewDownloadBtn'),
     viewHistoryBtn: document.getElementById('viewHistoryBtn'),
-    viewLinkDumpBtn: document.getElementById('viewLinkDumpBtn'),
     viewSettingsBtn: document.getElementById('viewSettingsBtn'),
     linkDumpExtensionRepoLink: document.getElementById('linkDumpExtensionRepoLink'),
     loadMoreHistoryBtn: document.getElementById('loadMoreHistoryBtn'),
@@ -480,9 +478,14 @@ const setInfoBadge = text => {
 };
 
 const setActiveView = view => {
+    // Keep native Dock/startup requests compatible with the Settings category.
+    if (view === 'linkDump') {
+        setActiveView('settings');
+        settings.openBrowserImport();
+        return;
+    }
     const isDownload = view === 'download';
     const isHistory = view === 'history';
-    const isLinkDump = view === 'linkDump';
     const isSettings = view === 'settings';
     state.activeView = view;
     const split = els.settingsView.closest('.pinefetch-split');
@@ -502,24 +505,19 @@ const setActiveView = view => {
     els.historyView.hidden = !isHistory;
     els.historyResultCount.hidden = true;
     els.settingsView.hidden = !isSettings;
-    els.linkDumpView.hidden = !isLinkDump;
     els.queueProgressView.hidden = !isDownload || state.queueCollapsed;
     els.queueCollapseBtn.hidden = !isDownload;
     split.classList.toggle('pinefetch-queue-collapsed', isDownload && state.queueCollapsed);
     els.historySummaryView.hidden = !isHistory;
-    els.linkDumpSideView.hidden = !isLinkDump;
     els.downloadView.classList.toggle('pinefetch-is-active', isDownload);
     els.historyView.classList.toggle('pinefetch-is-active', isHistory);
     els.settingsView.classList.toggle('pinefetch-is-active', isSettings);
-    els.linkDumpView.classList.toggle('pinefetch-is-active', isLinkDump);
     els.queueProgressView.classList.toggle('pinefetch-is-active', isDownload);
     els.historySummaryView.classList.toggle('pinefetch-is-active', isHistory);
-    els.linkDumpSideView.classList.toggle('pinefetch-is-active', isLinkDump);
     historyView.activate();
 
     els.viewDownloadBtn.setAttribute('aria-current', isDownload ? 'page' : 'false');
     els.viewHistoryBtn.setAttribute('aria-current', isHistory ? 'page' : 'false');
-    els.viewLinkDumpBtn.setAttribute('aria-current', isLinkDump ? 'page' : 'false');
     els.viewSettingsBtn.setAttribute('aria-current', isSettings ? 'page' : 'false');
 
     if (isDownload) {
@@ -536,16 +534,6 @@ const setActiveView = view => {
         runAfterViewPaint(() => {
             void historyView.render();
         });
-    } else if (isLinkDump) {
-        els.leftPanelTitle.textContent = 'Browser Import';
-        els.rightPanelTitle.textContent = 'Connections';
-        els.queueBadge.style.display = 'none';
-        els.infoBadge.style.display = 'none';
-        if (!browserImport.hasOverview()) {
-            runAfterViewPaint(() => {
-                void syncLinkDumpOverview();
-            });
-        }
     } else {
         els.leftPanelTitle.textContent = 'Settings';
         els.rightPanelTitle.textContent = 'Options';
@@ -556,6 +544,7 @@ const setActiveView = view => {
             renderLogs();
             void settings.loadBrowserAuthentication();
             if (settings.getConfig()) void settings.refreshYtDlpVersionsOnce();
+            syncBrowserImportIfNeeded();
         });
     }
 };
@@ -1071,6 +1060,11 @@ const syncQueueStatus = async () => {
 
 const browserImport = createBrowserImportView({ els, api, appendLog, appendTextSpans });
 const { applyLinkDumpServerStatus, syncLinkDumpOverview } = browserImport;
+const syncBrowserImportIfNeeded = () => {
+    if (state.activeView === 'settings' && !els.settingsImportPanel.hidden && !browserImport.hasOverview()) {
+        void syncLinkDumpOverview();
+    }
+};
 
 let loadInfoInFlight = false;
 let pendingInfoUrl = null;
@@ -1617,6 +1611,7 @@ const settings = createSettingsView({
     getSelectedPresetKey,
     updateDownloadOptionHints,
     isActive: () => state.activeView === 'settings',
+    onCategoryChange: syncBrowserImportIfNeeded,
 });
 
 const historyView = createHistoryView({
@@ -1730,7 +1725,6 @@ const bindEvents = () => {
     els.viewDownloadBtn.addEventListener('click', () => setActiveView('download'));
     els.brandHistoryBtn.addEventListener('click', () => setActiveView('history'));
     els.viewHistoryBtn.addEventListener('click', () => setActiveView('history'));
-    els.viewLinkDumpBtn.addEventListener('click', () => setActiveView('linkDump'));
     els.viewSettingsBtn.addEventListener('click', () => setActiveView('settings'));
     els.queueContextMenu.addEventListener('contextmenu', event => {
         event.preventDefault();

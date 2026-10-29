@@ -1,5 +1,8 @@
 # 2.7.0
 
+- Integrated Browser Import into Settings, including local server controls, extension pairing and saved connection management; native Dock shortcuts open the new category directly.
+- Left-aligned the Settings workspace, switches, fields and actions, and kept import drafts and generated secrets available when switching categories.
+
 - Redesigned Settings with a vertical category sidebar for Downloads, Files & Metadata, Browser and the existing Diagnostics tools, with compact navigation at smaller widths.
 - Kept all existing controls and automatic persistence, added concise descriptions with expandable help, and replaced permanent save confirmations with brief feedback after successful saves.
 - Distinguished saved browser choices from checked connections, retained permission and cookie guidance in Troubleshooting, and added responsive, keyboard, persistence and failure-state regressions.

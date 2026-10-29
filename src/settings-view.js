@@ -9,6 +9,7 @@ export const createSettingsView = ({
     getSelectedPresetKey,
     updateDownloadOptionHints,
     isActive,
+    onCategoryChange = () => {},
 }) => {
     const browserAuthentication = createBrowserAuthentication({ els, api });
     const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
@@ -282,6 +283,7 @@ export const createSettingsView = ({
         els.settingsView.addEventListener('oj:change', event => {
             if (event.detail?.panel?.classList.contains('pinefetch-settings-category')) {
                 els.settingsView.querySelector('#settingsContent').scrollTop = 0;
+                onCategoryChange();
                 if (event.detail.panel.id === 'settingsDiagnosticsPanel') {
                     requestAnimationFrame(() => {
                         els.logBody.scrollTop = els.logBody.scrollHeight;
@@ -363,6 +365,7 @@ export const createSettingsView = ({
         isMagicImportEnabled,
         loadBrowserAuthentication: () =>
             browserAuthentication.isLoaded() ? Promise.resolve() : browserAuthentication.load(),
+        openBrowserImport: () => els.settingsView.querySelector('#settingsImportTab').click(),
         persistSelectedPresetKey,
         refreshYtDlpVersionsOnce,
         save: saveSettings,

@@ -219,6 +219,23 @@ export const installScreenshotBridge = ({ videos, version, ocr = null, social = 
                         )
                             throw new Error('Missing screenshot OCR frame.');
                         return ocr.frame;
+                    case 'get_history_media':
+                        // Screenshot profiles use fixture images, not playable local files.
+                        return null;
+                    case 'get_history_caption': {
+                        const entry = history.find(entry => entry.id === args.id);
+                        const captions = entry?.url === keywords?.url ? keywords?.captions : null;
+                        if (!entry || args.mediaPath !== entry.output_path || !captions?.length) return null;
+                        return {
+                            media_path: entry.output_path,
+                            caption_path: `${entry.output_path}.caption.txt`,
+                            format: 'TXT',
+                            sha256: null,
+                            created_at: entry.completed_at,
+                            file_available: true,
+                            text: captions.join('\n\n'),
+                        };
+                    }
                     case 'get_history_details': {
                         const entry = history.find(entry => entry.id === args.id);
                         if (!entry) throw new Error(`Missing history fixture: ${args.id}`);

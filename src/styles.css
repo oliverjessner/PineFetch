@@ -179,7 +179,7 @@ body {
 .pinefetch-split.pinefetch-settings-active .pinefetch-panel-left > .oj-section-header {
     width: 100%;
     max-width: 1100px;
-    margin: 0 auto;
+    margin: 0;
 }
 
 .pinefetch-panel {
@@ -215,7 +215,6 @@ body {
 
 #historyView,
 #settingsView,
-#linkDumpView,
 .pinefetch-right-panel-view {
     flex: 1;
 }
@@ -255,11 +254,6 @@ body {
     color: var(--oj-accent-text);
 }
 
-#linkDumpView {
-    overflow-y: auto;
-    padding-right: 2px;
-}
-
 #downloadView {
     flex: 1;
     overflow-y: auto;
@@ -287,7 +281,7 @@ body {
 #settingsView {
     width: 100%;
     max-width: 1100px;
-    margin: 0 auto;
+    margin: 0;
     overflow: hidden;
 }
 
@@ -376,21 +370,43 @@ body {
 #settingsView .pinefetch-setting-row {
     width: 100%;
     min-width: 0;
-    justify-content: space-between;
-    gap: var(--oj-space-6);
+    justify-content: flex-start;
+    gap: var(--oj-space-3);
     padding: var(--oj-space-4) 0;
     border-bottom: 1px solid var(--oj-border);
 }
 
 .pinefetch-setting-field {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(176px, 216px);
-    align-items: center;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
 }
 
 .pinefetch-setting-field > :is(input, select, .oj-dropdown) {
     min-width: 0;
     width: 100%;
+    max-width: 360px;
+}
+
+#settingsView .oj-switch.pinefetch-setting-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+}
+
+#settingsView .oj-switch.pinefetch-setting-row .pinefetch-switch-copy {
+    grid-column: 2;
+    grid-row: 1;
+}
+
+#settingsView .oj-switch.pinefetch-setting-row .oj-switch-track {
+    grid-column: 1;
+    grid-row: 1;
+    pointer-events: none;
+}
+
+.pinefetch-setting-block > .pinefetch-settings-help {
+    margin-left: calc(2.25rem + var(--oj-space-3));
 }
 
 .pinefetch-setting-block {
@@ -434,7 +450,7 @@ body {
 }
 
 .pinefetch-browser-actions {
-    justify-content: flex-end;
+    justify-content: flex-start;
 }
 
 .pinefetch-browser-troubleshooting {
@@ -514,12 +530,6 @@ body {
     flex: 1;
 }
 
-.pinefetch-link-dump-side-view {
-    justify-content: flex-start;
-    overflow-y: auto;
-    padding-right: 2px;
-}
-
 .pinefetch-download-actions {
     flex-wrap: wrap;
 }
@@ -571,13 +581,45 @@ body {
     color: var(--oj-accent-text);
 }
 
+#settingsImportPanel .pinefetch-link-dump-section {
+    padding-block: var(--oj-space-4);
+    border-bottom: 1px solid var(--oj-border);
+}
+
+#settingsImportPanel .oj-section-header {
+    align-items: flex-start;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: var(--oj-space-3);
+}
+
+.pinefetch-import-server-fields {
+    display: grid;
+    gap: var(--oj-space-3);
+}
+
+#settingsImportPanel .oj-field {
+    width: 100%;
+    max-width: 360px;
+}
+
+#settingsImportPanel label[for='linkDumpPort'] {
+    max-width: 140px;
+}
+
+#settingsImportPanel .pinefetch-link-dump-secret-panel {
+    width: 100%;
+}
+
 .pinefetch-link-dump-section {
     display: grid;
     gap: var(--oj-space-4);
 }
 
 .pinefetch-link-dump-generate-row {
-    align-items: end;
+    display: grid;
+    justify-items: start;
+    gap: var(--oj-space-3);
 }
 
 .pinefetch-link-dump-generate-row .oj-button {
@@ -598,8 +640,8 @@ body {
 
 .pinefetch-link-dump-secret-item {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
     gap: var(--oj-space-3);
 }
 
@@ -627,7 +669,7 @@ body {
 }
 
 .pinefetch-link-dump-secret-actions {
-    justify-content: flex-end;
+    justify-content: flex-start;
 }
 
 .pinefetch-history-list,
@@ -1012,9 +1054,7 @@ body {
 
     #downloadView,
     #historySummaryView,
-    #settingsView,
-    #linkDumpView,
-    #linkDumpSideView {
+    #settingsView {
         overflow-y: visible;
     }
 

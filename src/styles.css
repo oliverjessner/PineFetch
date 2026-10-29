@@ -178,7 +178,7 @@ body {
 
 .pinefetch-split.pinefetch-settings-active .pinefetch-panel-left > .oj-section-header {
     width: 100%;
-    max-width: 760px;
+    max-width: 1100px;
     margin: 0 auto;
 }
 
@@ -255,7 +255,6 @@ body {
     color: var(--oj-accent-text);
 }
 
-#settingsView,
 #linkDumpView {
     overflow-y: auto;
     padding-right: 2px;
@@ -287,13 +286,222 @@ body {
 
 #settingsView {
     width: 100%;
-    max-width: 760px;
+    max-width: 1100px;
     margin: 0 auto;
+    overflow: hidden;
 }
 
-.pinefetch-settings-group {
-    padding-bottom: var(--oj-space-5);
+.pinefetch-settings-layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    flex: 1;
+    min-height: 0;
+}
+
+.pinefetch-settings-sidebar {
+    padding-right: var(--oj-space-5);
+    border-right: 1px solid var(--oj-border);
+}
+
+.pinefetch-settings-nav[role='tablist'] {
+    gap: var(--oj-space-1);
+    border: 0;
+    overflow: visible;
+}
+
+#settingsView .pinefetch-settings-tab {
+    display: flex;
+    align-items: center;
+    gap: var(--oj-space-3);
+    padding: var(--oj-space-3);
+    border: 0;
+    border-radius: var(--oj-radius-md);
+    text-align: left;
+    line-height: var(--oj-leading-normal);
+    white-space: normal;
+}
+
+#settingsView .pinefetch-settings-tab i {
+    width: 1rem;
+    flex: 0 0 1rem;
+    text-align: center;
+}
+
+#settingsView .pinefetch-settings-tab[aria-selected='true'] {
+    background: var(--oj-surface-active);
+    color: var(--oj-text);
+}
+
+#settingsView .pinefetch-settings-tab[aria-selected='true'] i {
+    color: var(--oj-accent-text);
+}
+
+#settingsView .pinefetch-settings-tab:focus-visible {
+    outline: var(--oj-focus-width) solid var(--oj-focus-color);
+    outline-offset: -2px;
+}
+
+.pinefetch-settings-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    padding-left: var(--oj-space-7, 28px);
+}
+
+.pinefetch-settings-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding-right: var(--oj-space-3);
+}
+
+#settingsView .pinefetch-settings-category {
+    max-width: 720px;
+    padding-top: 0;
+    outline-offset: -2px;
+}
+
+.pinefetch-settings-category-header {
+    display: grid;
+    gap: var(--oj-space-2);
+    margin-bottom: var(--oj-space-5);
+}
+
+.pinefetch-settings-category-header :is(h3, p) {
+    margin: 0;
+}
+
+#settingsView .pinefetch-setting-row {
+    width: 100%;
+    min-width: 0;
+    justify-content: space-between;
+    gap: var(--oj-space-6);
+    padding: var(--oj-space-4) 0;
     border-bottom: 1px solid var(--oj-border);
+}
+
+.pinefetch-setting-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(176px, 216px);
+    align-items: center;
+}
+
+.pinefetch-setting-field > :is(input, select, .oj-dropdown) {
+    min-width: 0;
+    width: 100%;
+}
+
+.pinefetch-setting-block {
+    padding-bottom: var(--oj-space-3);
+    border-bottom: 1px solid var(--oj-border);
+}
+
+#settingsView .pinefetch-setting-block .pinefetch-setting-row {
+    padding-bottom: var(--oj-space-2);
+    border-bottom: 0;
+}
+
+.pinefetch-settings-help {
+    color: var(--oj-text-muted);
+    font-size: var(--oj-text-sm);
+}
+
+.pinefetch-settings-help summary {
+    width: fit-content;
+    max-width: 100%;
+    padding: var(--oj-space-1) 0;
+    cursor: pointer;
+}
+
+.pinefetch-settings-help summary:focus-visible {
+    outline: var(--oj-focus-width) solid var(--oj-focus-color);
+    outline-offset: var(--oj-focus-offset);
+    border-radius: var(--oj-radius-sm);
+}
+
+.pinefetch-settings-help > :not(summary) {
+    margin-top: var(--oj-space-2);
+    margin-bottom: 0;
+}
+
+.pinefetch-browser-connection {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--oj-space-3);
+}
+
+.pinefetch-browser-actions {
+    justify-content: flex-end;
+}
+
+.pinefetch-browser-troubleshooting {
+    padding-top: var(--oj-space-3);
+    border-top: 1px solid var(--oj-border);
+}
+
+.pinefetch-settings-feedback {
+    min-height: 2rem;
+    padding-top: var(--oj-space-3);
+}
+
+.pinefetch-settings-feedback p {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+#settingsView .pinefetch-version-info {
+    padding: var(--oj-space-3) 0 var(--oj-space-5);
+}
+
+@media (max-width: 980px) {
+    #settingsView,
+    .pinefetch-settings-content {
+        overflow: visible;
+    }
+}
+
+@media (max-width: 680px) {
+    .pinefetch-settings-layout {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--oj-space-5);
+    }
+
+    .pinefetch-settings-sidebar {
+        padding-right: 0;
+        padding-bottom: var(--oj-space-3);
+        border-right: 0;
+        border-bottom: 1px solid var(--oj-border);
+    }
+
+    .pinefetch-settings-nav[role='tablist'] {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .pinefetch-settings-main {
+        padding-left: 0;
+    }
+
+    .pinefetch-settings-content {
+        padding-right: 0;
+    }
+}
+
+@media (max-width: 440px) {
+    .pinefetch-setting-field {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    #settingsView .pinefetch-setting-field {
+        gap: var(--oj-space-3);
+    }
+
+    .pinefetch-browser-actions {
+        justify-content: flex-start;
+    }
 }
 
 #browserAuthBrowser,

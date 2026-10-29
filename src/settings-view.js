@@ -33,6 +33,34 @@ export const createSettingsView = ({
     let ytDlpVersionsChecked = false;
     let ytDlpVersionsPromise = null;
     let ytDlpVersionRequestId = 0;
+    let saveFeedbackTimer = null;
+    let saveFeedbackRevision = 0;
+    const newDownloadSettings = new Set([
+        'selected_preset_key',
+        'magic_import_enabled',
+        'id_import_enabled',
+        'cut_at_timestamp_enabled',
+        'faster_whisper_model',
+        'download_video_with_transcript',
+        'save_captions',
+        'save_creator_subtitles',
+        'save_thumbnails',
+        'default_output_dir',
+    ]);
+    const setSaveFeedback = (message, { error = false, temporary = false } = {}) => {
+        const revision = ++saveFeedbackRevision;
+        if (saveFeedbackTimer !== null) clearTimeout(saveFeedbackTimer);
+        saveFeedbackTimer = null;
+        els.settingsSaveStatus.textContent = message;
+        els.settingsSaveStatus.classList.toggle('oj-status-error', error);
+        if (temporary) {
+            saveFeedbackTimer = setTimeout(() => {
+                if (revision !== saveFeedbackRevision) return;
+                els.settingsSaveStatus.textContent = '';
+                saveFeedbackTimer = null;
+            }, 4000);
+        }
+    };
 
     const isMagicImportEnabled = () => Boolean(els.magicImportEnabled?.checked);
 
@@ -143,6 +171,7 @@ export const createSettingsView = ({
             updateDownloadOptionHints();
             if (isActive()) void refreshYtDlpVersionsOnce();
         } catch (err) {
+            setSaveFeedback(`Could not load settings: ${err}`, { error: true });
             appendLog(`[config] ${err}`, true);
         }
     };
@@ -169,8 +198,7 @@ export const createSettingsView = ({
             try {
                 config = await api.getConfig();
             } catch (err) {
-                els.settingsSaveStatus.textContent = `Could not load settings: ${err}`;
-                els.settingsSaveStatus.classList.add('oj-status-error');
+                setSaveFeedback(`Could not load settings: ${err}`, { error: true });
                 appendLog(`[config] ${err}`, true);
                 return false;
             }
@@ -179,8 +207,7 @@ export const createSettingsView = ({
         config = { ...config, ...patch };
         const localRevision = ++configLocalRevision;
         const revision = ++configSaveRevision;
-        els.settingsSaveStatus.textContent = 'Saving changes…';
-        els.settingsSaveStatus.classList.remove('oj-status-error');
+        setSaveFeedback('Saving changes…');
 
         const queuedSave = configSaveQueue.then(() => api.patchConfig({ changes: patch }));
         configSaveQueue = queuedSave.catch(() => {});
@@ -191,15 +218,15 @@ export const createSettingsView = ({
                 config = mergedConfig;
             }
             if (revision === configSaveRevision) {
-                els.settingsSaveStatus.textContent = 'Changes saved. They apply to new downloads.';
+                const appliesToNewDownloads = Object.keys(patch).some(key => newDownloadSettings.has(key));
+                setSaveFeedback(appliesToNewDownloads ? 'Saved for new downloads.' : 'Saved.', { temporary: true });
             }
             return true;
         } catch (err) {
             appendLog(`[config] ${err}`, true);
             if (revision === configSaveRevision) {
                 await syncConfig();
-                els.settingsSaveStatus.textContent = `Could not save changes: ${err}`;
-                els.settingsSaveStatus.classList.add('oj-status-error');
+                setSaveFeedback(`Could not save changes: ${err}`, { error: true });
             }
             return false;
         }
@@ -246,6 +273,30 @@ export const createSettingsView = ({
     };
 
     const bindEvents = () => {
+        const navigation = els.settingsView.querySelector('[role="tablist"]');
+        const compact = window.matchMedia('(max-width: 680px)');
+        const orientNavigation = () =>
+            navigation.setAttribute('aria-orientation', compact.matches ? 'horizontal' : 'vertical');
+        orientNavigation();
+        compact.addEventListener('change', orientNavigation);
+        els.settingsView.addEventListener('oj:change', event => {
+            if (event.detail?.panel?.classList.contains('pinefetch-settings-category')) {
+                els.settingsView.querySelector('#settingsContent').scrollTop = 0;
+                if (event.detail.panel.id === 'settingsDiagnosticsPanel') {
+                    requestAnimationFrame(() => {
+                        els.logBody.scrollTop = els.logBody.scrollHeight;
+                    });
+                }
+            }
+        });
+        window.addEventListener(
+            'pagehide',
+            () => {
+                compact.removeEventListener('change', orientNavigation);
+                if (saveFeedbackTimer !== null) clearTimeout(saveFeedbackTimer);
+            },
+            { once: true }
+        );
         browserAuthentication.bindEvents();
         els.magicImportEnabled.addEventListener('change', () => {
             void saveSettings({ magic_import_enabled: els.magicImportEnabled.checked });

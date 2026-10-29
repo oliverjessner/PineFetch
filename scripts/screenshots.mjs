@@ -230,6 +230,7 @@ try {
     await capture('browser_import.webp');
 
     await page.locator('#viewSettingsBtn').click();
+    await page.locator('#settingsDownloadsTab').click();
     await page.waitForFunction(
         () => globalThis.document.querySelector('#ytDlpLatestVersion').textContent === 'Latest: 2026.09.19'
     );

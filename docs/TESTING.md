@@ -278,6 +278,18 @@ per-source counts; a Rust regression verifies those counts against the real mine
 The OCR text in that fixture also matches the OCR screenshot fixture. These
 images demonstrate the production interface, not a live database or network run.
 
+`npm run test:settings-ui` checks the production Settings page in Chromium and
+WebKit with isolated native responses. It covers category keyboard/focus state,
+all existing settings, dropdown changes, queued saves, rollback and delayed-save
+feedback, saved-vs-checked browser states, connection/disconnection, log copy/clear,
+reload and 1400/1000/760/600/390-pixel layouts. Its session storage is fixture data;
+reload proves frontend restoration, not a live native application restart or real
+browser permissions. The unchanged native config/cookie tests cover their storage
+and process contracts separately. Export review PNGs with
+`PINEFETCH_SETTINGS_ARTIFACTS=/tmp/pinefetch-settings npm run test:settings-ui`.
+Run browser suites and asset preparation sequentially because each dev server
+prepares the same local design-system directory.
+
 `npm run test:ui` runs the design-system integration in Chromium and WebKit with
 an isolated Tauri fixture bridge and offline requests. It covers local fonts,
 icons and ESM loading, plus integrated keyboard navigation, dialogs, and keyword filters/pagination/loading/error/late-response behavior. Prepare

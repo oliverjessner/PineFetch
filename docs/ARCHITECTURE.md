@@ -321,6 +321,26 @@ coordination and the main download form are intentionally not rewritten into a
 state framework. A future extraction can move another independently testable rule
 or introduce event/resource callbacks if a second execution host needs them.
 
+Settings use the existing OJ tab implementation for the vertical category sidebar,
+including roving keyboard focus and one active panel. At compact widths, the same
+controls become a two-column navigation grid with horizontal key handling; the
+selected category survives view switches in the current window. Downloads contain
+ID/Magic import, timestamp cuts, transcription quality and queue notifications.
+Files & Metadata contain caption TXT, creator subtitle and thumbnail exports.
+Browser owns the unchanged cookie-access check/patch flow. Diagnostics retains
+the yt-dlp path, installed/latest versions and the log. The download composer's
+folder, preset and keep-video controls keep their existing locations and bindings.
+
+Settings still use the serialized patch queue, revisions and persisted-value
+restoration after save failures. Only a confirmed successful save schedules the
+four-second feedback timeout; subsequent saves cancel old timeouts, and failures
+remain visible. Restoring a saved browser does not trigger a cookie check or show
+Connected. That display requires this session's successful access check and saved
+selection. The check is still a public-video simulation and does not prove a
+YouTube login; the Browser panel says so explicitly. Detailed profile, permission
+and Keychain help remains available in Troubleshooting. No configuration keys,
+storage formats, schema or download behavior change for this UI refactor.
+
 Caption and reader copy actions share `history-text-view.js` feedback and stale
 request guards while retaining their own messages. Account pages seed the shared
 Social Insights view from the snapshot already returned with saved downloads;

@@ -64,6 +64,8 @@ const els = Object.seal({
     connectBrowserAuthBtn: document.getElementById('connectBrowserAuthBtn'),
     disconnectBrowserAuthBtn: document.getElementById('disconnectBrowserAuthBtn'),
     browserAuthStatus: document.getElementById('browserAuthStatus'),
+    browserAuthState: document.getElementById('browserAuthState'),
+    browserAuthConnection: document.getElementById('browserAuthConnection'),
     browserAuthPermissionHelp: document.getElementById('browserAuthPermissionHelp'),
     linkDumpServerStatusBadge: document.getElementById('linkDumpServerStatusBadge'),
     linkDumpServerUrl: document.getElementById('linkDumpServerUrl'),

@@ -1,5 +1,9 @@
 # 2.7.0
 
+- Redesigned Settings with a vertical category sidebar for Downloads, Files & Metadata, Browser and the existing Diagnostics tools, with compact navigation at smaller widths.
+- Kept all existing controls and automatic persistence, added concise descriptions with expandable help, and replaced permanent save confirmations with brief feedback after successful saves.
+- Distinguished saved browser choices from checked connections, retained permission and cookie guidance in Troubleshooting, and added responsive, keyboard, persistence and failure-state regressions.
+
 - Accelerated History and saved Account pages with matching order/source/creator indexes and focused, parameterized search queries.
 - Made Load more continue from the last saved position, retaining the initial count and avoiding shifted pages after new downloads or deletions. History reads now run outside the UI thread.
 - Grouped platform totals in SQLite and limited legacy URL fallback to entries without a source. Added a backed-up schema-13 migration, large-archive measurements and pagination regressions.

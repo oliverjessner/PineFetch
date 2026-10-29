@@ -41,7 +41,8 @@
         "postinstall": "npm run sync:design-system",
         "sync:design-system": "node scripts/sync-design-system.mjs",
         "test:social-browser": "node --test --test-timeout=60000 test/social-browser.integration.mjs",
-        "test:queue-ui": "node test/queue-restart-ui.mjs"
+        "test:queue-ui": "node test/queue-restart-ui.mjs",
+        "test:settings-ui": "node test/settings-ui.mjs"
     },
     "engines": {
         "node": "^26.10.0"

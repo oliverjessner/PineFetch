@@ -830,9 +830,9 @@ try {
             await page.evaluate(() => globalThis.__pinefetchUi.releasePresets());
             await page.waitForFunction(() => globalThis.__pinefetchScreenshot?.ready);
             assert(await page.locator('#settingsView').isVisible());
-            const authentication = page.locator(
-                '#settingsView section[aria-labelledby="settingsDownloadTitle"] #browserAuthentication'
-            );
+            assert(await page.locator('#settingsDownloadsPanel').isVisible());
+            await page.locator('#settingsBrowserTab').click();
+            const authentication = page.locator('#settingsBrowserPanel #browserAuthentication');
             assert(await authentication.isVisible());
             assert.equal(await page.locator('#linkDumpView #browserAuthentication').count(), 0);
             assert.equal(await page.locator('#browserAuthBrowser').inputValue(), 'firefox');
@@ -3846,6 +3846,7 @@ try {
             );
 
             await page.locator('#viewSettingsBtn').click();
+            await page.locator('#settingsBrowserTab').click();
             // Authentication is owned by Settings and preserves the saved browser on access failure.
             await page.evaluate(() => {
                 globalThis.__pinefetchUi.failBrowserAccess = true;
@@ -3883,7 +3884,9 @@ try {
             });
             await page.getByRole('button', { name: 'Connect Browser', exact: true }).click();
             await page.waitForFunction(() =>
-                globalThis.document.getElementById('browserAuthStatus').textContent.includes('enabled for chrome')
+                globalThis.document
+                    .getElementById('browserAuthStatus')
+                    .textContent.includes('Browser access checked for chrome')
             );
             await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
             await page.waitForFunction(
@@ -3893,6 +3896,7 @@ try {
             );
             assert(await page.locator('#disconnectBrowserAuthBtn').isDisabled());
             await page.screenshot({ path: `/tmp/pinefetch-browser-authentication-${engine.name()}.png` });
+            await page.locator('#settingsDownloadsTab').click();
             const modelTrigger = page.locator('#fasterWhisperModelTrigger');
             const modelMenu = page.locator('#fasterWhisperModelMenu');
             const modelValue = page.locator('#fasterWhisperModelValue');
@@ -3940,7 +3944,7 @@ try {
             await modelMenu.waitFor({ state: 'hidden' });
             await modelTrigger.click();
             await modelMenu.waitFor();
-            await page.locator('#ytDlpPath').click();
+            await page.locator('#settingsDownloadTitle').click();
             await modelMenu.waitFor({ state: 'hidden' });
             assert.equal(await modelTrigger.getAttribute('aria-expanded'), 'false');
             const waitForModelPatch = async (after, value) => {
@@ -3973,7 +3977,7 @@ try {
                 await page.waitForFunction(
                     () =>
                         globalThis.document.getElementById('settingsSaveStatus').textContent ===
-                        'Changes saved. They apply to new downloads.'
+                        'Saved for new downloads.'
                 );
                 assert.equal(await modelValue.textContent(), label);
                 assert.equal(await modelMenu.locator('[aria-checked="true"]').count(), 1);
@@ -4011,6 +4015,7 @@ try {
             await selectModel('medium', 'High (medium)', true);
             assert.equal(await saveStatus.evaluate(node => node.classList.contains('oj-status-error')), false);
 
+            await page.locator('#settingsFilesTab').click();
             const setting = page.locator('#saveCaptions');
             await setting.focus();
             await page.keyboard.press('Space');
@@ -4033,8 +4038,7 @@ try {
             );
             await page.waitForFunction(
                 () =>
-                    globalThis.document.getElementById('settingsSaveStatus').textContent ===
-                    'Changes saved. They apply to new downloads.'
+                    globalThis.document.getElementById('settingsSaveStatus').textContent === 'Saved for new downloads.'
             );
             assert.equal(await creatorSubtitles.isChecked(), true);
 
@@ -4062,6 +4066,7 @@ try {
                 false
             );
             await page.locator('#viewSettingsBtn').click();
+            await page.locator('#settingsDownloadsTab').click();
             await idToggle.focus();
             await page.keyboard.press('Space');
             await page.waitForFunction(() => {

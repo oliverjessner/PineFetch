@@ -1,13 +1,13 @@
 # Tags
 
-Open **History → Tags** to create, search, edit or delete your tags. Each tag has a
+Use History's **All Content / Tags** navigation to create, search, edit or delete your tags. Each tag has a
 name, an optional description, a color, and counts of its saved items and derived
 creator accounts. Unused tags stay visible. Lists are alphabetical by the stored
 Unicode-normalized name key.
 
 ## Create and edit
 
-Choose **Create Tag**, enter a name and optionally a description, then pick a color
+In **History → Tags**, choose **Create Tag**, enter a name and optionally a description, then pick a color
 from the palette or enter a custom HEX value. The live preview shows the result.
 Names support up to 80 Unicode code points, descriptions up to 500. Surrounding
 whitespace is trimmed. Name comparisons use PineFetch's locale-independent Unicode
@@ -18,16 +18,34 @@ Colors are stored as uppercase `#RRGGBB`; three-digit HEX shorthand is expanded.
 Chips use a colored indicator and a readable neutral background, so names remain
 readable for bright or dark custom colors. Hover a truncated name to see it fully.
 Editing preserves the tag ID and every assignment.
+The full editor is a standalone dialog opened from this non-modal management view.
+Tag controls never open a second modal above an existing dialog.
 
 ## Assign tags
 
 In **Video Details → Overview → Tags**, use **+ Add Tag**, or choose **Manage Tags**
-from an item's context menu in History. Search available tags, add multiple tags,
-or create a new tag and assign it immediately. Already assigned tags are excluded
-from the available choices. Remove an individual assignment using its × control.
+from an item's context menu in History. A compact, non-modal popover opens at the
+trigger, with search, colored tags and checkmarks for current assignments. Click a
+tag to add or remove it; the selector stays open for multiple changes. Assigned
+tags remain in the list. An individual chip's × control also removes its assignment.
 Changes are shown only after SQLite confirms them. Normal History chips update in
-place without resetting already loaded pages or their scroll position. Errors preserve existing data
-and remain visible for retry; no separate Save action is required.
+place without resetting already loaded pages or their scroll position. Errors preserve
+existing data and remain visible for retry; no separate Save action is required.
+
+**Create new tag** switches to an inline name, palette and live preview in the same
+popover. **Create & Add** creates the definition and assigns it to the captured
+History entry. Descriptions and custom HEX values remain available in the full
+management editor. If creation succeeds but assignment fails, the tag is retained
+and **Retry Add** retries only the assignment. Closing and reopening the selector
+in the same session retains this recovery state; after restarting, the saved tag
+can still be selected normally. Cancel returns to the selector without deleting it.
+
+Opening focuses search. Arrow keys navigate options; Enter or Space toggles a
+focused option. Escape closes only the popover and restores its trigger's focus.
+Clicking outside closes it while allowing the underlying action. Within a parent
+dialog it remains non-modal, uses no additional backdrop or focus trap, and escapes
+overflow clipping. Switching videos closes the old surface; pending mutations
+retain their original History ID and cannot overwrite another video's selection.
 
 Video, audio and transcript-only History entries can all be tagged. Discovered
 remote profile videos must first be downloaded and saved in History. A normal
@@ -64,6 +82,7 @@ thumbnail images do not prevent tagging.
 ## Persistence and deletion
 
 Schema 15 adds `tags` and `history_entry_tags` without changing earlier migrations.
+The quick-tagging UX refactor does not change this schema, commands or existing data.
 Definitions use UUIDs, an authoritative backend-generated unique `name_key`, and
 PineFetch epoch-millisecond timestamps. SQLite foreign keys and a composite primary
 key prevent orphaned or duplicate assignments. Writes use the existing writer
@@ -93,7 +112,9 @@ and `npm run build:check`. Native tests use isolated databases and cover backed-
 migration/rollback/reopen, validation, uniqueness, CRUD, foreign-key cleanup,
 failures, grouping, cursor/filter correctness and a synthetic 200,000-entry archive.
 Browser tests use isolated transports and exercise both Chromium and WebKit,
-including acknowledgement, failures, navigation, keyboard controls and late replies.
+including a real parent HTML dialog, absence of nested modals, inline creation,
+partial-failure recovery, narrow popovers, acknowledgement, navigation, keyboard
+controls, focus restoration, delayed creation and ordered assignment replies.
 These checks do not modify a personal PineFetch profile or install the app.
 
 An isolated debug-build run over 200,000 History entries and a tag with 100,000

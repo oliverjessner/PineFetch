@@ -391,6 +391,12 @@ Schema 15 adds `tags` and `history_entry_tags`. The `tags` module owns validatio
 transactional storage, batched memberships and derived creator queries. History
 filter signatures include the optional tag; sparse and dense memberships reuse
 the existing cursor reader with different indexed access paths. Definitions used
-by pickers do not calculate archive-wide counts. Frontend tag dialogs and the
-History workspace reuse the existing detail/account navigation and list cards.
+by pickers do not calculate archive-wide counts. The History All Content/Tags
+workspace reuses existing detail/account navigation and list cards. `tag-ui.js`
+shares chip/color rendering. `quick-tags.js` owns the anchored non-modal selector
+and inline creation, using the native popover top layer within an existing parent
+dialog when needed. `tags.js` retains the standalone full editor, guards against
+nested modals and serializes conflicting assignments. Quick creation captures the
+History ID and keeps a created definition available for assignment retry after a
+partial failure; stale replies cannot update another video's popover.
 See [TAGS.md](TAGS.md) for persistence, deletion and identity semantics.

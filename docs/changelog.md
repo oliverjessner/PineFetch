@@ -1,5 +1,8 @@
 # 3.0.0
 
+- Replaced modal tag assignment with an anchored, searchable popover: toggle checked tags without closing it, or create and add a tag inline. Quick creation retains saved tags on assignment failures and offers Retry Add.
+- Separated quick tagging from full tag management through History's All Content / Tags navigation. Preserved the full Create/Edit dialog, added safeguards against nested modals, and improved keyboard focus, narrow-window placement and delayed-request handling without changing tag storage.
+
 - Added locally persisted tags with Unicode-safe unique names, descriptions, a color palette, custom HEX colors and immediate multi-tag assignment for all saved media types.
 - Added tag management in History, compact tag chips, Video Details controls and a Manage Tags context action. Tag deletion confirms affected items and preserves saved media and text.
 - Added dedicated tag Content and Accounts pages with search, pagination and return navigation, plus an independent History tag filter that combines with existing filters.

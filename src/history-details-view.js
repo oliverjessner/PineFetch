@@ -319,6 +319,7 @@ export const createHistoryDetailsView = ({
 
     const openDetails = async (entryId, returnFocus, { ocr = false } = {}) => {
         tags.closeQuick();
+        void tags.showDetails(null);
         state.entryId = entryId;
         state.returnFocus = returnFocus;
         state.details = null;

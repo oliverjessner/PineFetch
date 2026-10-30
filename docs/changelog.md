@@ -1,5 +1,7 @@
 # 3.0.0
 
+- Moved Video Details tags beside the platform in the shared header, visible across all tabs. Kept Add Tag next to up to three chips (one in narrow windows), with an assigned-tags overflow for removal and protection against stale replies during video changes.
+
 - Promoted Tags to its own full-width main section, removed the nested All Content / Tags navigation, and retained collection, search, pagination and contextual Back navigation across sections. Added a purposeful empty state for the first tag.
 - Simplified History to search, Search in and a Filters popover for Source and Tag, with an active-filter count and individual or combined reset. Retained the narrower statistics sidebar and existing combined query behavior.
 

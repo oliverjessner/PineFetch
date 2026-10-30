@@ -23,6 +23,7 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
     const state = {
         open: false,
         card: null,
+        header: null,
         id: null,
         trigger: null,
         epoch: 0,
@@ -34,10 +35,26 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
         mode: 'select',
         color: tagPalette[0],
         created: null,
+        assignedOnly: false,
     };
     const creations = new Map();
     const partials = new Map();
     let savedAttributes = [];
+    const restoreTrigger = () => {
+        for (const [attribute, value] of savedAttributes)
+            if (value === null) state.trigger?.removeAttribute(attribute);
+            else state.trigger?.setAttribute(attribute, value);
+    };
+    const setTrigger = trigger => {
+        state.trigger = trigger;
+        savedAttributes = ['aria-controls', 'aria-expanded', 'aria-haspopup'].map(attribute => [
+            attribute,
+            trigger.getAttribute(attribute),
+        ]);
+        trigger.setAttribute('aria-controls', panel.id);
+        trigger.setAttribute('aria-expanded', 'true');
+        trigger.setAttribute('aria-haspopup', 'dialog');
+    };
     const current = (epoch, id) => state.open && state.epoch === epoch && state.id === id;
     const status = (message = '', error = false) => {
         el('status').textContent = message;
@@ -45,17 +62,13 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
     };
     const position = () => {
         if (!state.open) return;
-        if (!state.trigger?.isConnected && state.card?.isConnected) {
-            const replacement = state.card.querySelector('.pinefetch-history-open-btn');
-            if (replacement) {
-                state.trigger = replacement;
-                savedAttributes = ['aria-controls', 'aria-expanded', 'aria-haspopup'].map(attribute => [
-                    attribute,
-                    replacement.getAttribute(attribute),
-                ]);
-                replacement.setAttribute('aria-controls', panel.id);
-                replacement.setAttribute('aria-expanded', 'true');
-                replacement.setAttribute('aria-haspopup', 'dialog');
+        if (!state.trigger?.isConnected || !state.trigger.getClientRects().length) {
+            const replacement =
+                state.header?.querySelector('[data-detail-tags-add]') ||
+                state.card?.querySelector('.pinefetch-history-open-btn');
+            if (replacement?.isConnected && replacement.getClientRects().length) {
+                restoreTrigger();
+                setTrigger(replacement);
             }
         }
         const trigger = state.trigger;
@@ -85,9 +98,7 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
         observer.disconnect();
         if (typeof panel.hidePopover === 'function' && panel.matches(':popover-open')) panel.hidePopover();
         panel.hidden = true;
-        for (const [attribute, value] of savedAttributes)
-            if (value === null) trigger?.removeAttribute(attribute);
-            else trigger?.setAttribute(attribute, value);
+        restoreTrigger();
         if (restoreFocus && trigger?.isConnected && trigger.getClientRects().length)
             trigger.focus({ preventScroll: true });
     };
@@ -97,11 +108,16 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
         panel.setAttribute('aria-labelledby', state.mode === 'create' ? 'quickCreateTitle' : 'quickTagsTitle');
         el('select').hidden = state.mode !== 'select';
         el('form').hidden = state.mode !== 'create';
+        panel.querySelector('#quickTagsTitle').textContent = state.assignedOnly ? 'Assigned tags' : 'Tags';
+        search.placeholder = state.assignedOnly ? 'Search assigned tags…' : 'Search tags…';
+        el('create').hidden = state.assignedOnly;
         search.disabled = false;
         el('create').disabled = state.loading || state.busy;
         el('options').replaceChildren();
         const selected = new Set(state.assigned.map(tag => tag.id));
-        const available = state.definitions.filter(tag => searchContains(tag.name, search.value));
+        const available = (state.assignedOnly ? state.assigned : state.definitions).filter(tag =>
+            searchContains(tag.name, search.value)
+        );
         for (const tag of available.slice(0, 200)) {
             const button = document.createElement('button');
             button.type = 'button';
@@ -122,7 +138,11 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
         if (!available.length) {
             const empty = document.createElement('p');
             empty.className = 'oj-helper';
-            empty.textContent = state.loading ? 'Loading tags…' : 'No tags match. Create a new tag below.';
+            empty.textContent = state.loading
+                ? 'Loading tags…'
+                : state.assignedOnly
+                  ? 'No assigned tags match.'
+                  : 'No tags match. Create a new tag below.';
             el('options').append(empty);
         }
         if (available.length > 200) {
@@ -148,7 +168,10 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
         state.loading = true;
         render();
         try {
-            const [definitions, assigned] = await Promise.all([choices(), api.getHistoryTags({ id })]);
+            const [definitions, assigned] = await Promise.all([
+                state.assignedOnly ? Promise.resolve([]) : choices(),
+                api.getHistoryTags({ id }),
+            ]);
             if (!current(epoch, id) || request !== state.read) return;
             state.definitions = definitions;
             state.assigned = assigned;
@@ -188,7 +211,7 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
                     const option = [...el('options').querySelectorAll('[role=checkbox]')].find(
                         button => button.dataset.tagId === tag.id
                     );
-                    option?.focus({ preventScroll: true });
+                    (option || search).focus({ preventScroll: true });
                 }
             }
         }
@@ -367,10 +390,10 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
     return Object.freeze({
         close,
         sync: event => {
-            if (state.open && !state.busy && !event.historyId) void load();
+            if (state.open && !state.busy && (!event.historyId || event.historyId === state.id)) void load();
         },
-        open: async (id, trigger) => {
-            if (state.open && state.id === id && state.trigger === trigger) {
+        open: async (id, trigger, { assignedOnly = false } = {}) => {
+            if (state.open && state.id === id && state.trigger === trigger && state.assignedOnly === assignedOnly) {
                 close({ restoreFocus: true });
                 return;
             }
@@ -381,17 +404,12 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
             (trigger.closest('dialog[open]') || document.body).append(panel);
             state.open = true;
             state.id = id;
-            state.trigger = trigger;
+            setTrigger(trigger);
             state.card = trigger.closest('[data-history-id]');
+            state.header = trigger.closest('#historyDetailsTags');
+            state.assignedOnly = assignedOnly;
             state.epoch++;
             const epoch = state.epoch;
-            savedAttributes = ['aria-controls', 'aria-expanded', 'aria-haspopup'].map(attribute => [
-                attribute,
-                trigger.getAttribute(attribute),
-            ]);
-            trigger.setAttribute('aria-controls', panel.id);
-            trigger.setAttribute('aria-expanded', 'true');
-            trigger.setAttribute('aria-haspopup', 'dialog');
             state.mode = 'select';
             state.color = tagPalette[0];
             state.created = null;
@@ -413,7 +431,7 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
             search.focus({ preventScroll: true });
             const pending = creations.get(id);
             const partial = partials.get(id);
-            if (pending || partial) {
+            if (!assignedOnly && (pending || partial)) {
                 const operation = pending || partial;
                 state.mode = 'create';
                 state.busy = Boolean(pending);

@@ -204,59 +204,102 @@ export const createTagController = ({ api, appendLog, onChange = () => {}, openT
     const manage = (id, trigger = document.activeElement) => quick.open(id, trigger);
     let detailId = null,
         detailRequest = 0,
-        detailBusy = false;
+        detailLoading = false;
+    const detailRemovals = new Set();
+    const compactHeader = matchMedia('(max-width: 620px)');
     if (detailsRoot)
         detailsRoot.innerHTML =
-            '<div class="oj-cluster"><h3 class="oj-heading-3 oj-grow">Tags</h3><button type="button" class="oj-button oj-button-secondary oj-button-compact">+ Add Tag</button></div><div class="oj-cluster" data-detail-tags></div><p class="oj-helper" role="status" data-detail-tag-status></p>';
-    detailsRoot?.querySelector('button').addEventListener('click', event => {
+            '<span aria-hidden="true">·</span><span class="oj-label">Tags</span><span data-detail-tags></span><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-detail-tags-overflow hidden></button><button type="button" class="oj-button oj-button-secondary oj-button-compact" data-detail-tags-add>+ Add Tag</button><span class="oj-helper oj-sr-only" role="status" data-detail-tag-status></span>';
+    const detailStatus = (message = '', error = false) => {
+        const status = detailsRoot?.querySelector('[data-detail-tag-status]');
+        if (!status) return;
+        status.textContent = message;
+        status.classList.toggle('oj-sr-only', !error);
+        status.classList.toggle('oj-status-error', error);
+    };
+    const renderDetails = () => {
+        if (!detailsRoot) return;
+        const list = detailsRoot.querySelector('[data-detail-tags]');
+        const more = detailsRoot.querySelector('[data-detail-tags-overflow]');
+        const add = detailsRoot.querySelector('[data-detail-tags-add]');
+        detailsRoot.hidden = !detailId;
+        const id = detailId;
+        const rows = assigned.get(id) || [];
+        const limit = compactHeader.matches ? 1 : 3;
+        const busy = detailLoading || detailRemovals.has(detailId);
+        detailsRoot.setAttribute('aria-busy', String(busy));
+        list.replaceChildren();
+        for (const tag of rows.slice(0, limit))
+            list.append(
+                createTagChip(tag, {
+                    open: openTag,
+                    disabled: busy,
+                    remove: () => void removeDetailTag(id, tag.id),
+                })
+            );
+        more.hidden = rows.length <= limit;
+        const remaining = Math.max(0, rows.length - limit);
+        more.textContent = `+${remaining}`;
+        more.setAttribute('aria-label', `Show ${remaining} more ${remaining === 1 ? 'tag' : 'tags'}`);
+        more.title = rows
+            .slice(limit)
+            .map(tag => tag.name)
+            .join(', ');
+        add.disabled = !detailId || detailLoading;
+    };
+    const removeDetailTag = async (id, tagId) => {
+        if (!id || detailLoading || detailRemovals.has(id)) return;
+        detailRemovals.add(id);
+        const restoreFocus = detailsRoot.contains(document.activeElement);
+        detailStatus();
+        renderDetails();
+        let failure;
+        try {
+            await assignEntry(id, tagId, false);
+            assigned.set(
+                id,
+                (assigned.get(id) || []).filter(tag => tag.id !== tagId)
+            );
+        } catch (error) {
+            failure = String(error);
+            appendLog(`[Tags] ${error}`, true);
+        } finally {
+            detailRemovals.delete(id);
+            if (id === detailId) {
+                renderDetails();
+                detailStatus(failure || '', Boolean(failure));
+                if (restoreFocus && document.activeElement === document.body)
+                    detailsRoot.querySelector('[data-detail-tags-add]').focus({ preventScroll: true });
+            }
+        }
+    };
+    detailsRoot?.querySelector('[data-detail-tags-add]').addEventListener('click', event => {
         if (detailId) void manage(detailId, event.currentTarget);
     });
+    detailsRoot?.querySelector('[data-detail-tags-overflow]').addEventListener('click', event => {
+        if (detailId) void quick.open(detailId, event.currentTarget, { assignedOnly: true });
+    });
+    compactHeader.addEventListener('change', renderDetails);
     const showDetails = async id => {
         detailId = id;
         const request = ++detailRequest;
         if (!detailsRoot) return;
-        const list = detailsRoot.querySelector('[data-detail-tags]');
-        const status = detailsRoot.querySelector('[data-detail-tag-status]');
-        if (!id) {
-            list.replaceChildren();
-            status.textContent = '';
-            return;
-        }
-        status.textContent = 'Loading tags…';
+        detailLoading = Boolean(id);
+        detailStatus(id ? 'Loading tags…' : '');
+        renderDetails();
+        if (!id) return;
         try {
             const rows = await api.getHistoryTags({ id });
-            if (request !== detailRequest) return;
+            if (request !== detailRequest || id !== detailId) return;
             assigned.set(id, rows);
-            list.replaceChildren();
-            for (const tag of rows)
-                list.append(
-                    createTagChip(tag, {
-                        open: openTag,
-                        disabled: detailBusy,
-                        remove: async () => {
-                            if (detailBusy) return;
-                            detailBusy = true;
-                            for (const button of list.querySelectorAll('button')) button.disabled = true;
-                            let failure;
-                            try {
-                                await assignEntry(id, tag.id, false);
-                            } catch (error) {
-                                failure = String(error);
-                                appendLog(`[Tags] ${error}`, true);
-                            } finally {
-                                detailBusy = false;
-                                if (id === detailId) {
-                                    await showDetails(id);
-                                    if (failure && id === detailId) status.textContent = failure;
-                                }
-                            }
-                        },
-                    })
-                );
-            if (!rows.length) list.textContent = 'No tags assigned.';
-            status.textContent = '';
+            detailStatus();
         } catch (error) {
-            if (request === detailRequest) status.textContent = String(error);
+            if (request === detailRequest && id === detailId) detailStatus(String(error), true);
+        } finally {
+            if (request === detailRequest && id === detailId) {
+                detailLoading = false;
+                renderDetails();
+            }
         }
     };
     return Object.freeze({

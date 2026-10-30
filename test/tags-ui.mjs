@@ -109,7 +109,16 @@ const installTagsBridge = () => {
             for (const tags of assignments.values()) tags.delete(args.id);
             return;
         }
-        if (command === 'get_history_tags') return structuredClone(tagsFor(args.id));
+        if (command === 'get_history_tags') {
+            const result = structuredClone(tagsFor(args.id));
+            if (state.holdTagsRead) {
+                state.holdTagsRead = false;
+                return new Promise(resolve => {
+                    state.releaseTagsRead = () => resolve(result);
+                });
+            }
+            return result;
+        }
         if (command === 'get_history_tags_batch')
             return args.ids.map(id => ({ history_entry_id: id, tags: structuredClone(tagsFor(id)) }));
         if (command === 'add_history_tag' || command === 'remove_history_tag') {
@@ -188,7 +197,14 @@ const installTagsBridge = () => {
             };
         if (command === 'get_history_details') {
             const entry = records.find(row => row.id === args.id);
-            return { entry, output_file_available: false, captions: [], subtitles: [], has_transcript: false };
+            const result = { entry, output_file_available: false, captions: [], subtitles: [], has_transcript: false };
+            if (state.holdDetailsRead) {
+                state.holdDetailsRead = false;
+                return new Promise(resolve => {
+                    state.releaseDetailsRead = () => resolve(result);
+                });
+            }
+            return result;
         }
         if (command === 'get_history_account') {
             const entry = records.find(row => row.id === args.id);
@@ -464,6 +480,37 @@ try {
             await page.locator('[data-tags-content] .pinefetch-history-open-btn').first().click();
             await page.locator('#historyDetailsContent').waitFor();
             await page.locator('#historyDetailsTags .pinefetch-tag-name').waitFor();
+            assert.equal(await page.locator('#historyDetailsHeader #historyDetailsTags').count(), 1);
+            assert.equal(await page.locator('#historyOverviewPanel #historyDetailsTags').count(), 0);
+            const readsBeforeTabs = await page.evaluate(
+                () => globalThis.__tagsUi.commands.filter(call => call.command === 'get_history_tags').length
+            );
+            for (const id of [
+                'historyTranscriptTab',
+                'historySubtitlesTab',
+                'historyOcrTab',
+                'historySocialTab',
+                'historyKeywordsTab',
+                'historyOverviewTab',
+            ]) {
+                await page.locator(`#${id}`).click();
+                assert(await page.locator('#historyDetailsTags').isVisible());
+                assert(await page.locator('#historyDetailsTags').getByText('Research', { exact: true }).isVisible());
+            }
+            assert.equal(
+                await page.evaluate(
+                    () => globalThis.__tagsUi.commands.filter(call => call.command === 'get_history_tags').length
+                ),
+                readsBeforeTabs
+            );
+            await page.locator('#historyTranscriptTab').click();
+            await page.locator('#historyDetailsTags [data-detail-tags-add]').click();
+            await page
+                .locator('#historyTagsPopover')
+                .getByRole('checkbox', { name: 'Remove tag Research', exact: true })
+                .waitFor();
+            await page.keyboard.press('Escape');
+            await page.locator('#historyOverviewTab').click();
             await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
             const picker = page.locator('#historyTagsPopover');
             await picker.getByRole('checkbox', { name: 'Add tag Investigação', exact: true }).waitFor();
@@ -847,6 +894,138 @@ try {
                 node.scrollTop = 0;
             });
             await page.screenshot({ path: `/tmp/pinefetch-tags-overview-${engine.name()}.png` });
+            // Header metadata persists across tabs and keeps overflow mutations local.
+            const longHeaderTagName = 'Investigation with a deliberately long label for compact header display';
+            await page.evaluate(name => {
+                const ui = globalThis.__tagsUi;
+                const entry = ui.records.find(row => row.id === 'tag-entry-60');
+                entry.title = 'A long saved video title with creator context and details that wrap safely '.repeat(2);
+                entry.thumbnail =
+                    'data:image/svg+xml,' +
+                    encodeURIComponent(
+                        '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#35C9A5"/></svg>'
+                    );
+                ui.definitions.find(tag => tag.name === 'Investigação').name = name;
+            }, longHeaderTagName);
+            await page.getByRole('button', { name: 'Open tag Research', exact: true }).click();
+            await page.locator('[data-tags-content] .pinefetch-history-open-btn').first().click();
+            const header = page.locator('#historyDetailsHeader');
+            const headerTags = header.locator('#historyDetailsTags');
+            const headerAdd = headerTags.locator('[data-detail-tags-add]');
+            const headerMore = headerTags.locator('[data-detail-tags-overflow]');
+            await headerAdd.waitFor();
+            await page.waitForFunction(
+                () => !globalThis.document.querySelector('#historyDetailsTags [data-detail-tags-add]').disabled
+            );
+            assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), 3);
+            assert.equal(
+                await headerTags.getByText(longHeaderTagName, { exact: true }).getAttribute('title'),
+                longHeaderTagName
+            );
+            const addBox = await headerAdd.boundingBox();
+            const moreBox = await headerMore.boundingBox();
+            assert(addBox.x >= moreBox.x + moreBox.width && addBox.x - moreBox.x - moreBox.width <= 16);
+            for (const width of [1200, 800, 520, 380]) {
+                await page.setViewportSize({ width, height: 900 });
+                await page.evaluate(
+                    () =>
+                        new Promise(resolve =>
+                            globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))
+                        )
+                );
+                assert(
+                    await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth)
+                );
+                assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), width <= 620 ? 1 : 3);
+                const titleBox = await header.locator('#historyDetailsTitle').boundingBox();
+                const imageBox = await header.locator('#historyDetailsThumbnail').boundingBox();
+                assert(titleBox.x + titleBox.width <= imageBox.x);
+                await headerAdd.click();
+                const popupBox = await picker.boundingBox();
+                assert(
+                    popupBox.x >= 0 &&
+                        popupBox.y >= 0 &&
+                        popupBox.x + popupBox.width <= width &&
+                        popupBox.y + popupBox.height <= 900
+                );
+                await page.keyboard.press('Escape');
+                assert(await headerAdd.evaluate(button => button === globalThis.document.activeElement));
+                if ([1200, 380].includes(width))
+                    await page.screenshot({ path: `/tmp/pinefetch-header-tags-${engine.name()}-${width}.png` });
+            }
+            await page.setViewportSize({ width: 1200, height: 900 });
+            await headerMore.click();
+            await picker.getByRole('checkbox', { name: 'Remove tag Delayed', exact: true }).waitFor();
+            assert(await picker.locator('[data-quick-create]').isHidden());
+            assert.equal(await picker.getByRole('checkbox', { name: 'Add tag Recovery', exact: true }).count(), 0);
+            await page.evaluate(() => {
+                globalThis.__tagsUi.failAssignment = true;
+            });
+            await picker.getByRole('checkbox', { name: 'Remove tag Delayed', exact: true }).click();
+            await page.waitForFunction(() =>
+                globalThis.document
+                    .querySelector('#historyTagsPopover [data-quick-status]')
+                    .textContent.includes('failed')
+            );
+            assert(await picker.getByRole('checkbox', { name: 'Remove tag Delayed', exact: true }).isVisible());
+            await page.evaluate(() => {
+                globalThis.__tagsUi.failAssignment = false;
+            });
+            await picker.getByRole('checkbox', { name: 'Remove tag Delayed', exact: true }).click();
+            await picker
+                .getByRole('checkbox', { name: 'Remove tag Delayed', exact: true })
+                .waitFor({ state: 'detached' });
+            await picker.getByRole('checkbox', { name: 'Remove tag Overflow', exact: true }).click();
+            await headerMore.waitFor({ state: 'hidden' });
+            assert(await picker.isVisible());
+            await page.keyboard.press('Escape');
+            assert(await headerAdd.evaluate(button => button === globalThis.document.activeElement));
+            await headerTags.getByRole('button', { name: 'Remove tag Fresh', exact: true }).click();
+            await headerTags.getByText('Fresh', { exact: true }).waitFor({ state: 'detached' });
+            await page.waitForFunction(
+                () =>
+                    globalThis.document.querySelectorAll('#historyDetailsTags .pinefetch-tag-remove:not(:disabled)')
+                        .length === 2
+            );
+            await page.evaluate(() => {
+                globalThis.__tagsUi.failAssignment = true;
+            });
+            await headerTags.getByRole('button', { name: `Remove tag ${longHeaderTagName}`, exact: true }).click();
+            await page.waitForFunction(() =>
+                globalThis.document
+                    .querySelector('#historyDetailsTags [data-detail-tag-status]')
+                    .textContent.includes('failed')
+            );
+            assert(await headerTags.getByText(longHeaderTagName, { exact: true }).isVisible());
+            await page.evaluate(() => {
+                globalThis.__tagsUi.failAssignment = false;
+            });
+            await headerTags.getByRole('button', { name: `Remove tag ${longHeaderTagName}`, exact: true }).click();
+            await headerTags.getByText(longHeaderTagName, { exact: true }).waitFor({ state: 'detached' });
+            await page.locator('#historyDetailsView .pinefetch-tag-return').click();
+            await page.evaluate(() => {
+                globalThis.__tagsUi.holdTagsRead = true;
+            });
+            await page.locator('[data-tags-content] .pinefetch-history-open-btn').first().click();
+            await page.waitForFunction(() => typeof globalThis.__tagsUi.releaseTagsRead === 'function');
+            await page.locator('#viewHistoryBtn').click();
+            await page.locator('#historySearchInput').fill('');
+            await page.locator('#historyList [data-history-id="tag-entry-57"]').waitFor();
+            await page.evaluate(() => {
+                globalThis.__tagsUi.holdDetailsRead = true;
+            });
+            await page.locator('#historyList [data-history-id="tag-entry-57"] .pinefetch-history-open-btn').click();
+            await page.waitForFunction(() => typeof globalThis.__tagsUi.releaseDetailsRead === 'function');
+            assert(await headerTags.isHidden());
+            await page.evaluate(() => globalThis.__tagsUi.releaseDetailsRead());
+            await headerAdd.waitFor();
+            assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), 0);
+            assert(!(await headerTags.textContent()).includes('No tags assigned'));
+            await page.evaluate(() => globalThis.__tagsUi.releaseTagsRead());
+            assert.equal(await page.locator('#historyDetailsTitle').textContent(), 'Clip 57');
+            assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), 0);
+            await page.locator('#viewTagsBtn').click();
+            await page.locator('[data-tags-overview]').click();
             // The isolated fixture can also represent a first launch with no tags.
             await page.evaluate(() => {
                 globalThis.__tagsUi.definitions.splice(0);
@@ -872,7 +1051,7 @@ try {
             assert(await page.evaluate(() => globalThis.__tagModalMaximum <= 1));
             assert.deepEqual(errors, []);
             console.log(
-                `[tags:ui] ${engine.name()}: standalone Tags, cached navigation/context, filter popover/combined queries/reset, empty state, CRUD, quick tagging, single parent modal, failure recovery, late replies, pagination, accounts, keyboard/focus and narrow layouts passed.`
+                `[tags:ui] ${engine.name()}: persistent header/tabs, responsive chip overflow/removal, stale header replies, standalone Tags/context, filters, CRUD, quick tagging, single parent modal, failure recovery, pagination, accounts and keyboard/focus passed.`
             );
         } finally {
             await browser.close();

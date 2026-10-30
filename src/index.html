@@ -1298,7 +1298,16 @@
                     <header id="historyDetailsHeader" class="pinefetch-list-card-layout pinefetch-no-media">
                         <div class="pinefetch-panel-heading">
                             <h2 id="historyDetailsTitle" class="oj-heading-2" tabindex="-1">Video Details</h2>
-                            <span id="historyDetailsSubtitle" class="oj-muted"></span>
+                            <div class="pinefetch-history-header-metadata">
+                                <span id="historyDetailsSubtitle" class="oj-muted"></span>
+                                <div
+                                    id="historyDetailsTags"
+                                    class="pinefetch-header-tags"
+                                    role="group"
+                                    aria-label="Saved item tags"
+                                    hidden
+                                ></div>
+                            </div>
                         </div>
                         <img id="historyDetailsThumbnail" class="pinefetch-media-thumbnail" alt="" hidden />
                     </header>
@@ -1530,11 +1539,6 @@
                                         Open in Browser
                                     </button>
                                 </div>
-                                <section
-                                    id="historyDetailsTags"
-                                    class="oj-stack pinefetch-entry-tags"
-                                    aria-label="Saved item tags"
-                                ></section>
                                 <div class="pinefetch-overview-workspace">
                                     <dl
                                         id="historyOverviewList"

@@ -53,6 +53,8 @@ The check distinguishes profile/storage permissions, locked databases, cookie de
 
 Local playback may create compatible video previews in PineFetch’s cache. Unused previews are limited to **2 GiB** and **30 days since their last use**; cleanup runs at startup and once per minute. Loaded previews stay protected, including paused players, so the limit can be exceeded while they are in use. Evicted previews are recreated when needed. Original downloads are preserved; no cleanup runs in a cache directory used for History originals.
 
+Search ignores letter case consistently across History and saved text, including `Österreich`/`ÖSTERREICH`, `Straße`/`STRASSE` and equivalent composed or decomposed accents. Accents remain significant (`cafe` does not match `café`); highlighted and copied text keeps its original spelling.
+
 ## CLI
 
 Manage the download queue, list recent downloads and view statistics from your terminal.

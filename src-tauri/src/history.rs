@@ -76,13 +76,11 @@ pub(super) fn search_history_page_from_db(
     )
 }
 
-pub(super) fn history_search_pattern(query: Option<&str>) -> Option<String> {
-    let query = query.map(str::trim).filter(|query| !query.is_empty())?;
-    let escaped = query
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    Some(format!("%{escaped}%"))
+pub(super) fn history_search_key(query: Option<&str>) -> Option<String> {
+    let query = query
+        .map(crate::unicode_search::trim_query)
+        .filter(|query| !query.is_empty())?;
+    Some(crate::unicode_search::key(query))
 }
 
 fn path_extension(path: &str) -> Option<String> {

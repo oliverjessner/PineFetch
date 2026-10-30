@@ -76,6 +76,7 @@ mod test_support;
 #[cfg(test)]
 #[path = "regression_tests.rs"]
 mod tests;
+mod unicode_search;
 mod url_rules;
 mod video_urls;
 mod worker;

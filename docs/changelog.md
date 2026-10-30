@@ -1,5 +1,7 @@
 # 3.0.0
 
+- Refined Tags into compact, navigable rows with color indicators, truncated descriptions, aligned usage counts and OJ action menus. Limited search width, added clear-search empty states and contextual retry, and retained automatic updates and existing creator identity counts.
+
 - Polished History cards with a coordinated thumbnail/remove group, tighter metadata-to-tag spacing, grouped and truncated metadata with full-value tooltips, and compact OJ tag components. Reused design-system spacing, typography, colors and focus styles across standard and narrow layouts.
 
 - Moved Video Details tags beside the platform in the shared header, visible across all tabs. Kept Add Tag next to up to three chips (one in narrow windows), with an assigned-tags overflow for removal and protection against stale replies during video changes.

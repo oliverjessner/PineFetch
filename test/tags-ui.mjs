@@ -31,7 +31,7 @@ const installTagsBridge = () => {
         created_at: 1,
         updated_at: 1,
     };
-    const unused = { ...research, id: '22222222-2222-4222-8222-222222222222', name: 'Unused' };
+    const unused = { ...research, id: '22222222-2222-4222-8222-222222222222', name: 'Unused', description: '' };
     const definitions = [research, unused];
     const assignments = new Map(
         records.map(row => [row.id, new Set(Number(row.id.split('-').at(-1)) % 2 === 0 ? [research.id] : [])])
@@ -68,8 +68,10 @@ const installTagsBridge = () => {
     globalThis.__TAURI__.core.invoke = async (command, args = {}) => {
         state.commands.push({ command, args: structuredClone(args) });
         if (command === 'get_tag_choices') return structuredClone(definitions);
-        if (command === 'list_tags')
+        if (command === 'list_tags') {
+            if (state.failListRead) throw new Error('Fixture tag list failed.');
             return definitions.map(summary).sort((a, b) => key(a.name).localeCompare(key(b.name)));
+        }
         if (command === 'get_tag') {
             if (state.failTagRead) throw new Error('Fixture tag read failed.');
             const tag = definitions.find(tag => tag.id === args.id);
@@ -305,7 +307,16 @@ try {
                     globalThis.document.activeElement?.closest('[data-history-id]')?.dataset.historyId ===
                     'tag-entry-39'
             );
+            await page.evaluate(() => {
+                globalThis.__tagsUi.failListRead = true;
+            });
             await page.locator('#viewTagsBtn').click();
+            await page.locator('[data-tags-retry]').waitFor();
+            assert.match(await page.locator('[data-tags-status]').textContent(), /tag list failed/);
+            await page.evaluate(() => {
+                globalThis.__tagsUi.failListRead = false;
+            });
+            await page.locator('[data-tags-retry]').click();
             await page.locator('[data-tags-definitions] article').first().waitFor();
             assert.equal(await page.locator('#viewTagsBtn').getAttribute('aria-current'), 'page');
             assert(await page.locator('#historySummaryView').isHidden());
@@ -326,6 +337,84 @@ try {
             await page.locator('[data-tags-definitions] article').first().waitFor();
             assert.equal(await page.locator('#viewTagsBtn').getAttribute('aria-current'), 'page');
             assert.equal(await page.locator('[data-tags-definitions] article').count(), 2);
+            const tagRow = page
+                .locator('[data-tags-definitions] article')
+                .filter({ has: page.getByRole('button', { name: 'Open tag Research', exact: true }) });
+            assert.equal(await tagRow.locator('.pinefetch-tag-definition-name').textContent(), 'Research');
+            assert.equal(
+                await tagRow.locator('.pinefetch-tag-definition-text .oj-caption').textContent(),
+                'Saved research'
+            );
+            assert.equal(
+                await tagRow
+                    .locator('.pinefetch-tag-definition-dot')
+                    .evaluate(node => globalThis.getComputedStyle(node).backgroundColor),
+                'rgb(53, 201, 165)'
+            );
+            assert.deepEqual(await tagRow.locator('.pinefetch-tag-definition-counts span').allTextContents(), [
+                '30 saved items',
+                '3 accounts',
+            ]);
+            assert.equal(await page.locator('[data-tags-definitions] .pinefetch-tag-chip').count(), 0);
+            assert.equal(await page.locator('[data-tags-refresh]').count(), 0);
+            assert.equal(await page.locator('#tagsQuery').getAttribute('placeholder'), 'Search tags...');
+            assert.equal(
+                await page
+                    .locator('[data-tags-definitions] article')
+                    .nth(1)
+                    .locator('.pinefetch-tag-definition-text .oj-caption')
+                    .count(),
+                0
+            );
+            assert.deepEqual(
+                await page
+                    .locator('[data-tags-definitions] article')
+                    .nth(1)
+                    .locator('.pinefetch-tag-definition-counts span')
+                    .allTextContents(),
+                ['0 saved items', '0 accounts']
+            );
+            const actionTrigger = page.getByRole('button', { name: 'Actions for tag Research', exact: true });
+            await actionTrigger.focus();
+            await page.keyboard.press('ArrowDown');
+            assert(
+                await page
+                    .getByRole('menuitem', { name: 'Edit Tag', exact: true })
+                    .evaluate(node => node === globalThis.document.activeElement)
+            );
+            await page.keyboard.press('End');
+            assert(
+                await page
+                    .getByRole('menuitem', { name: 'Delete Tag', exact: true })
+                    .evaluate(node => node === globalThis.document.activeElement)
+            );
+            await page.keyboard.press('Home');
+            await page.keyboard.press('ArrowDown');
+            await page.keyboard.press('Escape');
+            assert(await actionTrigger.evaluate(node => node === globalThis.document.activeElement));
+            assert(await page.locator('[data-tags-breadcrumb]').isHidden());
+            await actionTrigger.click();
+            await page.getByRole('button', { name: 'Actions for tag Unused', exact: true }).focus();
+            await page.keyboard.press('ArrowUp');
+            assert(
+                await page
+                    .getByRole('menuitem', { name: 'Delete Tag', exact: true })
+                    .evaluate(node => node === globalThis.document.activeElement)
+            );
+            assert.equal(
+                await page.locator('[data-tags-definitions] [data-oj-dropdown-trigger][aria-expanded="true"]').count(),
+                1
+            );
+            await page.locator('#tagsQuery').click();
+            assert.equal(await page.getByRole('menu').filter({ visible: true }).count(), 0);
+            await page.locator('#tagsQuery').fill('no such collection');
+            await page.locator('[data-tags-no-matches]').waitFor();
+            assert.equal(await page.locator('[data-tags-definitions] article').count(), 0);
+            await page.locator('[data-tags-clear-search]').click();
+            assert.equal(await page.locator('#tagsQuery').inputValue(), '');
+            assert(await page.locator('#tagsQuery').evaluate(node => node === globalThis.document.activeElement));
+            await page.screenshot({ path: `/tmp/pinefetch-tags-overview-${engine.name()}.png` });
+
             await page.locator('#tagsQuery').fill('unused');
             assert.equal(await page.locator('[data-tags-definitions] article').count(), 1);
             await page.locator('#viewDownloadBtn').click();
@@ -339,7 +428,7 @@ try {
             await editor.locator('[type=submit]').click();
             assert.match(await editor.locator('[data-tag-error]').textContent(), /Enter a tag name/);
             await editor.locator('#tagNameInput').fill('Investigation');
-            await editor.locator('#tagDescriptionInput').fill('Evidence and notes');
+            await editor.locator('#tagDescriptionInput').fill('Evidence and notes '.repeat(24));
             await page.screenshot({ path: `/tmp/pinefetch-tag-editor-${engine.name()}.png` });
             await editor.locator('#tagColorInput').fill(' ff0000 ');
             assert.equal(
@@ -359,7 +448,8 @@ try {
             assert.equal(await editor.locator('[data-tag-preview] .pinefetch-tag-name').textContent(), 'Investigation');
             await editor.locator('[type=submit]').click();
             await editor.waitFor({ state: 'hidden' });
-            await page.getByRole('button', { name: 'Edit tag Investigation', exact: true }).click();
+            await page.getByRole('button', { name: 'Actions for tag Investigation', exact: true }).click();
+            await page.getByRole('menuitem', { name: 'Edit Tag', exact: true }).click();
             await page.evaluate(() => {
                 globalThis.__tagsUi.failSave = true;
             });
@@ -375,6 +465,12 @@ try {
             await editor.locator('[type=submit]').click();
             await editor.waitFor({ state: 'hidden' });
             await page.getByRole('button', { name: 'Open tag Investigação', exact: true }).waitFor();
+            await page.waitForFunction(
+                () => globalThis.document.activeElement?.getAttribute('aria-label') === 'Actions for tag Investigação'
+            );
+            await page.locator('#tagsQuery').fill('INVESTIGAÇÃo');
+            assert.equal(await page.locator('[data-tags-definitions] article').count(), 1);
+            await page.locator('#tagsQuery').fill('');
             await page.locator('#tagsView [data-tags-create]').click();
             await editor.locator('#tagNameInput').fill('research');
             await editor.locator('[type=submit]').click();
@@ -383,7 +479,8 @@ try {
             );
             await page.keyboard.press('Escape');
             await editor.waitFor({ state: 'hidden' });
-            await page.getByRole('button', { name: 'Delete tag Unused', exact: true }).click();
+            await page.getByRole('button', { name: 'Actions for tag Unused', exact: true }).click();
+            await page.getByRole('menuitem', { name: 'Delete Tag', exact: true }).click();
             const confirmation = page.getByRole('dialog', { name: 'Delete tag?', exact: true });
             await confirmation.waitFor();
             assert.match(await confirmation.textContent(), /0 saved items/);
@@ -845,7 +942,7 @@ try {
             await page.evaluate(() => {
                 globalThis.__tagsUi.failTagRead = false;
             });
-            await page.locator('[data-tags-refresh]').click();
+            await page.locator('[data-tags-retry]').click();
             await page.waitForFunction(
                 () => globalThis.document.querySelector('[data-tags-crumb]').textContent === 'Research'
             );
@@ -1026,6 +1123,49 @@ try {
             assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), 0);
             await page.locator('#viewTagsBtn').click();
             await page.locator('[data-tags-overview]').click();
+            for (const width of [1440, 1000, 800, 620, 520, 380]) {
+                await page.setViewportSize({ width, height: 900 });
+                const layout = await page.locator('[data-tags-definitions]').evaluate(list => {
+                    const rows = [...list.querySelectorAll('article')];
+                    const search = globalThis.document.querySelector('[data-tags-search]').getBoundingClientRect();
+                    return {
+                        searchWidth: search.width,
+                        searchAligned: Math.abs(search.left - list.getBoundingClientRect().left) < 1,
+                        overflow:
+                            globalThis.document.documentElement.scrollWidth > globalThis.innerWidth ||
+                            list.scrollWidth > list.clientWidth,
+                        rowsFit: rows.every(row => {
+                            const text = row.querySelector('.pinefetch-tag-definition-text').getBoundingClientRect();
+                            const counts = row
+                                .querySelector('.pinefetch-tag-definition-counts')
+                                .getBoundingClientRect();
+                            const menu = row.querySelector('[data-oj-dropdown-trigger]').getBoundingClientRect();
+                            return (
+                                (text.right <= counts.left + 1 || text.bottom <= counts.top + 1) &&
+                                text.right <= menu.left &&
+                                menu.right <= row.getBoundingClientRect().right
+                            );
+                        }),
+                        compact: rows.every(row => row.getBoundingClientRect().height < 110),
+                    };
+                });
+                assert(
+                    layout.searchWidth <= 520 &&
+                        layout.searchAligned &&
+                        !layout.overflow &&
+                        layout.rowsFit &&
+                        layout.compact,
+                    `${width}px overview: ${JSON.stringify(layout)}`
+                );
+                const trigger = page.locator('[data-tags-definitions] [data-oj-dropdown-trigger]').last();
+                await trigger.click();
+                const menuBounds = await page.locator('[data-tags-definitions] [role=menu]:visible').boundingBox();
+                assert(menuBounds.x >= 0 && menuBounds.x + menuBounds.width <= width);
+                assert(menuBounds.y >= 0 && menuBounds.y + menuBounds.height <= 900);
+                await page.keyboard.press('Escape');
+                await page.screenshot({ path: `/tmp/pinefetch-tags-overview-${engine.name()}-${width}.png` });
+            }
+            await page.setViewportSize({ width: 1200, height: 900 });
             // History cards keep their layout under real text and thumbnail pressure.
             await page.evaluate(() => {
                 const ui = globalThis.__tagsUi;
@@ -1171,12 +1311,18 @@ try {
             assert.equal(await page.locator('#historyList [data-history-id]').count(), 3);
             await page.locator('#viewTagsBtn').click();
             await page.locator('[data-tags-overview]').click();
-            // The isolated fixture can also represent a first launch with no tags.
-            await page.evaluate(() => {
-                globalThis.__tagsUi.definitions.splice(0);
-                for (const assigned of globalThis.__tagsUi.assignments.values()) assigned.clear();
-            });
-            await page.locator('[data-tags-refresh]').click();
+            // Delete through the UI: automatic synchronization must reach the no-tags state.
+            while (await page.locator('[data-tags-definitions] article').count()) {
+                const count = await page.locator('[data-tags-definitions] article').count();
+                await page.locator('[data-tags-definitions] [data-oj-dropdown-trigger]').first().click();
+                await page.getByRole('menuitem', { name: 'Delete Tag', exact: true }).click();
+                await confirmation.waitFor();
+                await confirmation.getByRole('button', { name: 'Delete Tag', exact: true }).click();
+                await page.waitForFunction(
+                    count => globalThis.document.querySelectorAll('[data-tags-definitions] article').length < count,
+                    count
+                );
+            }
             await page.locator('[data-tags-empty-state]').waitFor();
             assert(await page.locator('[data-tags-search]').isHidden());
             await page.screenshot({ path: `/tmp/pinefetch-tags-empty-${engine.name()}.png` });

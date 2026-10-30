@@ -97,6 +97,43 @@ fn assignments_are_many_to_many_idempotent_batched_and_never_delete_content() {
     assert_eq!(tags::get(&db, &b.id).unwrap().content_count, 0);
 }
 #[test]
+fn overview_counts_distinct_platform_creators_without_writing_stored_data() {
+    let db = db();
+    let tag = tags::create(&db, input("Overview", "#123456")).unwrap();
+    db.lock().unwrap().execute_batch("INSERT INTO history_entries(id,url,title,source,uploader,created_at,creator_source,creator_id) VALUES
+      ('namesake','https://youtube.com/watch?v=abcdefghijk','Namesake','youtube','Creator',7,'youtube','channel:UCbbbbbbbbbbbbbbbbbbbbbb'),
+      ('blank-name','https://youtube.com/watch?v=abcdefghijk','Blank','youtube','  ',8,'youtube','channel:UCcccccccccccccccccccccc'),
+      ('missing-platform','https://example.test','Unknown',NULL,'Creator',9,NULL,NULL);").unwrap();
+    for id in [
+        "one",
+        "two",
+        "other",
+        "namesake",
+        "blank-name",
+        "missing-platform",
+    ] {
+        tags::assign(&db, id, &tag.id, true).unwrap();
+    }
+    let before = db.lock().unwrap().total_changes();
+    let rows = tags::list(&db).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].content_count, rows[0].account_count), (6, 3));
+    let details = tags::get(&db, &tag.id).unwrap();
+    let accounts = tags::accounts(&db, &tag.id, "", 20, None).unwrap();
+    assert_eq!(rows[0].account_count, details.account_count);
+    assert_eq!(rows[0].account_count, accounts.total_count);
+    assert_eq!(
+        accounts
+            .entries
+            .iter()
+            .map(|row| row.content_count)
+            .sum::<u64>(),
+        4
+    );
+    assert_eq!(db.lock().unwrap().total_changes(), before);
+}
+
+#[test]
 fn counts_derive_current_creator_ids_keep_unverified_separate_and_exclude_missing_identity() {
     let db = db();
     let tag = tags::create(&db, input("Research", "#123456")).unwrap();

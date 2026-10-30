@@ -435,6 +435,12 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             }
             return result;
         }
+        if (['list_tags', 'get_tag_choices', 'get_history_tags', 'get_history_tags_batch'].includes(command)) {
+            if (command === 'list_tags' || command === 'get_tag_choices')
+                return [...(ui.tagDefinitions || [])].map(tag => ({ ...tag, content_count: 0, account_count: 0 }));
+            if (command === 'get_history_tags') return [];
+            return (args.ids || []).map(id => ({ history_entry_id: id, tags: [] }));
+        }
         if (command === 'get_history_account') {
             if (ui.failAccountRead) throw new Error('Fixture account read failed');
             const entries = historyEntries || (await invoke('get_history', { offset: 0, limit: 100 })).entries;

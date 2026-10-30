@@ -19,6 +19,7 @@ export const createHistoryDetailsView = ({
     jobs,
     navigateToDetails,
     navigateToHistory,
+    tags,
 }) => {
     const state = {
         contextEntryId: null,
@@ -392,6 +393,7 @@ export const createHistoryDetailsView = ({
             renderTranscript(null);
             renderCaption(null);
             renderOverview(details);
+            void tags.showDetails(entryId);
             renderCaptionOptions(details.captions || []);
             subtitlesView.reset(entryId, details.subtitles || []);
             transcriptMedia.setEntry({ id: entryId });
@@ -416,10 +418,11 @@ export const createHistoryDetailsView = ({
         const cleanupTabs = initTabs(els.historyDetailsContent);
         window.addEventListener('pagehide', cleanupTabs, { once: true });
 
-        els.historyList.addEventListener('contextmenu', event => {
+        const historyCardsRoot = els.historyList.closest('.pinefetch-split');
+        historyCardsRoot.addEventListener('contextmenu', event => {
             const target = event.target instanceof Element ? event.target : null;
             const item = target?.closest('.pinefetch-history-item');
-            if (!item || !els.historyList.contains(item)) return;
+            if (!item || !historyCardsRoot.contains(item)) return;
             const interactive = target.closest('a, button, input, select, textarea, [contenteditable="true"]');
             if (interactive && !interactive.classList.contains('pinefetch-history-open-btn')) {
                 hideContextMenu();
@@ -428,12 +431,12 @@ export const createHistoryDetailsView = ({
             event.preventDefault();
             openContextMenu(item, event.clientX, event.clientY, item.querySelector('.pinefetch-history-open-btn'));
         });
-        els.historyList.addEventListener('keydown', event => {
+        historyCardsRoot.addEventListener('keydown', event => {
             if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
             const target = event.target instanceof Element ? event.target : null;
             const opener = target?.closest('.pinefetch-history-open-btn');
             const item = opener?.closest('.pinefetch-history-item');
-            if (!item || !els.historyList.contains(item)) return;
+            if (!item || !historyCardsRoot.contains(item)) return;
             event.preventDefault();
             const rect = opener.getBoundingClientRect();
             openContextMenu(item, rect.left, rect.bottom, opener);
@@ -459,6 +462,12 @@ export const createHistoryDetailsView = ({
             const creator = state.contextCreator;
             hideContextMenu();
             if (creator?.uploader && creator.source) showSavedVideosByCreator(creator);
+        });
+        els.historyManageTagsBtn.addEventListener('click', () => {
+            const id = state.contextEntryId;
+            const opener = state.contextReturnFocus;
+            hideContextMenu();
+            if (id) void tags.manage(id, opener);
         });
         els.historyOpenOcrBtn.addEventListener('click', () => {
             const entryId = state.contextEntryId;
@@ -504,7 +513,7 @@ export const createHistoryDetailsView = ({
         });
         window.addEventListener('resize', () => hideContextMenu());
         window.addEventListener('blur', () => hideContextMenu());
-        els.historyList.addEventListener('scroll', () => hideContextMenu(), { passive: true });
+        historyCardsRoot.addEventListener('scroll', () => hideContextMenu(), { capture: true, passive: true });
 
         els.historyDetailsAccountBreadcrumbBtn.addEventListener('click', () => {
             if (state.details?.entry?.id) openAccount(state.details.entry.id, els.historyDetailsAccountBreadcrumbBtn);
@@ -587,6 +596,7 @@ export const createHistoryDetailsView = ({
             else ocrView.deactivate();
         },
         leave: () => {
+            void tags.showDetails(null);
             state.entryId = null;
             state.detailsRequestId += 1;
             subtitlesView.deactivate();

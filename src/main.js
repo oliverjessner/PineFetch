@@ -109,6 +109,13 @@ const els = Object.seal({
     rightPanelTitle: document.getElementById('rightPanelTitle'),
     downloadView: document.getElementById('downloadView'),
     historyView: document.getElementById('historyView'),
+    historyTagsView: document.getElementById('historyTagsView'),
+    historyTagsBtn: document.getElementById('historyTagsBtn'),
+    historyTagFilter: document.getElementById('historyTagFilter'),
+    historyClearTagFilter: document.getElementById('historyClearTagFilter'),
+    historyManageTagsBtn: document.getElementById('historyManageTagsBtn'),
+    historyDetailsTags: document.getElementById('historyDetailsTags'),
+
     historyList: document.getElementById('historyList'),
     historyResultCount: document.getElementById('historyResultCount'),
     historySearchInput: document.getElementById('historySearchInput'),

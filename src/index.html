@@ -164,6 +164,22 @@
                     </div>
 
                     <div id="historyView" class="pinefetch-panel-view oj-stack" hidden>
+                        <div class="oj-cluster pinefetch-history-tag-navigation">
+                            <span class="oj-label oj-grow">All Content</span
+                            ><button id="historyTagsBtn" type="button" class="oj-button oj-button-secondary">
+                                Tags
+                            </button>
+                        </div>
+                        <div class="oj-cluster">
+                            <label class="oj-field oj-grow" for="historyTagFilter"
+                                ><span class="oj-label">Tag</span
+                                ><select id="historyTagFilter" class="oj-select">
+                                    <option value="">All Tags</option>
+                                </select></label
+                            ><button id="historyClearTagFilter" type="button" class="oj-button oj-button-ghost" hidden>
+                                Clear tag filter
+                            </button>
+                        </div>
                         <div class="pinefetch-history-search-controls">
                             <label class="oj-field pinefetch-history-search-query" for="historySearchInput">
                                 <span class="oj-label">Search history</span>
@@ -1184,6 +1200,12 @@
                 </section>
 
                 <section
+                    id="historyTagsView"
+                    class="oj-panel pinefetch-panel pinefetch-history-details-view pinefetch-tags-view"
+                    aria-labelledby="historyTagsTitle"
+                    hidden
+                ></section>
+                <section
                     id="historyDetailsView"
                     class="oj-panel pinefetch-panel pinefetch-history-details-view"
                     aria-labelledby="historyDetailsTitle"
@@ -1451,6 +1473,11 @@
                                         Open in Browser
                                     </button>
                                 </div>
+                                <section
+                                    id="historyDetailsTags"
+                                    class="oj-stack pinefetch-entry-tags"
+                                    aria-label="Saved item tags"
+                                ></section>
                                 <div class="pinefetch-overview-workspace">
                                     <dl
                                         id="historyOverviewList"
@@ -1932,6 +1959,9 @@
                 </button>
                 <button id="historyShowCreatorVideosBtn" class="oj-menu-item" type="button" role="menuitem">
                     Show saved videos by this creator
+                </button>
+                <button id="historyManageTagsBtn" class="oj-menu-item" type="button" role="menuitem">
+                    Manage Tags
                 </button>
                 <button id="historyOpenOcrBtn" class="oj-menu-item" type="button" role="menuitem">Open OCR</button>
             </div>

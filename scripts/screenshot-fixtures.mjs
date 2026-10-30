@@ -117,6 +117,12 @@ export const installScreenshotBridge = ({ videos, version, ocr = null, social = 
                             has_more: false,
                             total_count: history.length,
                         };
+                    case 'get_tag_choices':
+                    case 'list_tags':
+                    case 'get_history_tags':
+                        return [];
+                    case 'get_history_tags_batch':
+                        return (args.ids || []).map(id => ({ history_entry_id: id, tags: [] }));
                     case 'get_history_stats':
                         return {
                             video_count: history.length,

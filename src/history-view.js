@@ -30,6 +30,7 @@ export const createHistoryView = ({
         historySearchField: 'title',
         historySource: '',
         historyExactUser: false,
+        historyCreatorEntryId: null,
         historyClearing: false,
         historyRemoving: false,
         historyRemovalFocus: null,
@@ -446,6 +447,7 @@ export const createHistoryView = ({
         const requestedSearchField = state.historySearchField;
         const requestedSource = state.historySource;
         const requestedExactUser = state.historyExactUser;
+        const requestedCreatorEntryId = state.historyCreatorEntryId;
         let needsFollowUpRefresh = false;
         const offset = append ? state.historyOffset : 0;
         setHistoryLoading(true);
@@ -458,6 +460,7 @@ export const createHistoryView = ({
                 searchField: requestedSearchField,
                 ...(requestedSource ? { source: requestedSource } : {}),
                 ...(requestedExactUser ? { exactUser: true } : {}),
+                ...(requestedCreatorEntryId ? { creatorEntryId: requestedCreatorEntryId } : {}),
             });
             if (state.historyRevision !== requestedRevision) {
                 needsFollowUpRefresh = true;
@@ -514,7 +517,7 @@ export const createHistoryView = ({
         }
     };
 
-    const showSavedVideosByCreator = ({ uploader, source }) => {
+    const showSavedVideosByCreator = ({ uploader, source, entryId }) => {
         if (!uploader || !source) return;
         state.historyFilterRevision += 1;
         if (historySearchTimer !== null) clearTimeout(historySearchTimer);
@@ -526,6 +529,7 @@ export const createHistoryView = ({
         state.historySearchField = 'user';
         state.historySource = source;
         state.historyExactUser = true;
+        state.historyCreatorEntryId = entryId;
         state.historyOffset = 0;
         updateHistorySourceOptions();
         sourceChoice.setValue(source);
@@ -573,6 +577,7 @@ export const createHistoryView = ({
             state.historySearchField = searchField;
             state.historySource = source;
             state.historyExactUser = false;
+            state.historyCreatorEntryId = null;
             invalidateHistoryCache();
             void renderHistory({ force: true });
         };
@@ -635,6 +640,7 @@ export const createHistoryView = ({
                 state.historySearchField = 'title';
                 state.historySource = '';
                 state.historyExactUser = false;
+                state.historyCreatorEntryId = null;
                 invalidateHistoryCache();
                 await renderHistory({ force: true });
                 setHistoryActionStatus('History deleted. Downloaded files remain on disk.');

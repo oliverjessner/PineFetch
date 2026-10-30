@@ -17,6 +17,7 @@ mod completion_store;
 mod config;
 mod config_rules;
 mod cookie_sync;
+mod creator_identity;
 mod database;
 #[cfg(test)]
 mod db_contention_tests;
@@ -37,6 +38,7 @@ mod history_rules;
 mod http_failure_tests;
 #[cfg(test)]
 mod integrity_tests;
+mod keyword_evidence;
 mod keywords;
 mod link_dump_store;
 mod media_tools;
@@ -204,6 +206,8 @@ fn main() {
             commands::get_history_media,
             commands::release_history_media,
             commands::get_history_keywords,
+            commands::get_history_keyword_occurrences,
+            commands::get_history_keyword_source,
             commands::get_history_social_insights,
             commands::load_history_social_insights,
             commands::get_history_transcript,

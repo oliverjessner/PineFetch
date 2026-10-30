@@ -91,3 +91,16 @@ Current Unicode search rules are documented in [UNICODE_SEARCH.md](UNICODE_SEARC
 Later keyword/statistics lock measurements and read-snapshot behavior are documented
 in [DATABASE_CONCURRENCY.md](DATABASE_CONCURRENCY.md); the table above records the
 original schema-13 comparison.
+
+Schema 14 adds `idx_history_identity_order` for `(creator_source, creator_id)`
+followed by the same three ordering keys. Creator navigation resolves the clicked
+History entry's ID; an unverified entry is restricted to itself. Typed user
+searches retain their text-search semantics. Targeted deletion checks only that
+entry's stable ID, entry-scoped cache key and exact legacy name/platform key.
+Shared insights survive until their final verified member is removed.
+
+The isolated `integration_stable_creator_pages_and_targeted_cleanup_use_membership_indexes`
+fixture uses 200,000 History rows and 20,000 unrelated account snapshots. A local
+run measured 3.31 ms for the first stable creator page and 0.87 ms for one deletion.
+The test checks index selection and bounded query work; timings are observations,
+not cross-machine performance guarantees.

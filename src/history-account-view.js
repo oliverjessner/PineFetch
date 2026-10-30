@@ -15,6 +15,7 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
         remoteMore: false,
         remoteBusy: false,
         discovery: 'idle',
+        identityVerified: null,
     };
     const pendingVideos = new Set();
     let rowSequence = 0;
@@ -46,7 +47,10 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
             getHistorySocialInsights: async ({ id }) => (await api.getHistoryAccount({ id, offset: 0 })).insights,
             loadHistorySocialInsights: async ({ id }) => {
                 const snapshot = await api.loadHistoryAccountInsights({ id });
-                if (state.id === id) setProfile(snapshot.profile_url);
+                if (state.id === id) {
+                    setProfile(snapshot.profile_url);
+                    if (state.identityVerified === false) void loadSaved();
+                }
                 return snapshot;
             },
         },
@@ -124,6 +128,7 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
                     : { offset: append ? state.offset : 0 }),
             });
             if (state.id !== id || state.request !== request) return;
+            state.identityVerified = page.identity_verified !== false;
             const total = page.saved.total_count.toLocaleString();
             els.historyAccountTitle.textContent = page.uploader;
             els.historyAccountBreadcrumbCurrent.textContent = page.uploader;
@@ -146,7 +151,12 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
             els.historyAccountSavedEmpty.hidden = els.historyAccountSavedList.childElementCount > 0;
             els.historyAccountMoreSavedBtn.hidden = !page.saved.has_more;
             if (page.insights?.profile_url) setProfile(page.insights.profile_url);
-            status(els.historyAccountStatus);
+            status(
+                els.historyAccountStatus,
+                page.identity_verified === false
+                    ? 'Creator identity is unverified. Only this download is shown; loading the profile may verify a stable platform ID.'
+                    : ''
+            );
             if (!append) social.hydrate(id, page.insights);
         } catch (error) {
             appendLog(`[account] ${error}`, true);
@@ -226,6 +236,7 @@ export const createHistoryAccountView = ({ els, api, appendLog, openVideo, navig
             const page = await api.loadHistoryAccountVideos({ id, offset: append ? state.remoteOffset : 0 });
             if (id !== state.id || request !== state.request) return;
             setProfile(page.profile_url);
+            if (state.identityVerified === false) void loadSaved();
             if (!append) els.historyAccountRemoteList.replaceChildren();
             const existing = new Set([...els.historyAccountRemoteList.children].map(item => item.dataset.url));
             for (const entry of page.entries) {

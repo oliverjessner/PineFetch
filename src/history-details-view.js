@@ -93,6 +93,7 @@ export const createHistoryDetailsView = ({
         state.contextEntryId = entryId;
         state.contextEntryUrl = item.dataset.historyUrl || '';
         state.contextCreator = {
+            entryId,
             uploader: item.dataset.historyUploader || '',
             source: item.dataset.historySource || '',
         };
@@ -552,6 +553,7 @@ export const createHistoryDetailsView = ({
             } else ocrView.deactivate();
             if (event.detail.tab === els.historySocialTab) void socialView.load();
             if (event.detail.tab === els.historyKeywordsTab) void keywordsView.load();
+            else keywordsView.deactivate();
         });
         els.historyCaptionTrackSelect.addEventListener('change', () => void loadSelectedCaption());
         els.historyCaptionCopyBtn.addEventListener('click', () => {

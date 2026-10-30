@@ -1,5 +1,13 @@
 # 3.0.0
 
+- Associate saved creator videos and account insights with stable, platform-scoped IDs from download metadata. Creator filters also use those identities; names and handles no longer merge unrelated accounts or split renamed creators.
+- Keep older downloads without a stable ID isolated and explain their unverified status. Explicit profile loading can resolve membership; mutable profile handles are checked again, while YouTube uses its canonical channel URL.
+- Added a backed-up schema-14 migration, indexed identity pagination and separate identity-scoped account snapshots. Preserve legacy snapshots without guessing their creator.
+- Restrict deletion cleanup to the removed entry's identity and legacy name keys. Keep shared insights until the final member is removed, preserve unrelated snapshots and roll back entry deletion if cleanup fails. An isolated 200,000-entry / 20,000-insight archive completed targeted deletion in about 0.9 ms.
+
+- Include saved creator subtitles in local keyword counts, with separate language columns and filters and shared Unicode token rules for counts and source occurrences.
+- Link words and source counts to paginated occurrences, original saved source text and available video timestamps, adjusting subtitle playback for retained cuts. Full copying preserves original text; source revisions and view generations reject changed data and late replies.
+
 - Limit text and loaded OCR views to 200 visible entries per page, with full-result search, unchanged copy exports and keyboard/time navigation across pages. Large untimed documents retain original offsets and Unicode-safe highlights across display sections.
 - Debounce OCR searches by 250 ms and invalidate older replies immediately. A 25,000-row browser fixture rendered 200 entries in about 23 ms in both tested engines.
 

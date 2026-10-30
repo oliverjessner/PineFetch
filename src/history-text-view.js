@@ -92,6 +92,7 @@ export const createTextReader = ({ input, copy, status, count, viewport, list, a
     const elements = new Map();
     let cachedQuery = null;
     let plain = false;
+    let rawMode = false;
     let matches = [];
     let timed = [];
     const pager = createTextPagination(viewport, () => {
@@ -207,13 +208,21 @@ export const createTextReader = ({ input, copy, status, count, viewport, list, a
         revealTextEntry(viewport, entry.item);
     });
     return Object.freeze({
-        set: text => {
-            if (source === (text || '')) return;
+        set: (text, { raw = false } = {}) => {
+            if (source === (text || '') && rawMode === raw) return;
+            rawMode = raw;
             revision++;
             source = text || '';
-            rows = textEntries(source);
-            plain = rows.length === 1 && rows[0].time === null && source.length > 8192;
-            if (plain) rows = textSections(source);
+            rows = raw ? [] : textEntries(source);
+            plain = raw || (rows.length === 1 && rows[0].time === null && source.length > 8192);
+            if (plain)
+                rows = source
+                    ? textSections(source).map(row => ({
+                          ...row,
+                          sourceStart: row.sourceStart ?? 0,
+                          sourceEnd: row.sourceEnd ?? source.length,
+                      }))
+                    : [];
             rows = rows.map(row => ({
                 ...row,
                 search: searchKey(row.text),
@@ -225,6 +234,29 @@ export const createTextReader = ({ input, copy, status, count, viewport, list, a
             cachedQuery = null;
             selected = null;
             render();
+        },
+        reveal: ({ query, offset = 0 }) => {
+            input.value = query;
+            render();
+            const row = visible.find(
+                row => offset >= (row.sourceStart ?? 0) && offset < (row.sourceEnd ?? source.length)
+            );
+            const index = visible.indexOf(row);
+            if (!row) return;
+            if (pager.show(index)) render();
+            select(row, false);
+            const entry = elements.get(row.id);
+            const ranges = plain ? sectionMatches(row, matches) : textMatches(row.text, query);
+            const local = offset - (row.sourceStart ?? 0);
+            const matchIndex = Math.max(
+                0,
+                ranges.findIndex(range => local >= range.start && local < range.end)
+            );
+            const target = entry.text.querySelectorAll('mark')[matchIndex] || entry.item;
+            target.tabIndex = -1;
+            target.focus({ preventScroll: true });
+            revealTextEntry(viewport, target);
+            target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         },
         reset: () => {
             revision++;

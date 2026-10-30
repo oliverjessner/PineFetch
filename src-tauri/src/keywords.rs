@@ -1,10 +1,10 @@
 //! Deterministic, local term counts over every saved text source for one video.
 use crate::database::Database;
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 
-const MAX_TEXT_BYTES: usize = 128 * 1024 * 1024;
+pub(crate) const MAX_TEXT_BYTES: usize = 128 * 1024 * 1024;
 const MAX_TERMS: usize = 50_000;
 const MIN_OCCURRENCES: u64 = 5;
 static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
@@ -17,6 +17,10 @@ pub(crate) struct KeywordTerm {
     pub(crate) transcript: u64,
     pub(crate) ocr: u64,
     pub(crate) captions: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub(crate) subtitles: u64,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) subtitle_languages: BTreeMap<String, u64>,
     pub(crate) total: u64,
     pub(crate) sources: u8,
 }
@@ -26,6 +30,11 @@ pub(crate) struct KeywordSources {
     pub(crate) ocr_frames: u64,
     pub(crate) ocr_legacy: bool,
     pub(crate) captions: u64,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) subtitle_languages: BTreeMap<String, u64>,
+}
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 #[derive(Debug, Serialize)]
 pub(crate) struct HistoryKeywords {
@@ -40,27 +49,41 @@ struct Miner {
     bytes: usize,
 }
 impl Miner {
+    #[cfg(test)]
     fn add(&mut self, text: &str, source: usize) -> Result<(), String> {
+        self.add_text(text, source, None, None)
+    }
+    fn add_text(
+        &mut self,
+        text: &str,
+        source: usize,
+        language: Option<&str>,
+        format: Option<&str>,
+    ) -> Result<(), String> {
         #[cfg(test)]
         crate::db_contention_tests::analysis_started();
         self.bytes = self.bytes.saturating_add(text.len());
         if self.bytes > MAX_TEXT_BYTES {
             return Err("The saved texts exceed the 128 MiB keyword mining limit.".into());
         }
-        for word in text.split(|c: char| !c.is_alphanumeric()) {
-            let length = word.chars().count();
-            if !(2..=64).contains(&length) || !word.chars().any(char::is_alphabetic) {
-                continue;
-            }
-            let key = word.to_lowercase();
-            if STOP_WORDS.contains(key.as_str()) {
-                continue;
+        let format = if matches!(source, 1 | 2) {
+            Some("plain")
+        } else {
+            format
+        };
+        super::keyword_evidence::visit_tokens(text, format, None, |token| {
+            let word = &text[token.start..token.end];
+            let key = crate::unicode_search::key(word);
+            if !eligible_word(&key) {
+                return Ok(());
             }
             if !self.terms.contains_key(&key) && self.terms.len() >= MAX_TERMS {
                 return Err("The saved texts exceed the 50,000 distinct keyword limit.".into());
             }
             let term = self.terms.entry(key).or_insert_with(|| KeywordTerm {
                 term: word.into(),
+                subtitles: 0,
+                subtitle_languages: BTreeMap::new(),
                 transcript: 0,
                 ocr: 0,
                 captions: 0,
@@ -70,13 +93,22 @@ impl Miner {
             match source {
                 0 => term.transcript += 1,
                 1 => term.ocr += 1,
-                _ => term.captions += 1,
+                2 => term.captions += 1,
+                _ => {
+                    term.subtitles += 1;
+                    *term
+                        .subtitle_languages
+                        .entry(language.unwrap_or("und").into())
+                        .or_default() += 1;
+                }
             }
             term.total += 1;
             term.sources = u8::from(term.transcript > 0)
                 + u8::from(term.ocr > 0)
-                + u8::from(term.captions > 0);
-        }
+                + u8::from(term.captions > 0)
+                + u8::from(term.subtitles > 0);
+            Ok(())
+        })?;
         Ok(())
     }
     fn finish(self) -> Vec<KeywordTerm> {
@@ -90,12 +122,44 @@ impl Miner {
     }
 }
 
-struct TextSnapshot {
-    sources: KeywordSources,
-    texts: Vec<(usize, String)>,
+pub(crate) fn eligible_word(key: &str) -> bool {
+    (2..=64).contains(&key.chars().count())
+        && key.chars().any(char::is_alphabetic)
+        && !STOP_WORDS.contains(key)
 }
-
-fn read_texts(
+#[derive(Debug, Serialize)]
+pub(crate) struct TextSource {
+    pub(crate) kind: usize,
+    pub(crate) source_key: String,
+    pub(crate) language: Option<String>,
+    pub(crate) format: Option<String>,
+    pub(crate) source_start_seconds: f64,
+    pub(crate) timestamp_ms: Option<u64>,
+    pub(crate) text: String,
+}
+impl TextSource {
+    pub(crate) fn key(&self) -> String {
+        crate::hashing::sha256_hex(format!("{}\0{}", self.kind, self.source_key).as_bytes())
+    }
+    pub(crate) fn revision(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(
+            format!(
+                "{:?}\0{:?}\0{}\0{:?}\0",
+                self.language, self.format, self.source_start_seconds, self.timestamp_ms
+            )
+            .as_bytes(),
+        );
+        hash.update(self.text.as_bytes());
+        format!("{:x}", hash.finalize())
+    }
+}
+pub(crate) struct TextSnapshot {
+    sources: KeywordSources,
+    pub(crate) texts: Vec<TextSource>,
+}
+pub(crate) fn read_texts(
     conn: &rusqlite::Connection,
     id: &str,
     byte_limit: usize,
@@ -115,13 +179,12 @@ fn read_texts(
         texts: Vec::new(),
     };
     let mut bytes = 0usize;
-    // The existing byte budget bounds the owned snapshot before copying. Keep
-    // source order so the first observed spelling and every term count survive.
-    for (source, frames, sql) in [
-        (0, false, "SELECT text FROM transcriptions WHERE history_entry_id=?1"),
-        (1, false, "SELECT text FROM history_ocr WHERE history_entry_id=?1 AND text IS NOT NULL"),
-        (1, true, "SELECT full_text FROM history_ocr_frames WHERE history_entry_id=?1 ORDER BY timestamp_ms,id"),
-        (2, false, "SELECT text FROM captions WHERE history_entry_id=?1 ORDER BY created_at,media_path"),
+    for (kind, sql) in [
+        (0,"SELECT text,CAST(rowid AS TEXT),NULL,NULL,0,NULL FROM transcriptions WHERE history_entry_id=?1 ORDER BY rowid"),
+        (1,"SELECT text,'legacy',NULL,NULL,0,NULL FROM history_ocr WHERE history_entry_id=?1 AND text IS NOT NULL"),
+        (1,"SELECT full_text,id,NULL,NULL,0,timestamp_ms FROM history_ocr_frames WHERE history_entry_id=?1 ORDER BY timestamp_ms,id"),
+        (2,"SELECT text,media_path,NULL,NULL,0,NULL FROM captions WHERE history_entry_id=?1 ORDER BY created_at,media_path"),
+        (3,"SELECT text,path,language,format,source_start_seconds,NULL FROM history_subtitles WHERE history_entry_id=?1 ORDER BY language,path"),
     ] {
         let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
         let mut rows = stmt.query([id]).map_err(|e| e.to_string())?;
@@ -130,13 +193,16 @@ fn read_texts(
             if text.trim().is_empty() { continue; }
             bytes = bytes.saturating_add(text.len());
             if bytes > byte_limit { return Err("The saved texts exceed the 128 MiB keyword mining limit.".into()); }
-            match source {
+            let timestamp_ms: Option<u64> = row.get(5).map_err(|e| e.to_string())?;
+            let language: Option<String> = row.get(2).map_err(|e| e.to_string())?;
+            match kind {
                 0 => snapshot.sources.transcript = true,
-                1 if frames => snapshot.sources.ocr_frames += 1,
+                1 if timestamp_ms.is_some() => snapshot.sources.ocr_frames += 1,
                 1 => snapshot.sources.ocr_legacy = true,
-                _ => snapshot.sources.captions += 1,
+                2 => snapshot.sources.captions += 1,
+                _ => *snapshot.sources.subtitle_languages.entry(language.clone().unwrap_or_else(|| "und".into())).or_default() += 1,
             }
-            snapshot.texts.push((source, text.to_owned()));
+            snapshot.texts.push(TextSource { kind, source_key: row.get(1).map_err(|e| e.to_string())?, language, format: row.get(3).map_err(|e| e.to_string())?, source_start_seconds: row.get(4).map_err(|e| e.to_string())?, timestamp_ms, text: text.to_owned() });
         }
     }
     Ok(snapshot)
@@ -146,8 +212,13 @@ pub(crate) fn mine(db: &Database, id: &str) -> Result<HistoryKeywords, String> {
     db.analyze(|| {
         let snapshot = db.read_snapshot(|conn| read_texts(conn, id, MAX_TEXT_BYTES))?;
         let mut miner = Miner::default();
-        for (source, text) in snapshot.texts {
-            miner.add(&text, source)?;
+        for source in snapshot.texts {
+            miner.add_text(
+                &source.text,
+                source.kind,
+                source.language.as_deref(),
+                source.format.as_deref(),
+            )?;
         }
         Ok(HistoryKeywords {
             history_entry_id: id.into(),
@@ -315,7 +386,7 @@ mod tests {
             snapshot
                 .texts
                 .iter()
-                .map(|(_, text)| text.len())
+                .map(|source| source.text.len())
                 .sum::<usize>(),
             7
         );

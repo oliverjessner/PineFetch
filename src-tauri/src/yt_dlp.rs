@@ -25,7 +25,7 @@ pub(crate) fn build_download_args(
         "--print".to_string(),
         "after_video:filepath".to_string(),
         "--print".to_string(),
-        "after_move:pinefetch_metadata:%(.{filepath,title,uploader,thumbnail,upload_date,timestamp,duration})j".to_string(),
+        "after_move:pinefetch_metadata:%(.{filepath,title,uploader,thumbnail,upload_date,timestamp,duration,channel_id,uploader_id})j".to_string(),
         "-f".to_string(),
         job.format.clone(),
         "-o".to_string(),
@@ -96,6 +96,7 @@ pub(super) fn parse_download_metadata_line(line: &str) -> Option<(String, InfoRe
     Some((
         path,
         InfoResponse {
+            creator: crate::creator_identity::Metadata::parse(&value),
             title: string("title"),
             uploader: string("uploader"),
             duration: value.get("duration").and_then(json_value_to_i64),
@@ -252,6 +253,7 @@ pub(crate) fn parse_info_json(raw: &str) -> Result<InfoResponse, String> {
     });
 
     Ok(InfoResponse {
+        creator: crate::creator_identity::Metadata::parse(&value),
         title: value
             .get("title")
             .and_then(|v| v.as_str())

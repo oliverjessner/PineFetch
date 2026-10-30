@@ -209,6 +209,7 @@ pub(crate) async fn get_history(
     source: Option<String>,
     exact_user: Option<bool>,
     cursor: Option<String>,
+    creator_entry_id: Option<String>,
 ) -> Result<HistoryPage, String> {
     let limit = limit.unwrap_or(20).clamp(1, 100);
     let offset = offset.unwrap_or(0);
@@ -220,6 +221,11 @@ pub(crate) async fn get_history(
         exact_user.unwrap_or(false),
     )?;
     tauri::async_runtime::spawn_blocking(move || {
+        let filter = if let Some(id) = creator_entry_id {
+            crate::accounts::history_filter(&db, &id)?
+        } else {
+            filter
+        };
         read_page(&db, limit, offset, filter, cursor.as_deref())
     })
     .await
@@ -864,4 +870,30 @@ pub(crate) async fn load_history_account_videos(
     })
     .await
     .map_err(|e| format!("Account videos request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn get_history_keyword_occurrences(
+    app: AppHandle,
+    id: String,
+    query: crate::keyword_evidence::OccurrenceQuery,
+) -> Result<crate::keyword_evidence::OccurrencePage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::keyword_evidence::occurrences(&app.state::<AppState>().db, &id, query)
+    })
+    .await
+    .map_err(|e| format!("Keyword occurrences failed: {e}"))?
+}
+#[tauri::command]
+pub(crate) async fn get_history_keyword_source(
+    app: AppHandle,
+    id: String,
+    source_key: String,
+    revision: String,
+) -> Result<crate::keywords::TextSource, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::keyword_evidence::source(&app.state::<AppState>().db, &id, &source_key, &revision)
+    })
+    .await
+    .map_err(|e| format!("Keyword source failed: {e}"))?
 }

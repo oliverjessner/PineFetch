@@ -88,10 +88,13 @@ export const checkUnicodeSearch = async (browser, origin) => {
             const { textTimestamp } = await import('/history-text.js');
             const source = Array.from({ length: 25000 }, (_, i) => `[${textTimestamp(i * 1000)}] Row ${i}`).join('\n');
             globalThis.__unicodeSource = source;
-            document.getElementById('query').value = '';
+            globalThis.document.getElementById('query').value = '';
             const before = performance.now();
             globalThis.__reader.set(source);
-            return { milliseconds: performance.now() - before, rendered: document.querySelectorAll('#list li').length };
+            return {
+                milliseconds: performance.now() - before,
+                rendered: globalThis.document.querySelectorAll('#list li').length,
+            };
         });
         assert.equal(measurement.rendered, 200);
         await page.locator('#viewport').focus();
@@ -103,7 +106,7 @@ export const checkUnicodeSearch = async (browser, origin) => {
         await page.locator('#copy').click();
         await page.waitForFunction(() => globalThis.__unicodeCopied === globalThis.__unicodeSource);
         await page.evaluate(() => {
-            document.getElementById('query').value = '';
+            globalThis.document.getElementById('query').value = '';
             globalThis.__unicodeSource = 'a'.repeat(998) + 'Straße' + 'b'.repeat(1000000);
             globalThis.__reader.set(globalThis.__unicodeSource);
         });

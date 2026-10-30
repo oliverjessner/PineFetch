@@ -141,9 +141,14 @@ pub(super) fn complete_files_with_hook(
             }
         }
         let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
+        let creator = info.and_then(|info| {
+            crate::history_rules::source_from_url(&job.url)
+                .and_then(|source| info.creator.identity(&source))
+        });
         crate::completion_store::commit(
             &conn,
             crate::completion_store::CompletionData {
+                creator: creator.as_deref(),
                 job,
                 path,
                 entry: &entry,

@@ -369,3 +369,20 @@ tests; Node tests cover the API contract and DOM-free state transitions. Tests u
 synthetic inputs and temporary/in-memory stores, never personal databases or live
 platform downloads. These gates compile/link the macOS application; they do not
 replace a packaged-app, GUI or bundled-runtime smoke test.
+
+Schema 14 adds platform-scoped creator IDs and a matching order index on History,
+plus `creator_account_insights` for stable-ID or individual-entry snapshots.
+Completion stores the ID in the same transaction as the History entry. Creator
+navigation passes a History identity instead of deriving membership from its
+label. Legacy rows stay isolated until an explicit metadata request can verify an
+ID; old name-keyed snapshots are preserved without speculative backfill. See
+[CREATOR_IDENTITIES.md](CREATOR_IDENTITIES.md).
+
+Keyword counting and evidence use the same Unicode tokenizer over one bounded
+owned text snapshot. Subtitle counts retain their language; occurrence pages
+contain original UTF-16 positions, available cue/frame times and a source revision.
+The source command is History-scoped and checks the revision before returning
+stored text; it accepts no filesystem paths. Counting, hashing and token scanning
+run after the shared database lock is released, on the existing analysis gate.
+Text readers render 200 entries per page; copying retains complete original text.
+Captured processes share a 128 MiB stdout/stderr budget enforced during reading.

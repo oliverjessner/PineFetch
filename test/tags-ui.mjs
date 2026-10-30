@@ -94,6 +94,12 @@ const installTagsBridge = () => {
                 updated_at: 2,
             });
             if (command === 'create_tag') definitions.push(tag);
+            if (command === 'create_tag' && state.holdCreation) {
+                state.holdCreation = false;
+                await new Promise(resolve => {
+                    state.releaseCreation = resolve;
+                });
+            }
             return structuredClone(tag);
         }
         if (command === 'delete_tag') {
@@ -116,6 +122,12 @@ const installTagsBridge = () => {
             }
             if (command === 'add_history_tag') assignments.get(args.id).add(args.tagId);
             else assignments.get(args.id)?.delete(args.tagId);
+            if (state.holdCommittedAssignment) {
+                state.holdCommittedAssignment = false;
+                await new Promise(resolve => {
+                    state.releaseCommittedAssignment = resolve;
+                });
+            }
             return;
         }
         if (command === 'get_tag_content') {
@@ -218,6 +230,15 @@ try {
                 return route.abort();
             });
             await page.goto(origin);
+            await page.evaluate(() => {
+                globalThis.__tagModalMaximum = 0;
+                new globalThis.MutationObserver(() => {
+                    globalThis.__tagModalMaximum = Math.max(
+                        globalThis.__tagModalMaximum,
+                        globalThis.document.querySelectorAll('dialog:modal').length
+                    );
+                }).observe(globalThis.document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });
+            });
             await page.waitForFunction(() => globalThis.__pinefetchScreenshot?.ready);
             await page.locator('#viewHistoryBtn').click();
             await page.locator('#historyList [data-history-id="tag-entry-60"]').waitFor();
@@ -248,13 +269,13 @@ try {
             );
             await page.keyboard.press('Shift+F10');
             await page.getByRole('menuitem', { name: 'Manage Tags', exact: true }).click();
-            const contextPicker = page.locator('#historyTagsDialog');
-            await contextPicker.getByRole('button', { name: 'Add tag Research', exact: true }).click();
-            await contextPicker.getByRole('button', { name: 'Remove tag Research', exact: true }).waitFor();
+            const contextPicker = page.locator('#historyTagsPopover');
+            await contextPicker.getByRole('checkbox', { name: 'Add tag Research', exact: true }).click();
+            await contextPicker.getByRole('checkbox', { name: 'Remove tag Research', exact: true }).waitFor();
             assert.equal(await page.locator('#historyList .pinefetch-history-item').count(), 40);
             assert(await page.locator('#historyDetailsView').isHidden());
-            await contextPicker.getByRole('button', { name: 'Remove tag Research', exact: true }).click();
-            await contextPicker.getByRole('button', { name: 'Add tag Research', exact: true }).waitFor();
+            await contextPicker.getByRole('checkbox', { name: 'Remove tag Research', exact: true }).click();
+            await contextPicker.getByRole('checkbox', { name: 'Add tag Research', exact: true }).waitFor();
             await page.keyboard.press('Escape');
             await page.waitForFunction(
                 () =>
@@ -263,6 +284,12 @@ try {
             );
             await page.locator('#historyTagsBtn').click();
             await page.locator('[data-tags-definitions] article').first().waitFor();
+            await page.locator('[data-tags-section-content]').click();
+            await page.locator('#historyView').waitFor();
+            assert.equal(await page.locator('#historyAllContentBtn').getAttribute('aria-current'), 'page');
+            await page.locator('#historyTagsBtn').click();
+            await page.locator('[data-tags-definitions] article').first().waitFor();
+            assert.equal(await page.locator('[data-tags-section-tags]').getAttribute('aria-current'), 'page');
             assert.equal(await page.locator('[data-tags-definitions] article').count(), 2);
             await page.locator('#historyTagsQuery').fill('unused');
             assert.equal(await page.locator('[data-tags-definitions] article').count(), 1);
@@ -396,21 +423,21 @@ try {
             await page.locator('#historyDetailsContent').waitFor();
             await page.locator('#historyDetailsTags .pinefetch-tag-name').waitFor();
             await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
-            const picker = page.locator('#historyTagsDialog');
-            await picker.getByRole('button', { name: 'Add tag Investigação', exact: true }).waitFor();
-            assert.equal(await picker.getByRole('button', { name: 'Add tag Research', exact: true }).count(), 0);
+            const picker = page.locator('#historyTagsPopover');
+            await picker.getByRole('checkbox', { name: 'Add tag Investigação', exact: true }).waitFor();
+            assert.equal(await picker.getByRole('checkbox', { name: 'Add tag Research', exact: true }).count(), 0);
             const additionsBeforeHold = await page.evaluate(
                 () => globalThis.__tagsUi.commands.filter(call => call.command === 'add_history_tag').length
             );
             await page.evaluate(() => {
                 globalThis.__tagsUi.holdAssignment = true;
             });
-            await picker.getByRole('button', { name: 'Add tag Investigação', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Add tag Investigação', exact: true }).click();
             assert.equal(
-                await picker.locator('[data-tags-assigned]').getByText('Investigação', { exact: true }).count(),
+                await picker.getByRole('checkbox', { name: 'Remove tag Investigação', exact: true }).count(),
                 0
             );
-            await picker.getByRole('button', { name: 'Add tag Investigação', exact: true }).dispatchEvent('click');
+            await picker.getByRole('checkbox', { name: 'Add tag Investigação', exact: true }).dispatchEvent('click');
             assert.equal(
                 await page.evaluate(
                     () => globalThis.__tagsUi.commands.filter(call => call.command === 'add_history_tag').length
@@ -418,34 +445,164 @@ try {
                 additionsBeforeHold + 1
             );
             await page.evaluate(() => globalThis.__tagsUi.releaseAssignment());
-            await picker.locator('[data-tags-assigned]').getByText('Investigação', { exact: true }).waitFor();
+            await picker.getByRole('checkbox', { name: 'Remove tag Investigação', exact: true }).waitFor();
             await page.evaluate(() => {
                 globalThis.__tagsUi.failAssignment = true;
             });
-            await picker.getByRole('button', { name: 'Remove tag Investigação', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Remove tag Investigação', exact: true }).click();
             await page.waitForFunction(() =>
                 globalThis.document
-                    .querySelector('#historyTagsDialog [data-tags-status]')
+                    .querySelector('#historyTagsPopover [data-quick-status]')
                     .textContent.includes('failed')
             );
-            assert(await picker.locator('[data-tags-assigned]').getByText('Investigação', { exact: true }).isVisible());
+            assert(await picker.getByRole('checkbox', { name: 'Remove tag Investigação', exact: true }).isVisible());
             await page.evaluate(() => {
                 globalThis.__tagsUi.failAssignment = false;
             });
-            await picker.getByRole('button', { name: 'Create New Tag', exact: true }).click();
-            await editor.locator('#tagNameInput').fill('Fresh');
-            await editor.locator('[type=submit]').click();
-            await editor.waitFor({ state: 'hidden' });
-            await picker.locator('[data-tags-assigned]').getByText('Fresh', { exact: true }).waitFor();
-            await picker.getByRole('button', { name: 'Create New Tag', exact: true }).click();
-            await editor.locator('#tagNameInput').fill('Overflow');
-            await editor.locator('[type=submit]').click();
-            await editor.waitFor({ state: 'hidden' });
-            await picker.locator('[data-tags-assigned]').getByText('Overflow', { exact: true }).waitFor();
+            await picker.locator('[data-quick-create]').click();
+            await picker.locator('#quickTagName').fill('Fresh');
+            assert.equal(await page.locator('dialog:modal').count(), 0);
+            await picker.getByRole('button', { name: 'Create & Add', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Remove tag Fresh', exact: true }).waitFor();
+            await picker.locator('[data-quick-create]').click();
+            await picker.locator('#quickTagName').fill('Overflow');
+            await picker.getByRole('button', { name: 'Create & Add', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Remove tag Overflow', exact: true }).waitFor();
+            await picker.locator('[data-quick-create]').click();
+            await picker.getByRole('button', { name: 'Create & Add', exact: true }).click();
+            assert.match(await picker.locator('[data-quick-status]').textContent(), /Enter a tag name/);
+            await picker.locator('#quickTagName').fill('research');
+            await picker.getByRole('button', { name: 'Create & Add', exact: true }).click();
+            await page.waitForFunction(() =>
+                globalThis.document
+                    .querySelector('#historyTagsPopover [data-quick-status]')
+                    .textContent.includes('already exists')
+            );
+            assert.equal(await page.locator('dialog:modal').count(), 0);
+            await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+            await picker.locator('[data-quick-create]').click();
+            await picker.locator('#quickTagName').fill('Recovery');
+            await page.evaluate(() => {
+                globalThis.__tagsUi.failAssignment = true;
+            });
+            const creationsBefore = await page.evaluate(
+                () => globalThis.__tagsUi.commands.filter(call => call.command === 'create_tag').length
+            );
+            await picker.getByRole('button', { name: 'Create & Add', exact: true }).click();
+            await picker.getByRole('button', { name: 'Retry Add', exact: true }).waitFor();
+            assert.match(await picker.locator('[data-quick-status]').textContent(), /created.*could not be added/i);
+            assert.equal(
+                await page.evaluate(
+                    () => globalThis.__tagsUi.definitions.filter(tag => tag.name === 'Recovery').length
+                ),
+                1
+            );
+            await page.keyboard.press('Escape');
+            await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
+            await picker.getByRole('button', { name: 'Retry Add', exact: true }).waitFor();
+            await page.evaluate(() => {
+                globalThis.__tagsUi.failAssignment = false;
+            });
+            await picker.getByRole('button', { name: 'Retry Add', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Remove tag Recovery', exact: true }).waitFor();
+            assert.equal(
+                await page.evaluate(
+                    () => globalThis.__tagsUi.commands.filter(call => call.command === 'create_tag').length
+                ),
+                creationsBefore + 1
+            );
+            await picker.getByRole('checkbox', { name: 'Remove tag Recovery', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Add tag Recovery', exact: true }).waitFor();
+            await picker.locator('#historyTagsSearch').fill('Recovery');
+            await picker.locator('#historyTagsSearch').focus();
+            await page.keyboard.press('ArrowDown');
+            await page.keyboard.press('Enter');
+            await picker.getByRole('checkbox', { name: 'Remove tag Recovery', exact: true }).waitFor();
+            await page.waitForFunction(
+                () => globalThis.document.activeElement?.getAttribute('aria-label') === 'Remove tag Recovery'
+            );
+            await page.keyboard.press('Space');
+            await picker.getByRole('checkbox', { name: 'Add tag Recovery', exact: true }).waitFor();
+            await picker.locator('#historyTagsSearch').fill('');
+            await page.screenshot({ path: `/tmp/pinefetch-quick-tags-${engine.name()}.png` });
+            await picker.locator('[data-quick-create]').click();
+            await picker.locator('#quickTagName').fill('Preview');
+            await page.setViewportSize({ width: 380, height: 600 });
+            await page.waitForFunction(() => {
+                const box = globalThis.document.querySelector('#historyTagsPopover').getBoundingClientRect();
+                return box.x >= 0 && box.y >= 0 && box.right <= 380 && box.bottom <= 600;
+            });
+            const compactBounds = await picker.boundingBox();
+            assert(
+                compactBounds.x >= 0 &&
+                    compactBounds.y >= 0 &&
+                    compactBounds.x + compactBounds.width <= 380 &&
+                    compactBounds.y + compactBounds.height <= 600
+            );
+            assert(await picker.evaluate(panel => panel.scrollWidth <= panel.clientWidth));
+            await page.screenshot({ path: `/tmp/pinefetch-quick-create-${engine.name()}.png` });
+            await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+            await page.setViewportSize({ width: 1200, height: 900 });
 
             await page.keyboard.press('Escape');
             await picker.waitFor({ state: 'hidden' });
             await page.locator('#historyDetailsTags').getByText('Fresh', { exact: true }).waitFor();
+            // A real native parent modal remains the only modal/focus trap.
+            await page.evaluate(() => {
+                const section = globalThis.document.querySelector('#historyDetailsTags');
+                globalThis.__tagParent = { parent: section.parentNode, next: section.nextSibling };
+                const dialog = globalThis.document.createElement('dialog');
+                dialog.id = 'tagPopoverParent';
+                dialog.className = 'oj-dialog pinefetch-tag-dialog';
+                dialog.style.cssText =
+                    'position:fixed;left:calc(100vw - 280px);top:calc(100vh - 180px);width:260px;max-height:160px;overflow:hidden;margin:0;';
+                const action = globalThis.document.createElement('button');
+                action.type = 'button';
+                action.textContent = 'Parent action';
+                action.onclick = () => {
+                    globalThis.__tagParent.clicked = true;
+                };
+                dialog.append(section, action);
+                globalThis.document.body.append(dialog);
+                dialog.showModal();
+            });
+            await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
+            await picker.locator('#historyTagsSearch').waitFor();
+            assert.equal(await page.locator('dialog:modal').count(), 1);
+            assert.equal(await picker.getAttribute('aria-modal'), 'false');
+            const bounds = await picker.boundingBox();
+            assert(
+                bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= 1200 && bounds.y + bounds.height <= 900
+            );
+            await picker.locator('[data-quick-create]').click();
+            assert.equal(await page.locator('dialog:modal').count(), 1);
+            assert(await editor.isHidden());
+            await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+            await picker.locator('#historyTagsSearch').focus();
+            await page.keyboard.press('ArrowDown');
+            assert.equal(await page.evaluate(() => globalThis.document.activeElement.getAttribute('role')), 'checkbox');
+            await page.keyboard.press('Escape');
+            assert(await page.locator('#tagPopoverParent').isVisible());
+            assert(await picker.isHidden());
+            assert(
+                await page
+                    .locator('#historyDetailsTags')
+                    .getByRole('button', { name: '+ Add Tag', exact: true })
+                    .evaluate(button => button === globalThis.document.activeElement)
+            );
+            await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
+            await picker.locator('#historyTagsSearch').waitFor();
+            await page.locator('#tagPopoverParent').getByRole('button', { name: 'Parent action', exact: true }).click();
+            assert(await picker.isHidden());
+            assert(await page.evaluate(() => globalThis.__tagParent.clicked));
+            await page.evaluate(() => {
+                const section = globalThis.document.querySelector('#historyDetailsTags');
+                const host = globalThis.__tagParent;
+                globalThis.document.querySelector('#tagPopoverParent').close();
+                host.parent.insertBefore(section, host.next);
+                globalThis.document.querySelector('#tagPopoverParent').remove();
+            });
+
             await page.evaluate(async () => {
                 const ui = globalThis.__tagsUi;
                 ui.delayedTag = await globalThis.__TAURI__.core.invoke('create_tag', {
@@ -453,19 +610,19 @@ try {
                 });
             });
             await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
-            await picker.getByRole('button', { name: 'Add tag Delayed', exact: true }).waitFor();
+            await picker.getByRole('checkbox', { name: 'Add tag Delayed', exact: true }).waitFor();
             await page.evaluate(() => {
                 globalThis.__tagsUi.holdAssignment = true;
             });
-            await picker.getByRole('button', { name: 'Add tag Delayed', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Add tag Delayed', exact: true }).click();
             await page.keyboard.press('Escape');
             await page.locator('#historyDetailsView .pinefetch-tag-return').click();
             await page.getByRole('button', { name: 'Manage all 4 tags', exact: true }).waitFor();
             await page.locator('[data-tags-content] .pinefetch-history-open-btn').nth(1).click();
             await page.locator('#historyDetailsContent').waitFor();
             await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
-            await picker.getByRole('button', { name: 'Add tag Delayed', exact: true }).waitFor();
-            assert(await picker.getByRole('button', { name: 'Add tag Delayed', exact: true }).isEnabled());
+            await picker.getByRole('checkbox', { name: 'Add tag Delayed', exact: true }).waitFor();
+            assert(await picker.getByRole('checkbox', { name: 'Add tag Delayed', exact: true }).isEnabled());
             await page.keyboard.press('Escape');
             await page.evaluate(() => globalThis.__tagsUi.releaseAssignment());
             await page.waitForFunction(() => {
@@ -473,6 +630,60 @@ try {
                 return ui.assignments.get('tag-entry-60').has(ui.delayedTag.id);
             });
             assert.equal(await page.locator('#historyDetailsTags').getByText('Delayed', { exact: true }).count(), 0);
+            // Create's reply arrives after moving to another video: only the captured ID is mutated.
+            await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
+            await picker.locator('[data-quick-create]').click();
+            await picker.locator('#quickTagName').fill('Captured');
+            await page.evaluate(() => {
+                globalThis.__tagsUi.holdCreation = true;
+            });
+            await picker.getByRole('button', { name: 'Create & Add', exact: true }).click();
+            await page.waitForFunction(() => typeof globalThis.__tagsUi.releaseCreation === 'function');
+            await picker.getByRole('button', { name: 'Create & Add', exact: true }).dispatchEvent('click');
+            assert.equal(
+                await page.evaluate(
+                    () => globalThis.__tagsUi.definitions.filter(tag => tag.name === 'Captured').length
+                ),
+                1
+            );
+            await page.keyboard.press('Escape');
+            await page.locator('#historyDetailsView .pinefetch-tag-return').click();
+            await page.locator('[data-tags-content] .pinefetch-history-open-btn').nth(2).click();
+            await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Add tag Captured', exact: true }).waitFor();
+            await page.evaluate(() => globalThis.__tagsUi.releaseCreation());
+            await page.waitForFunction(() => {
+                const ui = globalThis.__tagsUi;
+                return ui.assignments.get('tag-entry-58').has(ui.definitions.find(tag => tag.name === 'Captured').id);
+            });
+            assert(await picker.isVisible());
+            assert(await picker.getByRole('checkbox', { name: 'Add tag Captured', exact: true }).isVisible());
+            assert.equal(await page.locator('#historyDetailsTags').getByText('Captured', { exact: true }).count(), 0);
+            await page.keyboard.press('Escape');
+            await page.locator('#historyDetailsView .pinefetch-tag-return').click();
+            await page.locator('[data-tags-content] .pinefetch-history-open-btn').nth(1).click();
+            await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Remove tag Captured', exact: true }).waitFor();
+            // A committed removal with a delayed reply must not swallow a subsequent Add.
+            await page.evaluate(() => {
+                globalThis.__tagsUi.holdCommittedAssignment = true;
+            });
+            await picker.getByRole('checkbox', { name: 'Remove tag Captured', exact: true }).click();
+            await page.waitForFunction(() => typeof globalThis.__tagsUi.releaseCommittedAssignment === 'function');
+            await page.keyboard.press('Escape');
+            await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
+            await picker.getByRole('checkbox', { name: 'Add tag Captured', exact: true }).click();
+            await page.evaluate(() => globalThis.__tagsUi.releaseCommittedAssignment());
+            await picker.getByRole('checkbox', { name: 'Remove tag Captured', exact: true }).waitFor();
+            assert(
+                await page.evaluate(() => {
+                    const ui = globalThis.__tagsUi;
+                    return ui.assignments
+                        .get('tag-entry-58')
+                        .has(ui.definitions.find(tag => tag.name === 'Captured').id);
+                })
+            );
+            await page.keyboard.press('Escape');
             await page.locator('#historyDetailsView .pinefetch-tag-return').click();
 
             await page.locator('[data-tags-history]').click();
@@ -527,9 +738,10 @@ try {
             await page.setViewportSize({ width: 520, height: 800 });
             assert(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth));
             await page.screenshot({ path: `/tmp/pinefetch-tags-${engine.name()}.png` });
+            assert(await page.evaluate(() => globalThis.__tagModalMaximum <= 1));
             assert.deepEqual(errors, []);
             console.log(
-                `[tags:ui] ${engine.name()}: CRUD, validation, assignments/acknowledgement/errors, chips, navigation, pagination, account grouping, filtering, keyboard, late replies and compact layout passed.`
+                `[tags:ui] ${engine.name()}: CRUD, quick popover/inline create, single parent modal, partial-failure retry, captured IDs, ordered mutations, keyboard/focus, navigation, pagination, account grouping and compact layout passed.`
             );
         } finally {
             await browser.close();

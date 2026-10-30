@@ -164,12 +164,23 @@
                     </div>
 
                     <div id="historyView" class="pinefetch-panel-view oj-stack" hidden>
-                        <div class="oj-cluster pinefetch-history-tag-navigation">
-                            <span class="oj-label oj-grow">All Content</span
-                            ><button id="historyTagsBtn" type="button" class="oj-button oj-button-secondary">
+                        <nav class="pinefetch-history-sections" aria-label="History sections">
+                            <button
+                                id="historyAllContentBtn"
+                                type="button"
+                                class="oj-button oj-button-secondary oj-button-compact"
+                                aria-current="page"
+                            >
+                                All Content
+                            </button>
+                            <button
+                                id="historyTagsBtn"
+                                type="button"
+                                class="oj-button oj-button-ghost oj-button-compact"
+                            >
                                 Tags
                             </button>
-                        </div>
+                        </nav>
                         <div class="oj-cluster">
                             <label class="oj-field oj-grow" for="historyTagFilter"
                                 ><span class="oj-label">Tag</span

@@ -1954,10 +1954,6 @@ button.pinefetch-tag-name,
     resize: vertical;
     min-height: 5rem;
 }
-.pinefetch-tag-dialog [data-tags-available] {
-    max-height: 16rem;
-    overflow: auto;
-}
 .pinefetch-tag-choice {
     justify-content: flex-start;
 }
@@ -2021,4 +2017,80 @@ button.pinefetch-tag-name,
 .pinefetch-tags-view [data-tags-description] {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+}
+
+.pinefetch-history-sections {
+    display: flex;
+    width: fit-content;
+    gap: var(--oj-space-1);
+    padding: 3px;
+    border: 1px solid var(--oj-border);
+    border-radius: var(--oj-radius, 8px);
+}
+.pinefetch-history-sections .oj-button {
+    border: 0;
+}
+.pinefetch-tag-navigation-mark {
+    margin-inline-start: var(--oj-space-2);
+    color: var(--oj-text-muted);
+}
+.pinefetch-quick-tags[hidden] {
+    display: none;
+}
+.pinefetch-quick-tags {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    box-sizing: border-box;
+    width: 320px;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    padding: var(--oj-space-3);
+    overflow: auto;
+    color: var(--oj-text);
+    background: var(--oj-surface);
+    border: 1px solid var(--oj-border);
+    border-radius: var(--oj-radius, 8px);
+    box-shadow: 0 8px 28px rgb(0 0 0 / 35%);
+}
+.pinefetch-quick-tags [data-quick-options] {
+    max-height: 15rem;
+    overflow: auto;
+    gap: var(--oj-space-1);
+}
+.pinefetch-quick-tags .pinefetch-tag-choice {
+    width: 100%;
+    justify-content: space-between;
+    text-align: start;
+}
+.pinefetch-quick-tags .pinefetch-tag-chip {
+    max-width: calc(100% - 1.5rem);
+}
+.pinefetch-quick-tag-check {
+    flex: none;
+    width: 1rem;
+}
+.pinefetch-quick-tags fieldset {
+    padding: 0;
+    margin: 0;
+    border: 0;
+}
+.pinefetch-quick-tags .pinefetch-tag-swatch {
+    width: 1.5rem;
+    height: 1.5rem;
+}
+.pinefetch-quick-tags .pinefetch-tag-swatch[aria-pressed='true'] {
+    outline: 2px solid var(--oj-text);
+    outline-offset: 2px;
+}
+.pinefetch-quick-tags [data-quick-status]:empty {
+    display: none;
+}
+.pinefetch-quick-tags [data-quick-status] {
+    overflow-wrap: anywhere;
+}
+
+.pinefetch-quick-tags::backdrop {
+    background: transparent;
+    pointer-events: none;
 }

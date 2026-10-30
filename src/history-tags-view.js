@@ -1,6 +1,6 @@
 import { initTabs } from './vendor/oj/index.js';
 import { searchContains } from './unicode-search.js';
-import { createTagChip } from './tags.js';
+import { createTagChip } from './tag-ui.js';
 import { formatHistorySource, formatLocalDateTime } from './formatters.js';
 
 export const createHistoryTagsView = ({
@@ -13,7 +13,7 @@ export const createHistoryTagsView = ({
     toHistory,
     appendLog,
 }) => {
-    root.innerHTML = `<nav class="oj-breadcrumb" aria-label="Tag breadcrumb"><ol><li><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-history>History</button></li><li><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-overview>Tags</button></li><li aria-current="page" data-tags-crumb hidden></li></ol></nav>
+    root.innerHTML = `<nav class="pinefetch-history-sections" aria-label="History sections"><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-section-content>All Content</button><button type="button" class="oj-button oj-button-secondary oj-button-compact" aria-current="page" data-tags-section-tags>Tags</button></nav><nav class="oj-breadcrumb" aria-label="Tag breadcrumb"><ol><li><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-history>History</button></li><li><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-overview>Tags</button></li><li aria-current="page" data-tags-crumb hidden></li></ol></nav>
     <div class="oj-cluster"><h2 id="historyTagsTitle" class="oj-heading-2 oj-grow" tabindex="-1">Tags</h2><button type="button" class="oj-button oj-button-ghost" data-tags-refresh>Refresh</button><button type="button" class="oj-button oj-button-primary" data-tags-create>Create Tag</button><button type="button" class="oj-button oj-button-secondary" data-tags-edit hidden>Edit Tag</button><button type="button" class="oj-button oj-button-danger" data-tags-delete hidden>Delete Tag</button></div>
     <div data-tags-description class="oj-text"></div><p data-tags-count class="oj-helper"></p><label class="oj-field"> <span data-tags-search-label>Search Tags</span><input id="historyTagsQuery" class="oj-input" type="search" autocomplete="off"></label>
     <p data-tags-status class="oj-status" role="status"></p><div class="pinefetch-tags-scroll" data-tags-scroll><div class="oj-stack" data-tags-definitions></div><div class="oj-tabs" data-oj-tabs data-tags-tabs hidden><div class="oj-tab-list" role="tablist" aria-label="Tagged archive"><button type="button" class="oj-tab" id="tagContentTab" role="tab" aria-controls="tagContentPanel" aria-selected="true">Content</button><button type="button" class="oj-tab" id="tagAccountsTab" role="tab" aria-controls="tagAccountsPanel">Accounts</button></div><section id="tagContentPanel" role="tabpanel" aria-labelledby="tagContentTab" class="oj-tab-panel"><div class="oj-stack" data-tags-content></div></section><section id="tagAccountsPanel" role="tabpanel" aria-labelledby="tagAccountsTab" class="oj-tab-panel" hidden><p class="oj-helper">Accounts are derived from tagged content. Verified creator IDs are grouped; unverified downloads remain separate.</p><div class="oj-stack" data-tags-accounts></div></section></div><p class="oj-helper" data-tags-empty></p><button type="button" class="oj-button oj-button-ghost" data-tags-more hidden>Load more</button></div>`;
@@ -73,6 +73,11 @@ export const createHistoryTagsView = ({
             open.type = 'button';
             open.className = 'oj-button oj-button-ghost pinefetch-tag-definition-title';
             open.append(createTagChip(tag));
+            const chevron = document.createElement('span');
+            chevron.textContent = '›';
+            chevron.setAttribute('aria-hidden', 'true');
+            chevron.className = 'pinefetch-tag-navigation-mark';
+            open.append(chevron);
             open.setAttribute('aria-label', `Open tag ${tag.name}`);
             open.addEventListener('click', () => void openTag(tag.id));
             const description = document.createElement('p');
@@ -307,6 +312,8 @@ export const createHistoryTagsView = ({
     el('create').addEventListener('click', () => void mutate(() => tags.edit()));
     el('edit').addEventListener('click', () => void mutate(() => tags.edit(state.tag)));
     el('delete').addEventListener('click', () => void mutate(() => tags.removeDefinition(state.tag)));
+    el('section-content').addEventListener('click', toHistory);
+    el('section-tags').addEventListener('click', openOverview);
     el('history').addEventListener('click', toHistory);
     el('overview').addEventListener('click', openOverview);
     return Object.freeze({

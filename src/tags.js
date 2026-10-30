@@ -1,51 +1,7 @@
 import { confirmDialog } from './vendor/oj/index.js';
-import { searchContains } from './unicode-search.js';
+import { createTagChip, tagPalette, tagColor } from './tag-ui.js';
+import { createQuickTags } from './quick-tags.js';
 
-export const tagPalette = ['#35C9A5', '#60A5FA', '#A78BFA', '#F472B6', '#FB923C', '#FACC15', '#F87171', '#94A3B8'];
-export const tagColor = color => {
-    const value = typeof color === 'string' ? color.trim().replace(/^#/, '') : '';
-    if (/^[\dA-F]{3}$/i.test(value))
-        return (
-            '#' +
-            value
-                .split('')
-                .map(c => c + c)
-                .join('')
-                .toUpperCase()
-        );
-    return /^[\dA-F]{6}$/i.test(value) ? '#' + value.toUpperCase() : tagPalette[0];
-};
-export const createTagChip = (tag, { open, remove, disabled = false } = {}) => {
-    const chip = document.createElement('span');
-    chip.className = 'pinefetch-tag-chip';
-    chip.style.setProperty('--tag-color', tagColor(tag.color));
-    const dot = document.createElement('span');
-    dot.className = 'pinefetch-tag-dot';
-    dot.setAttribute('aria-hidden', 'true');
-    const label = document.createElement(open ? 'button' : 'span');
-    label.className = 'pinefetch-tag-name';
-    label.textContent = tag.name;
-    label.title = tag.name;
-    if (open) {
-        label.type = 'button';
-        label.addEventListener('click', event => {
-            event.stopPropagation();
-            open(tag);
-        });
-    }
-    chip.append(dot, label);
-    if (remove) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'pinefetch-tag-remove';
-        button.textContent = '×';
-        button.disabled = disabled;
-        button.setAttribute('aria-label', `Remove tag ${tag.name}`);
-        button.addEventListener('click', () => remove(tag));
-        chip.append(button);
-    }
-    return chip;
-};
 export const createTagController = ({ api, appendLog, onChange = () => {}, openTag = () => {}, detailsRoot }) => {
     const assigned = new Map();
     const assignmentReads = new Map();
@@ -102,7 +58,11 @@ export const createTagController = ({ api, appendLog, onChange = () => {}, openT
     });
     const refresh = () => api.listTags();
     const choices = () => api.getTagChoices();
-    const changed = event => onChange(event);
+    let quick;
+    const changed = event => {
+        onChange(event);
+        quick?.sync(event);
+    };
     element('form').addEventListener('submit', async event => {
         event.preventDefault();
         if (saving) return;
@@ -145,7 +105,8 @@ export const createTagController = ({ api, appendLog, onChange = () => {}, openT
         }
     });
     const edit = (tag = null) => {
-        if (saving) return Promise.resolve(null);
+        if (saving || document.querySelector('dialog:modal')) return Promise.resolve(null);
+        quick?.close();
         if (editor.open) return Promise.resolve(null);
         editorRevision++;
         editorTag = tag;
@@ -164,7 +125,10 @@ export const createTagController = ({ api, appendLog, onChange = () => {}, openT
         });
     };
     const removeDefinition = async tag => {
+        quick?.close();
+        if (document.querySelector('dialog:modal')) throw new Error('Close the open dialog before deleting a tag.');
         const current = await api.getTag({ id: tag.id });
+        if (document.querySelector('dialog:modal')) throw new Error('Close the open dialog before deleting a tag.');
         if (
             !(await confirmDialog({
                 title: 'Delete tag?',
@@ -204,167 +168,48 @@ export const createTagController = ({ api, appendLog, onChange = () => {}, openT
                 .map(tag => tag.name)
                 .join(', ');
             button.setAttribute('aria-label', `Manage all ${tags.length} tags`);
-            button.addEventListener('click', () => void manage(id));
+            button.addEventListener('click', event => void manage(id, event.currentTarget));
             root.append(button);
         }
         return root;
     };
-    const picker = document.createElement('dialog');
-    picker.id = 'historyTagsDialog';
-    picker.className = 'oj-dialog pinefetch-tag-dialog';
-    picker.setAttribute('aria-labelledby', 'historyTagsDialogTitle');
-    picker.innerHTML = `<div class="oj-stack"><div class="oj-cluster"><h2 class="oj-heading-2 oj-grow" id="historyTagsDialogTitle">Manage Tags</h2><button type="button" class="oj-button oj-button-ghost" data-tags-close>Done</button></div><p class="oj-helper">Changes are saved immediately.</p><h3 class="oj-heading-3">Assigned tags</h3><div class="oj-cluster" data-tags-assigned></div><label class="oj-field">Search available tags<input id="historyTagsSearch" type="search" class="oj-input" autocomplete="off"></label><div class="oj-stack" data-tags-available></div><button type="button" class="oj-button oj-button-secondary" data-tags-create>Create New Tag</button><p role="status" class="oj-status" data-tags-status></p></div>`;
-    document.body.append(picker);
-    let pickerDefinitions = [];
-    let pickerReturnFocus = null;
-    let pickerId = null,
-        pickerRequest = 0,
-        pickerTags = [],
-        pickerBusy = false,
-        pickerLimit = 100;
-    const pick = name => picker.querySelector(`[data-tags-${name}]`);
-    const renderPicker = () => {
-        pick('assigned').replaceChildren();
-        for (const tag of pickerTags)
-            pick('assigned').append(
-                createTagChip(tag, { remove: tag => void assign(tag, false), disabled: pickerBusy })
-            );
-        if (!pickerTags.length) pick('assigned').textContent = 'No tags assigned.';
-        const query = picker.querySelector('input').value;
-        const selectedIds = new Set(pickerTags.map(tag => tag.id));
-        const available = pickerDefinitions.filter(tag => !selectedIds.has(tag.id) && searchContains(tag.name, query));
-        pick('available').replaceChildren();
-        for (const tag of available.slice(0, pickerLimit)) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'oj-button oj-button-ghost pinefetch-tag-choice';
-            button.disabled = pickerBusy;
-            button.setAttribute('aria-label', `Add tag ${tag.name}`);
-            button.append(createTagChip(tag));
-            button.addEventListener('click', () => void assign(tag, true));
-            pick('available').append(button);
-        }
-        if (!available.length) {
-            const empty = document.createElement('p');
-            empty.className = 'oj-helper';
-            empty.textContent = query
-                ? 'No available tags match this search.'
-                : 'All available tags are assigned. Create a new tag to add another.';
-            pick('available').append(empty);
-        }
-        if (available.length > pickerLimit) {
-            const more = document.createElement('button');
-            more.type = 'button';
-            more.className = 'oj-button oj-button-ghost';
-            more.textContent = 'Show more tags';
-            more.addEventListener('click', () => {
-                pickerLimit += 100;
-                renderPicker();
-            });
-            pick('available').append(more);
-        }
-        pick('create').disabled = pickerBusy;
-    };
-    const loadPicker = async () => {
-        const request = ++pickerRequest;
-        const id = pickerId;
-        pick('status').textContent = 'Loading tags…';
-        try {
-            const [definitions, tags] = await Promise.all([choices(), api.getHistoryTags({ id })]);
-            if (request !== pickerRequest || !picker.open) return;
-            pickerDefinitions = definitions;
-            pickerTags = tags;
-            assigned.set(id, tags);
-            pick('status').textContent = '';
-            renderPicker();
-        } catch (error) {
-            if (request === pickerRequest) pick('status').textContent = String(error);
-        }
-    };
-    const assign = async (tag, add) => {
-        if (pickerBusy) return;
-        const request = pickerRequest;
-        const id = pickerId;
-        pickerBusy = true;
-        renderPicker();
-        pick('status').textContent = 'Saving…';
-        try {
-            await assignEntry(id, tag.id, add);
-            if (request !== pickerRequest || !picker.open) return;
-            pickerTags = add
-                ? [...pickerTags, tag].sort((a, b) => a.name.localeCompare(b.name))
-                : pickerTags.filter(current => current.id !== tag.id);
-            assigned.set(id, pickerTags);
-            pick('status').textContent = 'Saved.';
-        } catch (error) {
-            appendLog(`[Tags] ${error}`, true);
-            if (request === pickerRequest) pick('status').textContent = String(error);
-        } finally {
-            if (request === pickerRequest) {
-                pickerBusy = false;
-                renderPicker();
-            }
-        }
-    };
-    const manage = async (id, returnFocus = document.activeElement) => {
-        if (picker.open) return;
-        pickerBusy = false;
-        pickerReturnFocus = returnFocus;
-        pickerRequest++;
-        pickerId = id;
-        pickerTags = [];
-        pickerLimit = 100;
-        picker.querySelector('input').value = '';
-        pick('assigned').replaceChildren();
-        pick('available').replaceChildren();
-        pick('create').disabled = true;
-        picker.showModal();
-        await loadPicker();
-    };
-    picker.addEventListener('close', () => {
-        pickerRequest++;
-        if (document.querySelector('dialog[open]')) return;
-        const visible = element => element?.isConnected && element.getClientRects().length;
-        const replacement = [...document.querySelectorAll('[data-history-id]')]
-            .find(row => row.dataset.historyId === pickerId && visible(row))
-            ?.querySelector('.pinefetch-history-open-btn');
-        const target = visible(pickerReturnFocus) ? pickerReturnFocus : replacement;
-        if (visible(target)) target.focus({ preventScroll: true });
-    });
-    pick('close').addEventListener('click', () => picker.close());
-    picker.querySelector('input').addEventListener('input', () => {
-        pickerLimit = 100;
-        renderPicker();
-    });
-    pick('create').addEventListener('click', async () => {
-        const id = pickerId;
-        const request = pickerRequest;
-        const tag = await edit();
-        if (tag && picker.open && id === pickerId && request === pickerRequest) await assign(tag, true);
-    });
     const assignments = new Map();
     const assignEntry = async (id, tagId, add) => {
         const key = `${id}:${tagId}`;
-        if (assignments.has(key)) return assignments.get(key);
-        const pending = (async () => {
+        const previous = assignments.get(key);
+        if (previous) {
+            if (previous.add === add) return previous.promise;
+            await previous.promise.catch(() => {});
+            return assignEntry(id, tagId, add);
+        }
+        const operation = { add, promise: null };
+        operation.promise = (async () => {
             await (add ? api.addHistoryTag({ id, tagId }) : api.removeHistoryTag({ id, tagId }));
             changed({ historyId: id, tagId });
         })();
-        assignments.set(key, pending);
+        assignments.set(key, operation);
         try {
-            await pending;
+            await operation.promise;
         } finally {
-            assignments.delete(key);
+            if (assignments.get(key) === operation) assignments.delete(key);
         }
     };
+    quick = createQuickTags({
+        api,
+        choices,
+        assign: assignEntry,
+        onCreated: tag => changed({ tagId: tag.id }),
+        appendLog,
+    });
+    const manage = (id, trigger = document.activeElement) => quick.open(id, trigger);
     let detailId = null,
         detailRequest = 0,
         detailBusy = false;
     if (detailsRoot)
         detailsRoot.innerHTML =
             '<div class="oj-cluster"><h3 class="oj-heading-3 oj-grow">Tags</h3><button type="button" class="oj-button oj-button-secondary oj-button-compact">+ Add Tag</button></div><div class="oj-cluster" data-detail-tags></div><p class="oj-helper" role="status" data-detail-tag-status></p>';
-    detailsRoot?.querySelector('button').addEventListener('click', () => {
-        if (detailId) void manage(detailId);
+    detailsRoot?.querySelector('button').addEventListener('click', event => {
+        if (detailId) void manage(detailId, event.currentTarget);
     });
     const showDetails = async id => {
         detailId = id;
@@ -415,6 +260,7 @@ export const createTagController = ({ api, appendLog, onChange = () => {}, openT
         }
     };
     return Object.freeze({
+        closeQuick: () => quick.close(),
         assignEntry,
         showDetails,
         refreshDetails: () => (detailId ? showDetails(detailId) : undefined),

@@ -111,6 +111,7 @@ const els = Object.seal({
     historyView: document.getElementById('historyView'),
     historyTagsView: document.getElementById('historyTagsView'),
     historyTagsBtn: document.getElementById('historyTagsBtn'),
+    historyAllContentBtn: document.getElementById('historyAllContentBtn'),
     historyTagFilter: document.getElementById('historyTagFilter'),
     historyClearTagFilter: document.getElementById('historyClearTagFilter'),
     historyManageTagsBtn: document.getElementById('historyManageTagsBtn'),

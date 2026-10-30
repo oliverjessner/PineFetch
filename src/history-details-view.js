@@ -318,6 +318,7 @@ export const createHistoryDetailsView = ({
     };
 
     const openDetails = async (entryId, returnFocus, { ocr = false } = {}) => {
+        tags.closeQuick();
         state.entryId = entryId;
         state.returnFocus = returnFocus;
         state.details = null;
@@ -596,6 +597,7 @@ export const createHistoryDetailsView = ({
             else ocrView.deactivate();
         },
         leave: () => {
+            tags.closeQuick();
             void tags.showDetails(null);
             state.entryId = null;
             state.detailsRequestId += 1;

@@ -707,6 +707,9 @@ export const createHistoryView = ({
     const bindEvents = () => {
         void refreshTagOptions();
         els.historyTagsBtn.addEventListener('click', () => toTags());
+        els.historyAllContentBtn.addEventListener('click', () => {
+            if (state.page !== 'list') returnToHistory();
+        });
         els.historyTagFilter.addEventListener('change', () => {
             state.historyTagId = els.historyTagFilter.value || null;
             state.historyFilterRevision++;

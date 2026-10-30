@@ -313,4 +313,49 @@ fn integration_large_tag_archives_measure_counts_content_accounts_and_batch_inde
         )
         .unwrap();
     assert_eq!(count, 100000);
+    drop(conn);
+    let start = Instant::now();
+    let rows = tags::list(&db).unwrap();
+    assert_eq!(rows.len(), 2);
+    eprintln!(
+        "[tags] overview counts: {:.2} ms",
+        start.elapsed().as_secs_f64() * 1000.
+    );
+    let start = Instant::now();
+    let accounts = tags::accounts(&db, &dense.id, "", 20, None).unwrap();
+    assert_eq!(accounts.total_count, 500);
+    eprintln!(
+        "[tags] derived accounts: {:.2} ms",
+        start.elapsed().as_secs_f64() * 1000.
+    );
+    let renamed = tags::update(&db, &dense.id, input("Dense renamed", "#abcdef")).unwrap();
+    assert_eq!(renamed.id, dense.id);
+    assert_eq!(tags::get(&db, &dense.id).unwrap().content_count, 100000);
+    let start = Instant::now();
+    tags::delete(&db, &dense.id).unwrap();
+    eprintln!(
+        "[tags] delete 100k assignments: {:.2} ms",
+        start.elapsed().as_secs_f64() * 1000.
+    );
+    assert_eq!(
+        db.lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM history_entries", [], |r| r
+                .get::<_, u64>(0))
+            .unwrap(),
+        200000
+    );
+    assert_eq!(tags::choices(&db).unwrap().len(), 1);
+}
+
+#[test]
+fn integration_tags_schema_refuses_changed_membership_index_without_mutating_the_archive() {
+    let root = TempRoot::new("tags-index-integrity");
+    let path = root.path("archive.sqlite");
+    let conn = database::open(&path).unwrap();
+    conn.execute_batch("DROP INDEX idx_history_entry_tags_tag; CREATE INDEX idx_history_entry_tags_tag ON history_entry_tags(tag_id DESC,history_entry_id DESC);").unwrap();
+    drop(conn);
+    let before = std::fs::read(&path).unwrap();
+    assert!(database::open(&path).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
 }

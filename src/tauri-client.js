@@ -20,6 +20,7 @@ export const createTauriClient = tauri => {
         getHistoryAccount: args => invoke('get_history_account', args),
         loadHistoryAccountInsights: args => invoke('load_history_account_insights', args),
         loadHistoryAccountVideos: args => invoke('load_history_account_videos', args),
+        getTagChoices: args => invoke('get_tag_choices', args),
         listTags: args => invoke('list_tags', args),
         getTag: args => invoke('get_tag', args),
         createTag: args => invoke('create_tag', args),

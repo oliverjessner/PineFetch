@@ -202,6 +202,7 @@ fn main() {
             commands::cancel_download,
             commands::get_history,
             commands::list_tags,
+            commands::get_tag_choices,
             commands::get_tag,
             commands::create_tag,
             commands::update_tag,

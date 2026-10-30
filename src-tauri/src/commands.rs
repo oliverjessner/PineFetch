@@ -1053,3 +1053,13 @@ pub(crate) async fn get_tag_content(
     .await
     .map_err(|e| format!("Tag request failed: {e}"))?
 }
+
+#[tauri::command]
+pub(crate) async fn get_tag_choices(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::tags::Tag>, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::tags::choices(&db))
+        .await
+        .map_err(|e| e.to_string())?
+}

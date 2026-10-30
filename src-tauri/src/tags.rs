@@ -207,39 +207,60 @@ pub(crate) fn assign(
 // Keep unknown creator IDs entry-scoped, exactly as Account navigation does.
 // This scalar only trims tiny labels; URL inspection and network access are absent.
 pub(crate) fn register(conn: &Connection) -> Result<(), String> {
-    conn.create_scalar_function(
-        "pinefetch_tag_source",
-        4,
-        rusqlite::functions::FunctionFlags::SQLITE_UTF8
-            | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
-        |ctx| {
-            let creator_source: Option<String> = ctx.get(0)?;
-            let creator_id: Option<String> = ctx.get(1)?;
-            let source: Option<String> = ctx.get(2)?;
-            let uploader: Option<String> = ctx.get(3)?;
-            if uploader.is_none_or(|name| name.trim().is_empty()) {
-                return Ok(None::<String>);
-            }
-            let source = if creator_id.is_some() {
-                creator_source.or(source)
-            } else {
-                source
-            };
-            Ok(source
-                .filter(|source| !source.trim().is_empty())
-                .map(|source| crate::creator_identity::canonical_source(&source)))
-        },
-    )
+    let flags = rusqlite::functions::FunctionFlags::SQLITE_UTF8
+        | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC;
+    conn.create_scalar_function("pinefetch_tag_name", 1, flags, |ctx| {
+        Ok(ctx
+            .get_raw(0)
+            .as_str()
+            .is_ok_and(|name| !name.trim().is_empty()))
+    })
+    .map_err(|e| e.to_string())?;
+    conn.create_scalar_function("pinefetch_tag_source", 4, flags, |ctx| {
+        if !ctx
+            .get_raw(3)
+            .as_str()
+            .is_ok_and(|name| !name.trim().is_empty())
+        {
+            return Ok(None::<String>);
+        }
+        let creator_source = ctx.get_raw(0).as_str().ok();
+        let source = if ctx.get_raw(1).as_str().is_ok() {
+            creator_source.or_else(|| ctx.get_raw(2).as_str().ok())
+        } else {
+            ctx.get_raw(2).as_str().ok()
+        };
+        Ok(source
+            .filter(|source| !source.trim().is_empty())
+            .map(crate::creator_identity::canonical_source))
+    })
     .map_err(|e| e.to_string())
 }
-const ACCOUNTS: &str = "members AS (SELECT link.tag_id,history.id AS history_id,history.uploader,
- pinefetch_tag_source(history.creator_source,history.creator_id,history.source,history.uploader) AS source,
+const ACCOUNTS:&str="members AS MATERIALIZED (SELECT link.tag_id,history.id AS history_id,history.uploader,
+ CASE WHEN history.creator_id IS NOT NULL AND history.creator_source IS NOT NULL THEN history.creator_source ELSE pinefetch_tag_source(history.creator_source,history.creator_id,history.source,history.uploader) END AS source,
  CASE WHEN history.creator_id IS NOT NULL AND history.creator_source IS NOT NULL THEN history.creator_id ELSE 'entry:'||history.id END AS identity,
  COALESCE(history.completed_at,history.created_at) AS saved_at FROM history_entry_tags link JOIN history_entries history ON history.id=link.history_entry_id";
 fn accounts_cte(tagged: bool) -> String {
-    format!("WITH {ACCOUNTS}{}), accounts AS (SELECT tag_id,source,identity,COUNT(*) AS content_count,MIN(history_id) AS history_id,MAX(saved_at) AS latest_at FROM members WHERE source IS NOT NULL GROUP BY tag_id,source,identity)",if tagged {" WHERE link.tag_id=?1"} else {""})
+    format!("WITH {ACCOUNTS}{}), accounts AS (SELECT tag_id,source,identity,COUNT(*) AS content_count,MIN(history_id) AS history_id,MAX(saved_at) AS latest_at FROM members WHERE source IS NOT NULL AND pinefetch_tag_name(uploader) GROUP BY tag_id,source,identity)",if tagged {" WHERE link.tag_id=?1"} else {""})
+}
+pub(crate) fn choices(db: &Database) -> Result<Vec<Tag>, String> {
+    let conn = db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id,name,description,color,created_at,updated_at FROM tags ORDER BY name_key,id",
+        )
+        .map_err(|e| e.to_string())?;
+    let result = stmt
+        .query_map([], map_tag)
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string());
+    result
 }
 pub(crate) fn list(db: &Database) -> Result<Vec<TagSummary>, String> {
+    db.analyze(|| list_snapshot(db))
+}
+fn list_snapshot(db: &Database) -> Result<Vec<TagSummary>, String> {
     let conn = db.lock().map_err(|_| "SQLite lock poisoned")?;
     let sql=format!("{}, uses AS (SELECT tag_id,COUNT(*) AS content_count FROM history_entry_tags GROUP BY tag_id), creators AS (SELECT tag_id,COUNT(*) AS account_count FROM accounts GROUP BY tag_id) SELECT tags.id,tags.name,tags.description,tags.color,tags.created_at,tags.updated_at,COALESCE(uses.content_count,0),COALESCE(creators.account_count,0) FROM tags LEFT JOIN uses ON uses.tag_id=tags.id LEFT JOIN creators ON creators.tag_id=tags.id ORDER BY tags.name_key,tags.id",accounts_cte(false));
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
@@ -257,6 +278,9 @@ pub(crate) fn list(db: &Database) -> Result<Vec<TagSummary>, String> {
     result
 }
 pub(crate) fn get(db: &Database, id: &str) -> Result<TagSummary, String> {
+    db.analyze(|| get_summary(db, id))
+}
+fn get_summary(db: &Database, id: &str) -> Result<TagSummary, String> {
     let id = valid_id(id)?;
     let conn = db.lock().map_err(|_| "SQLite lock poisoned")?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -369,6 +393,15 @@ pub(crate) fn accounts(
     limit: u32,
     after: Option<&str>,
 ) -> Result<AccountPage, String> {
+    db.analyze(|| accounts_snapshot(db, id, query, limit, after))
+}
+fn accounts_snapshot(
+    db: &Database,
+    id: &str,
+    query: &str,
+    limit: u32,
+    after: Option<&str>,
+) -> Result<AccountPage, String> {
     let id = valid_id(id)?;
     let query = crate::unicode_search::key(query.trim());
     let limit = limit.clamp(1, 100);
@@ -391,16 +424,8 @@ pub(crate) fn accounts(
     let cte = accounts_cte(true);
     let from = "FROM accounts a JOIN history_entries h ON h.id=a.history_id";
     let predicate = "(?2='' OR pinefetch_contains(h.uploader,?2))";
-    let total_count = if let Some(cursor) = &cursor {
-        cursor.total
-    } else {
-        tx.query_row(
-            &format!("{cte} SELECT COUNT(*) {from} WHERE {predicate}"),
-            params![id, query],
-            |r| r.get(0),
-        )
-        .map_err(|e| e.to_string())?
-    };
+    let initial = cursor.is_none();
+    let mut total_count = cursor.as_ref().map_or(0, |cursor| cursor.total);
     let mut values = vec![Value::Text(id.clone()), Value::Text(query.clone())];
     let continuation = if let Some(cursor) = cursor {
         values.extend([Value::Text(cursor.source), Value::Text(cursor.identity)]);
@@ -408,7 +433,8 @@ pub(crate) fn accounts(
     } else {
         ""
     };
-    let sql=format!("{cte} SELECT a.history_id,h.uploader,a.source,a.content_count,h.creator_id IS NOT NULL,a.latest_at,a.identity {from} WHERE {predicate}{continuation} ORDER BY a.source,a.identity LIMIT ?{}",values.len()+1);
+    let total = if initial { "COUNT(*) OVER()" } else { "NULL" };
+    let sql=format!("{cte} SELECT a.history_id,h.uploader,a.source,a.content_count,h.creator_id IS NOT NULL,a.latest_at,a.identity,{total} {from} WHERE {predicate}{continuation} ORDER BY a.source,a.identity LIMIT ?{}",values.len()+1);
     values.push(Value::Integer(i64::from(limit) + 1));
     let mut entries = Vec::new();
     let mut next_cursor = None;
@@ -419,6 +445,9 @@ pub(crate) fn accounts(
             .query(params_from_iter(values))
             .map_err(|e| e.to_string())?;
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            if initial {
+                total_count = row.get(7).map_err(|e| e.to_string())?;
+            }
             if entries.len() >= limit as usize {
                 has_more = true;
                 break;

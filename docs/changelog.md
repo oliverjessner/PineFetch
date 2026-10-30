@@ -1,5 +1,10 @@
 # 3.0.0
 
+- Added locally persisted tags with Unicode-safe unique names, descriptions, a color palette, custom HEX colors and immediate multi-tag assignment for all saved media types.
+- Added tag management in History, compact tag chips, Video Details controls and a Manage Tags context action. Tag deletion confirms affected items and preserves saved media and text.
+- Added dedicated tag Content and Accounts pages with search, pagination and return navigation, plus an independent History tag filter that combines with existing filters.
+- Added a backed-up schema-15 migration with indexed many-to-many membership, transactional writes, batched tag loading and account counts based on current verified creator IDs; unverified creators remain entry-scoped.
+
 - Associate saved creator videos and account insights with stable, platform-scoped IDs from download metadata. Creator filters also use those identities; names and handles no longer merge unrelated accounts or split renamed creators.
 - Keep older downloads without a stable ID isolated and explain their unverified status. Explicit profile loading can resolve membership; mutable profile handles are checked again, while YouTube uses its canonical channel URL.
 - Added a backed-up schema-14 migration, indexed identity pagination and separate identity-scoped account snapshots. Preserve legacy snapshots without guessing their creator.

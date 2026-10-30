@@ -386,3 +386,11 @@ stored text; it accepts no filesystem paths. Counting, hashing and token scannin
 run after the shared database lock is released, on the existing analysis gate.
 Text readers render 200 entries per page; copying retains complete original text.
 Captured processes share a 128 MiB stdout/stderr budget enforced during reading.
+
+Schema 15 adds `tags` and `history_entry_tags`. The `tags` module owns validation,
+transactional storage, batched memberships and derived creator queries. History
+filter signatures include the optional tag; sparse and dense memberships reuse
+the existing cursor reader with different indexed access paths. Definitions used
+by pickers do not calculate archive-wide counts. Frontend tag dialogs and the
+History workspace reuse the existing detail/account navigation and list cards.
+See [TAGS.md](TAGS.md) for persistence, deletion and identity semantics.

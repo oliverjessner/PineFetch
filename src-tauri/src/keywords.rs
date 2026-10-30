@@ -41,6 +41,8 @@ struct Miner {
 }
 impl Miner {
     fn add(&mut self, text: &str, source: usize) -> Result<(), String> {
+        #[cfg(test)]
+        crate::db_contention_tests::analysis_started();
         self.bytes = self.bytes.saturating_add(text.len());
         if self.bytes > MAX_TEXT_BYTES {
             return Err("The saved texts exceed the 128 MiB keyword mining limit.".into());
@@ -88,48 +90,70 @@ impl Miner {
     }
 }
 
-pub(crate) fn mine(db: &Database, id: &str) -> Result<HistoryKeywords, String> {
-    let conn = db.lock().map_err(|_| "SQLite lock poisoned")?;
-    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-    let exists: bool = tx
+struct TextSnapshot {
+    sources: KeywordSources,
+    texts: Vec<(usize, String)>,
+}
+
+fn read_texts(
+    conn: &rusqlite::Connection,
+    id: &str,
+    byte_limit: usize,
+) -> Result<TextSnapshot, String> {
+    let exists: bool = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM history_entries WHERE id=?1)",
             [id],
-            |r| r.get(0),
+            |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
     if !exists {
         return Err("This history entry no longer exists.".into());
     }
-    let mut miner = Miner::default();
-    let mut sources = KeywordSources::default();
-    // Each source is streamed from one read snapshot, including OCR beyond the
-    // UI's first 100 frames. No source files or online services are opened.
-    for (source, sql) in [
-        (0, "SELECT text FROM transcriptions WHERE history_entry_id=?1"),
-        (1, "SELECT text FROM history_ocr WHERE history_entry_id=?1 AND text IS NOT NULL"),
-        (1, "SELECT full_text FROM history_ocr_frames WHERE history_entry_id=?1 ORDER BY timestamp_ms,id"),
-        (2, "SELECT text FROM captions WHERE history_entry_id=?1 ORDER BY created_at,media_path"),
+    let mut snapshot = TextSnapshot {
+        sources: KeywordSources::default(),
+        texts: Vec::new(),
+    };
+    let mut bytes = 0usize;
+    // The existing byte budget bounds the owned snapshot before copying. Keep
+    // source order so the first observed spelling and every term count survive.
+    for (source, frames, sql) in [
+        (0, false, "SELECT text FROM transcriptions WHERE history_entry_id=?1"),
+        (1, false, "SELECT text FROM history_ocr WHERE history_entry_id=?1 AND text IS NOT NULL"),
+        (1, true, "SELECT full_text FROM history_ocr_frames WHERE history_entry_id=?1 ORDER BY timestamp_ms,id"),
+        (2, false, "SELECT text FROM captions WHERE history_entry_id=?1 ORDER BY created_at,media_path"),
     ] {
-        let mut stmt = tx.prepare(sql).map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
         let mut rows = stmt.query([id]).map_err(|e| e.to_string())?;
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
             let text = row.get_ref(0).map_err(|e| e.to_string())?.as_str().map_err(|e| e.to_string())?;
             if text.trim().is_empty() { continue; }
+            bytes = bytes.saturating_add(text.len());
+            if bytes > byte_limit { return Err("The saved texts exceed the 128 MiB keyword mining limit.".into()); }
             match source {
-                0 => sources.transcript = true,
-                1 if sql.contains("full_text") => sources.ocr_frames += 1,
-                1 => sources.ocr_legacy = true,
-                _ => sources.captions += 1,
+                0 => snapshot.sources.transcript = true,
+                1 if frames => snapshot.sources.ocr_frames += 1,
+                1 => snapshot.sources.ocr_legacy = true,
+                _ => snapshot.sources.captions += 1,
             }
-            miner.add(text, source)?;
+            snapshot.texts.push((source, text.to_owned()));
         }
     }
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(HistoryKeywords {
-        history_entry_id: id.into(),
-        sources,
-        terms: miner.finish(),
+    Ok(snapshot)
+}
+
+pub(crate) fn mine(db: &Database, id: &str) -> Result<HistoryKeywords, String> {
+    db.analyze(|| {
+        let snapshot = db.read_snapshot(|conn| read_texts(conn, id, MAX_TEXT_BYTES))?;
+        let mut miner = Miner::default();
+        for (source, text) in snapshot.texts {
+            miner.add(&text, source)?;
+        }
+        Ok(HistoryKeywords {
+            history_entry_id: id.into(),
+            sources: snapshot.sources,
+            terms: miner.finish(),
+        })
     })
 }
 
@@ -277,5 +301,49 @@ mod tests {
             .terms
             .iter()
             .any(|t| t.term == "RareLastFrame"));
+    }
+    #[test]
+    fn snapshot_byte_budget_precedes_copying_and_errors_leave_the_connection_usable() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::database::initialize(&conn).unwrap();
+        conn.execute_batch("INSERT INTO history_entries(id,url,created_at) VALUES('video','https://example.test',1); INSERT INTO transcriptions(history_entry_id,text,type) VALUES('video','Äpfel','text'); INSERT INTO history_ocr(history_entry_id,text,last_attempt_id,last_attempt_status,last_attempt_at) VALUES('video','X','fixture','completed',0);").unwrap();
+        let db = Database::new(conn);
+        let snapshot = db
+            .read_snapshot(|conn| read_texts(conn, "video", 7))
+            .unwrap();
+        assert_eq!(
+            snapshot
+                .texts
+                .iter()
+                .map(|(_, text)| text.len())
+                .sum::<usize>(),
+            7
+        );
+        let error = db
+            .read_snapshot(|conn| read_texts(conn, "video", 6))
+            .err()
+            .unwrap();
+        assert!(error.contains("128 MiB"));
+        assert!(db.lock().unwrap().is_autocommit());
+        assert!(mine(&db, "missing").is_err());
+        assert!(db.lock().unwrap().is_autocommit());
+    }
+
+    #[test]
+    fn distinct_term_budget_still_applies_after_unlocking() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::database::initialize(&conn).unwrap();
+        conn.execute("INSERT INTO history_entries(id,url,created_at) VALUES('video','https://example.test',1)",[]).unwrap();
+        let text = (0..=MAX_TERMS)
+            .map(|index| format!("Term{index} "))
+            .collect::<String>();
+        conn.execute(
+            "INSERT INTO transcriptions(history_entry_id,text,type) VALUES('video',?1,'text')",
+            [text],
+        )
+        .unwrap();
+        let db = Database::new(conn);
+        assert!(mine(&db, "video").unwrap_err().contains("50,000"));
+        assert!(db.lock().unwrap().is_autocommit());
     }
 }

@@ -1339,14 +1339,71 @@ pub(crate) const LEGACY_CONFIG_MIGRATION_KEY: &str = "legacy_config_json_migrate
 
 pub(crate) struct Database {
     connection: std::sync::Mutex<Connection>,
+    analysis: std::sync::Mutex<()>,
 }
 impl Database {
     pub(crate) fn new(connection: Connection) -> Self {
         Self {
             connection: std::sync::Mutex::new(connection),
+            analysis: std::sync::Mutex::new(()),
         }
     }
+    // Keep large snapshots/CPU work bounded to one request per profile. This
+    // gate is acquired before the connection, so queued analyses cannot hold it.
+    pub(crate) fn analyze<T>(
+        &self,
+        analyze: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        #[cfg(test)]
+        crate::db_contention_tests::analysis_waiting();
+        let _analysis = self
+            .analysis
+            .lock()
+            .map_err(|_| "Database analysis lock poisoned")?;
+        analyze()
+    }
+
+    // The callback returns owned data. Both the SQLite read transaction and the
+    // shared connection lock end before callers perform CPU-heavy analysis.
+    pub(crate) fn read_snapshot<T>(
+        &self,
+        read: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        #[cfg(test)]
+        let waiting = Instant::now();
+        let conn = self.lock().map_err(|_| "SQLite lock poisoned")?;
+        #[cfg(test)]
+        let acquired = Instant::now();
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let snapshot = read(&tx)?;
+        tx.commit().map_err(|e| e.to_string())?;
+        drop(conn);
+        #[cfg(test)]
+        SNAPSHOT_WORK.with(|work| {
+            work.set(SnapshotWork {
+                waiting: acquired.duration_since(waiting),
+                held: acquired.elapsed(),
+            })
+        });
+        Ok(snapshot)
+    }
+
     pub(crate) fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Connection>> {
         self.connection.lock()
     }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct SnapshotWork {
+    pub(crate) waiting: Duration,
+    pub(crate) held: Duration,
+}
+#[cfg(test)]
+thread_local! {
+    static SNAPSHOT_WORK: std::cell::Cell<SnapshotWork> = const { std::cell::Cell::new(SnapshotWork { waiting: Duration::ZERO, held: Duration::ZERO }) };
+}
+#[cfg(test)]
+pub(crate) fn last_snapshot_work() -> SnapshotWork {
+    SNAPSHOT_WORK.with(std::cell::Cell::get)
 }

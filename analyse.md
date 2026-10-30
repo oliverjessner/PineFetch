@@ -14,8 +14,6 @@
 
 - [ ] **D4 — Fehlende Untertiteltabellen früh erkennen:** Eine beschädigte Datenbank ohne erforderliche Untertiteltabelle wird nicht in jedem Fall schon beim Start erkannt. Eine vollständige Schemaprüfung meldet das Problem früh, statt Nutzer erst beim Öffnen eines Eintrags scheitern zu lassen.
 
-- [ ] **D5 — Lange Datenbankzugriffe messen und verkürzen:** Große Keyword- und Statistikabfragen teilen sich den Datenbankzugriff mit Downloads und Einstellungen und können diese dadurch aufhalten. Messungen zeigen, welche Berechnungen außerhalb des gesperrten Zugriffs stattfinden sollten, ohne die Datenkonsistenz zu verlieren.
-
 - [ ] **D6 — Accountbereinigung auf betroffene Einträge beschränken:** Beim Löschen eines History-Eintrags wird derzeit eine breite Suche nach verwaisten Accountdaten ausgeführt. Eine gezielte Prüfung reduziert unnötige Arbeit bei großen Archiven und erhält gemeinsam genutzte Insights bis zum letzten zugehörigen Download.
 
 ## Langfristig

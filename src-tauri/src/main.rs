@@ -18,6 +18,8 @@ mod config;
 mod config_rules;
 mod cookie_sync;
 mod database;
+#[cfg(test)]
+mod db_contention_tests;
 #[cfg(target_os = "macos")]
 mod dock_menu;
 mod download;

@@ -86,3 +86,8 @@ SQLite documents the cost of offset navigation and the use of ordering keys in
 and requires matching expressions for
 [expression indexes](https://sqlite.org/expridx.html). The bounded range queries
 are verified against the bundled SQLite, including timestamp collisions.
+
+Current Unicode search rules are documented in [UNICODE_SEARCH.md](UNICODE_SEARCH.md).
+Later keyword/statistics lock measurements and read-snapshot behavior are documented
+in [DATABASE_CONCURRENCY.md](DATABASE_CONCURRENCY.md); the table above records the
+original schema-13 comparison.

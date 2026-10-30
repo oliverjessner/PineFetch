@@ -1,10 +1,13 @@
 # 3.0.0
 
+- Promoted Tags to its own full-width main section, removed the nested All Content / Tags navigation, and retained collection, search, pagination and contextual Back navigation across sections. Added a purposeful empty state for the first tag.
+- Simplified History to search, Search in and a Filters popover for Source and Tag, with an active-filter count and individual or combined reset. Retained the narrower statistics sidebar and existing combined query behavior.
+
 - Replaced modal tag assignment with an anchored, searchable popover: toggle checked tags without closing it, or create and add a tag inline. Quick creation retains saved tags on assignment failures and offers Retry Add.
-- Separated quick tagging from full tag management through History's All Content / Tags navigation. Preserved the full Create/Edit dialog, added safeguards against nested modals, and improved keyboard focus, narrow-window placement and delayed-request handling without changing tag storage.
+- Separated quick tagging from full tag management in the dedicated Tags section. Preserved the full Create/Edit dialog, added safeguards against nested modals, and improved keyboard focus, narrow-window placement and delayed-request handling without changing tag storage.
 
 - Added locally persisted tags with Unicode-safe unique names, descriptions, a color palette, custom HEX colors and immediate multi-tag assignment for all saved media types.
-- Added tag management in History, compact tag chips, Video Details controls and a Manage Tags context action. Tag deletion confirms affected items and preserves saved media and text.
+- Added centralized tag management, compact tag chips, Video Details controls and a Manage Tags context action. Tag deletion confirms affected items and preserves saved media and text.
 - Added dedicated tag Content and Accounts pages with search, pagination and return navigation, plus an independent History tag filter that combines with existing filters.
 - Added a backed-up schema-15 migration with indexed many-to-many membership, transactional writes, batched tag loading and account counts based on current verified creator IDs; unverified creators remain entry-scoped.
 

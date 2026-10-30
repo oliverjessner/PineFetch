@@ -391,8 +391,13 @@ Schema 15 adds `tags` and `history_entry_tags`. The `tags` module owns validatio
 transactional storage, batched memberships and derived creator queries. History
 filter signatures include the optional tag; sparse and dense memberships reuse
 the existing cursor reader with different indexed access paths. Definitions used
-by pickers do not calculate archive-wide counts. The History All Content/Tags
-workspace reuses existing detail/account navigation and list cards. `tag-ui.js`
+by pickers do not calculate archive-wide counts. Main navigation's `activeView`
+separates Download, History, Tags and Settings. `tags-view.js` mounts a full-width
+Tags workspace with its own overview/detail state; the archive controller reuses
+existing item/account views and list cards, retaining the originating tag for Back
+navigation. Unchanged cached pages, searches and scroll positions survive main
+section switches. `history-filters.js` owns only the non-modal secondary-filter
+surface; values and query cursors remain in the existing History state. `tag-ui.js`
 shares chip/color rendering. `quick-tags.js` owns the anchored non-modal selector
 and inline creation, using the native popover top layer within an existing parent
 dialog when needed. `tags.js` retains the standalone full editor, guards against

@@ -74,7 +74,7 @@ Choose the best available video, video up to 1080p, MP3, Opus or a transcript wi
 
 ## Queue, history and batch imports
 
-Add individual links, paste a YouTube playlist or import a TXT list of supported links, then let the queue run or pause after the current item. History keeps completed downloads searchable and shows recorded file sizes, runtime and totals by platform. Open **History → Tags** to create, edit and browse tags, or use **Manage Tags** on a saved item. The tag filter combines with existing History searches; see the [tag guide](docs/TAGS.md).
+Add individual links, paste a YouTube playlist or import a TXT list of supported links, then let the queue run or pause after the current item. History keeps completed downloads searchable and shows recorded file sizes, runtime and totals by platform. Open **Tags** in the main navigation to create, edit and browse collections, or use **Manage Tags** on a saved item. History’s **Filters** popover combines Source and Tag with existing searches; see the [tag guide](docs/TAGS.md).
 
 Waiting jobs, their options and order, and your Auto-start/Pause choices survive
 restarts. Interrupted jobs stay stopped; open their menu and choose **Queue again**

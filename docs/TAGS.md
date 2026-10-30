@@ -1,13 +1,14 @@
 # Tags
 
-Use History's **All Content / Tags** navigation to create, search, edit or delete your tags. Each tag has a
-name, an optional description, a color, and counts of its saved items and derived
+Open **Tags** in the main navigation to create, search, edit or delete your tags.
+This full-width section is independent of History. Each tag has a name, an optional description, a color, and counts of its saved items and derived
 creator accounts. Unused tags stay visible. Lists are alphabetical by the stored
 Unicode-normalized name key.
+An empty collection offers **Create Tag** without an unused search field.
 
 ## Create and edit
 
-In **History → Tags**, choose **Create Tag**, enter a name and optionally a description, then pick a color
+In **Tags**, choose **Create Tag**, enter a name and optionally a description, then pick a color
 from the palette or enter a custom HEX value. The live preview shows the result.
 Names support up to 80 Unicode code points, descriptions up to 500. Surrounding
 whitespace is trimmed. Name comparisons use PineFetch's locale-independent Unicode
@@ -61,11 +62,22 @@ one row per derived creator, its platform, tagged-item count and latest saved ti
 Account search matches the displayed creator name. It opens the existing local
 Account view through an actual associated History entry.
 
-**Back to [tag]** returns from item or account details to the tag's selected tab,
-query and scroll position. Tag mutations refresh membership and may restart the
-current page so removed items and counts are accurate. The History breadcrumb
-returns to ordinary History. Its single-tag filter combines with existing search,
-platform and creator filters. **Clear tag filter** clears only that constraint.
+Tag Details uses **Tags / [tag]** breadcrumbs. **Back to [tag]** returns from item
+or account details to that tag's selected tab, query, loaded pages and scroll
+position. Tags remains selected in the main navigation during these contextual
+visits. Switching main sections retains the Tags query and current collection;
+History opens its saved list with the existing query, filters and loaded pages.
+Tag mutations refresh membership and may restart the current page so removed
+items and counts are accurate. The History breadcrumb returns to ordinary History.
+
+History keeps its search field and **Search in** choice visible. **Filters** opens
+a non-modal popover for Source and Tag; its count indicates active secondary
+filters. Changes apply immediately and combine with text search and existing
+creator filters. Each secondary filter can be cleared separately; **Clear all
+filters** clears Source and Tag while keeping the text query and search field.
+Escape first closes an open Source menu, then the Filters popover, restoring focus.
+History's completed-download, data, runtime and platform statistics remain in its
+narrow sidebar and do not appear in Tags.
 
 ## Creator identity
 

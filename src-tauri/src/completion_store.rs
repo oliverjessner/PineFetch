@@ -81,6 +81,7 @@ pub(super) fn output_ready(
 }
 
 pub(crate) struct CompletionData<'a> {
+    pub(crate) creator: Option<&'a str>,
     pub(crate) job: &'a DownloadJob,
     pub(crate) path: &'a str,
     pub(crate) entry: &'a HistoryEntry,
@@ -133,6 +134,12 @@ pub(crate) fn commit(
         );
     }
     insert_history_entry_in_conn(&tx, entry)?;
+    if let (Some(source), Some(identity)) = (
+        crate::history_rules::source_from_url(&job.url),
+        data.creator,
+    ) {
+        crate::creator_identity::store(&tx, &job.id, &source, identity)?;
+    }
     hook(CompletionPoint::History)?;
     if let Some((text, language, media_path)) = data.transcript {
         insert_transcription_in_conn(

@@ -204,6 +204,7 @@ fn account_cursor_keeps_exact_creator_case_platform_and_complete_results() {
         ('similar-name','https://example.com/c','Creator Extra','youtube',92);",
         )
         .unwrap();
+    db.lock().unwrap().execute("UPDATE history_entries SET creator_source='youtube',creator_id='channel:UCaaaaaaaaaaaaaaaaaaaaaa' WHERE uploader='Creator' AND source='youtube' COLLATE NOCASE", []).unwrap();
     let first = crate::accounts::get_page(&db, "row-001", 0, None).unwrap();
     let mut page = serde_json::to_value(first).unwrap();
     let mut ids = Vec::new();
@@ -401,4 +402,61 @@ fn integration_unicode_search_keeps_large_archive_cursor_order_and_bounded_sorti
         .map(|entry| entry.id)
         .collect::<Vec<_>>();
     assert_eq!(found, expected);
+}
+
+#[test]
+fn integration_stable_creator_pages_and_targeted_cleanup_use_membership_indexes() {
+    let (_root, db) = archive();
+    db.lock().unwrap().execute_batch("UPDATE history_entries SET creator_source='youtube',creator_id='channel:UCaaaaaaaaaaaaaaaaaaaaaa' WHERE uploader='Frequent Creator' AND source='youtube'; WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<20000) INSERT INTO creator_account_insights SELECT 'youtube','orphan-'||i,'https://youtube.com/@fixture',1,'2.0.4','{}' FROM n; INSERT INTO creator_account_insights VALUES('youtube','channel:UCaaaaaaaaaaaaaaaaaaaaaa','https://youtube.com/@fixture',1,'2.0.4','{}');").unwrap();
+    let start = Instant::now();
+    let page = crate::history_query::read_page(
+        &db,
+        20,
+        0,
+        crate::history_query::HistoryFilter::for_account(
+            "youtube",
+            Some("channel:UCaaaaaaaaaaaaaaaaaaaaaa"),
+            "item-000010",
+        )
+        .unwrap(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(page.total_count, 20000);
+    assert_eq!(page.entries.len(), 20);
+    let work = crate::history_query::last_query_work();
+    assert!(work.sorts <= 1);
+    assert!(
+        work.count_steps < 100000,
+        "count must visit creator members, not the whole archive"
+    );
+    eprintln!(
+        "[archive] stable-creator-first-200k: {:.3} ms",
+        start.elapsed().as_secs_f64() * 1000.
+    );
+    let conn = db.lock().unwrap();
+    for (sql,index) in [
+        ("EXPLAIN QUERY PLAN SELECT 1 FROM history_entries WHERE creator_source='youtube' AND creator_id='channel:UCaaaaaaaaaaaaaaaaaaaaaa'", "idx_history_identity_order"),
+        ("EXPLAIN QUERY PLAN SELECT 1 FROM history_entries WHERE source='youtube' COLLATE NOCASE AND uploader='Frequent Creator' COLLATE BINARY", "idx_history_creator_order"),
+    ] {
+        let plan=conn.prepare(sql).unwrap().query_map([],|r|r.get::<_,String>(3)).unwrap().collect::<Result<Vec<_>,_>>().unwrap().join(" ");
+        assert!(plan.contains(index),"{plan}");
+    }
+    drop(conn);
+    let start = Instant::now();
+    crate::history::delete_history_entry_from_db(&db, "item-000010").unwrap();
+    eprintln!(
+        "[archive] targeted-delete-200k-history-20k-insights: {:.3} ms",
+        start.elapsed().as_secs_f64() * 1000.
+    );
+    assert_eq!(
+        db.lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM creator_account_insights", [], |r| r
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        20001
+    );
 }

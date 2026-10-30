@@ -400,6 +400,41 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             }
             return result;
         }
+        if (command === 'get_history_keyword_occurrences') {
+            ui.keywordOccurrenceRequests ||= [];
+            ui.keywordOccurrenceRequests.push(structuredClone(args));
+            const subtitle = args.query.source === 'subtitles';
+            const text = subtitle
+                ? '1\r\n00:00:10,500 --> 00:00:12,000\r\n🌲 Nintendo Nintendo Nintendo\r\n'
+                : '[00:00:02.500] Nintendo Nintendo';
+            const item = {
+                source: subtitle ? 'subtitles' : 'transcript',
+                source_key: (subtitle ? '2' : '1').repeat(64),
+                revision: 'a'.repeat(64),
+                language: subtitle ? args.query.language || 'de' : null,
+                timestamp_ms: subtitle ? 10500 : 2500,
+                source_start_seconds: subtitle ? 8.5 : 0,
+                offset_utf16: text.indexOf('Nintendo'),
+                end_utf16: text.indexOf('Nintendo') + 8,
+                snippet: text,
+            };
+            ui.keywordEvidenceText = text;
+            return { entries: [item], total: 1, next_offset: 1, has_more: false };
+        }
+        if (command === 'get_history_keyword_source') {
+            if (ui.failKeywordSource) throw new Error('The saved text changed');
+            const result = {
+                text: ui.keywordEvidenceText,
+                source_start_seconds: args.sourceKey.startsWith('2') ? 8.5 : 0,
+            };
+            if (ui.holdKeywordSource) {
+                ui.holdKeywordSource = false;
+                return new Promise(resolve => {
+                    ui.releaseKeywordSource = () => resolve(result);
+                });
+            }
+            return result;
+        }
         if (command === 'get_history_account') {
             if (ui.failAccountRead) throw new Error('Fixture account read failed');
             const entries = historyEntries || (await invoke('get_history', { offset: 0, limit: 100 })).entries;
@@ -1593,6 +1628,7 @@ try {
                 );
             assert.equal((await latestHistoryArgs()).offset, 0);
             assert.equal((await latestHistoryArgs()).exactUser, true);
+            assert.equal((await latestHistoryArgs()).creatorEntryId, 'creator-24');
 
             assert.equal(await resultCount.textContent(), '25 found');
             assert(await resultCount.isVisible());
@@ -2406,7 +2442,23 @@ try {
                 '00:00:06.000',
                 '00:00:09.030',
             ]);
-            await searchOcr('second');
+            const beforeRapidSearch = await page.evaluate(
+                () => globalThis.__pinefetchUi.commands.filter(call => call.command === 'get_history_ocr').length
+            );
+            await page.evaluate(() => {
+                const input = globalThis.document.querySelector('#historyOcrSearchInput');
+                for (const query of ['s', 'se', 'second']) {
+                    input.value = query;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            });
+            await waitOcrPage();
+            assert.equal(
+                await page.evaluate(
+                    () => globalThis.__pinefetchUi.commands.filter(call => call.command === 'get_history_ocr').length
+                ),
+                beforeRapidSearch + 1
+            );
             assert.equal(await page.locator('#historyOcrText mark').count(), 1);
             assert.equal(await page.locator('#historyOcrText li').count(), 1);
             assert.equal(await page.locator('#historyOcrResultCount').textContent(), '1 frame found');
@@ -2824,7 +2876,7 @@ try {
                 await page.setViewportSize({ width: 800, height });
                 const stacked = await page.evaluate(() => {
                     const rect = selector => globalThis.document.querySelector(selector).getBoundingClientRect();
-                    const frame = rect('.pinefetch-media-stage');
+                    const frame = rect('#historyOcrPreview .pinefetch-media-stage');
                     const results = rect('#historyOcrResults');
                     const list = rect('#historyOcrListViewport');
                     const footer = rect('.pinefetch-ocr-analysis-info');
@@ -3645,6 +3697,113 @@ try {
             await page.setViewportSize({ width: 600, height: 960 });
             assert(await page.locator('#historyKeywordsPanel').evaluate(el => el.scrollWidth <= el.clientWidth));
             await page.setViewportSize({ width: 1400, height: 960 });
+            // Inspect actual source offsets, copy complete originals, preserve cut timing,
+            // isolate subtitle languages and discard source replies after closing.
+            await keywordRows.first().locator('th button').click();
+            const evidence = page.locator('[aria-label="Keyword occurrences"]');
+            await evidence.locator('[data-evidence-list] button').click();
+            await page.waitForFunction(() => globalThis.document.activeElement?.tagName === 'MARK');
+            assert.equal(await page.evaluate(() => globalThis.document.activeElement.textContent), 'Nintendo');
+            assert(
+                await page.evaluate(() => {
+                    const box = globalThis.document.activeElement.getBoundingClientRect();
+                    return box.top >= 0 && box.bottom <= globalThis.innerHeight;
+                })
+            );
+            await evidence.locator('[data-source-copy]').click();
+            await page.waitForFunction(
+                () => globalThis.__pinefetchUi.copied === globalThis.__pinefetchUi.keywordEvidenceText
+            );
+            await evidence.locator('[data-evidence-close]').click();
+            await page.evaluate(() => {
+                const result = globalThis.__pinefetchUi.keywordRecords['history-1'];
+                result.sources.subtitle_languages = { de: 1, en: 1 };
+                Object.assign(result.terms[0], {
+                    subtitles: 5,
+                    subtitle_languages: { de: 3, en: 2 },
+                    total: 11,
+                    sources: 4,
+                });
+            });
+            await page.locator('#historyKeywordsRefreshBtn').click();
+            await page.waitForFunction(() =>
+                globalThis.document
+                    .querySelector('#historyKeywordsTable thead')
+                    .textContent.includes('Creator subtitles')
+            );
+            await selectHistoryFilter('historyKeywordsSource', 'language:de', 'Creator subtitles · de');
+            assert.equal(await keywordRows.count(), 1);
+            await keywordRows.first().locator('th button').click();
+            await evidence.locator('[data-evidence-list] button').click();
+            await evidence.locator('[data-source-play]').waitFor();
+            assert.match(
+                await evidence.locator('[data-source-title]').textContent(),
+                /Creator subtitles · de · 00:00:10.500/
+            );
+            assert.equal(
+                await evidence.locator('[data-source-play]').textContent(),
+                'Play saved video at 00:00:02.000'
+            );
+            await page.evaluate(() => {
+                const ui = globalThis.__pinefetchUi;
+                ui.evidencePreviousVideo = ui.localVideo;
+                ui.localVideo = true;
+            });
+            await evidence.locator('[data-source-play]').click();
+            await page.waitForFunction(
+                () => Math.abs(globalThis.document.querySelector('[data-source-player] video').currentTime - 2) < 0.1
+            );
+            await page.evaluate(() => {
+                const ui = globalThis.__pinefetchUi;
+                ui.localVideo = ui.evidencePreviousVideo;
+            });
+            assert.deepEqual(await page.locator('#historyKeywordsTable [data-keyword-language]').allTextContents(), [
+                'Creator subtitles · de',
+                'Creator subtitles · en',
+            ]);
+            assert.deepEqual(await keywordRows.first().locator('td').allTextContents(), [
+                '3',
+                '1',
+                '2',
+                '3',
+                '2',
+                '11',
+            ]);
+            await page.screenshot({ path: `/tmp/pinefetch-analysis-300.Pb8qV5/evidence-${engine.name()}.png` });
+            assert.deepEqual(
+                await page.evaluate(() => globalThis.__pinefetchUi.keywordOccurrenceRequests.at(-1).query),
+                { term: 'Nintendo', source: 'subtitles', language: 'de', offset: 0 }
+            );
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.failKeywordSource = true;
+            });
+            await evidence.locator('[data-evidence-list] button').click();
+            await page.waitForFunction(() =>
+                globalThis.document.querySelector('[data-evidence-status]').textContent.includes('changed')
+            );
+            assert(await evidence.locator('[data-evidence-context]').isHidden());
+            await page.evaluate(() => {
+                globalThis.__pinefetchUi.failKeywordSource = false;
+                globalThis.__pinefetchUi.holdKeywordSource = true;
+            });
+            await evidence.locator('[data-evidence-list] button').click();
+            await page.waitForFunction(() => typeof globalThis.__pinefetchUi.releaseKeywordSource === 'function');
+            await evidence.locator('[data-evidence-close]').click();
+            await page.evaluate(() => globalThis.__pinefetchUi.releaseKeywordSource());
+            assert(await evidence.isHidden());
+            await page.evaluate(() => {
+                const result = globalThis.__pinefetchUi.keywordRecords['history-1'];
+                delete result.sources.subtitle_languages;
+                Object.assign(result.terms[0], { subtitles: 0, subtitle_languages: {}, total: 6, sources: 3 });
+            });
+            await page.locator('#historyKeywordsRefreshBtn').click();
+            await page.waitForFunction(
+                () =>
+                    !globalThis.document
+                        .querySelector('#historyKeywordsTable thead')
+                        .textContent.includes('Creator subtitles')
+            );
+            await selectHistoryFilter('historyKeywordsSource', 'all', 'All keywords');
             await page.evaluate(() => {
                 const ui = globalThis.__pinefetchUi;
                 ui.keywordRecords['history-1'].terms.push(

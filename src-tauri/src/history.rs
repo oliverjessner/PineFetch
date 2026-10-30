@@ -536,9 +536,60 @@ pub(super) fn delete_history_entry_from_db(
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
     let tx = database::write_transaction(&conn)?;
+    struct AccountKeys {
+        source: Option<String>,
+        uploader: Option<String>,
+        creator_source: Option<String>,
+        creator_id: Option<String>,
+        url: String,
+    }
+    let target: Option<AccountKeys> = tx
+        .query_row(
+            "SELECT source,uploader,creator_source,creator_id,url FROM history_entries WHERE id=?1",
+            [id],
+            |r| {
+                Ok(AccountKeys {
+                    source: r.get(0)?,
+                    uploader: r.get(1)?,
+                    creator_source: r.get(2)?,
+                    creator_id: r.get(3)?,
+                    url: r.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM history_entries WHERE id = ?1", params![id])
         .map_err(|e| format!("History delete failed: {e}"))?;
-    tx.execute("DELETE FROM history_account_insights WHERE NOT EXISTS (SELECT 1 FROM history_entries h WHERE lower(h.source)=history_account_insights.source AND h.uploader=history_account_insights.uploader)", []).map_err(|e| format!("Account cleanup failed: {e}"))?;
+    if let Some(AccountKeys {
+        source,
+        uploader,
+        creator_source,
+        creator_id,
+        url,
+    }) = target
+    {
+        // Check only the deleted entry's keys through matching membership indexes.
+        if let (Some(source), Some(identity)) = (creator_source, creator_id) {
+            tx.execute("DELETE FROM creator_account_insights WHERE source=?1 AND creator_id=?2 AND NOT EXISTS (SELECT 1 FROM history_entries WHERE creator_source=?1 AND creator_id=?2)",params![source,identity]).map_err(|e| format!("Account cleanup failed: {e}"))?;
+        }
+        if let Some(platform) = source
+            .as_deref()
+            .filter(|source| !source.trim().is_empty())
+            .map(crate::creator_identity::canonical_source)
+            .or_else(|| crate::history_rules::source_from_url(&url))
+        {
+            tx.execute(
+                "DELETE FROM creator_account_insights WHERE source=?1 AND creator_id=?2",
+                params![platform, format!("entry:{id}")],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if let (Some(source), Some(uploader)) = (source, uploader) {
+            let source = source.trim().to_ascii_lowercase();
+            tx.execute("DELETE FROM history_account_insights WHERE source=?1 AND uploader=?2 COLLATE BINARY AND NOT EXISTS (SELECT 1 FROM history_entries WHERE source=?1 COLLATE NOCASE AND uploader=?2 COLLATE BINARY) AND NOT EXISTS (SELECT 1 FROM history_entries WHERE source IS NULL AND uploader=?2 COLLATE BINARY)",params![source,uploader]).map_err(|e|format!("Account cleanup failed: {e}"))?;
+        }
+    }
     tx.commit()
         .map_err(|e| format!("History deletion commit failed: {e}"))
 }
@@ -548,7 +599,10 @@ pub(super) fn clear_history_entries_in_db(state: &crate::database::Database) -> 
     let tx = database::write_transaction(&conn)?;
     tx.execute("DELETE FROM history_entries", [])
         .map_err(|e| format!("History clear failed: {e}"))?;
-    tx.execute("DELETE FROM history_account_insights WHERE NOT EXISTS (SELECT 1 FROM history_entries h WHERE lower(h.source)=history_account_insights.source AND h.uploader=history_account_insights.uploader)", []).map_err(|e| format!("Account cleanup failed: {e}"))?;
+    tx.execute("DELETE FROM history_account_insights", [])
+        .map_err(|e| format!("Account cleanup failed: {e}"))?;
+    tx.execute("DELETE FROM creator_account_insights", [])
+        .map_err(|e| format!("Account cleanup failed: {e}"))?;
     tx.commit()
         .map_err(|e| format!("History deletion commit failed: {e}"))
 }

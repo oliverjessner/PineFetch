@@ -37,6 +37,8 @@ pub(crate) struct HistoryFilter {
     field: String,
     source: Option<String>,
     exact_uploader: Option<String>,
+    identity: Option<(String, String)>,
+    entry_id: Option<String>,
 }
 impl HistoryFilter {
     pub(crate) fn new(
@@ -53,6 +55,8 @@ impl HistoryFilter {
             return Err(format!("Unsupported history search field: {field}"));
         }
         Ok(Self {
+            identity: None,
+            entry_id: None,
             pattern: history_search_key(query),
             field: field.into(),
             source: source
@@ -69,6 +73,19 @@ impl HistoryFilter {
             },
         })
     }
+    pub(crate) fn for_account(
+        source: &str,
+        creator_id: Option<&str>,
+        entry_id: &str,
+    ) -> Result<Self, String> {
+        let mut filter = Self::new(None, None, None, false)?;
+        if let Some(id) = creator_id {
+            filter.identity = Some((source.into(), id.into()));
+        } else {
+            filter.entry_id = Some(entry_id.into());
+        }
+        Ok(filter)
+    }
     fn signature(&self) -> Result<String, String> {
         serde_json::to_vec(self)
             .map(|json| crate::hashing::sha256_hex(&json))
@@ -78,6 +95,14 @@ impl HistoryFilter {
     pub(crate) fn predicate(&self) -> (String, Vec<Value>) {
         let mut clauses = Vec::new();
         let mut values = Vec::new();
+        if let Some((source, id)) = &self.identity {
+            values.extend([Value::Text(source.clone()), Value::Text(id.clone())]);
+            clauses.push("history.creator_source=?1 AND history.creator_id=?2".to_string());
+        }
+        if let Some(id) = &self.entry_id {
+            values.push(Value::Text(id.clone()));
+            clauses.push(format!("history.id=?{}", values.len()));
+        }
         if let Some(source) = &self.source {
             values.push(Value::Text(source.clone()));
             clauses.push(format!("history.source=?{} COLLATE NOCASE", values.len()));

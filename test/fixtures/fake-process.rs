@@ -164,7 +164,7 @@ fn main() {
                 let path = path.to_string_lossy();
                 println!("{path}");
                 println!(
-                    "pinefetch_metadata:{{\"filepath\":{},\"title\":\"Offline clip\",\"uploader\":\"Fixture creator\",\"duration\":13}}",
+                    "pinefetch_metadata:{{\"filepath\":{},\"title\":\"Offline clip\",\"uploader\":\"Fixture creator\",\"duration\":13,\"channel_id\":\"UCaaaaaaaaaaaaaaaaaaaaaa\"}}",
                     quoted(&path)
                 );
                 println!(

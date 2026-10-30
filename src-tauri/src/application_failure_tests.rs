@@ -22,7 +22,7 @@ fn integration_fake_download_commits_history_only_after_output_and_required_pers
         let job = prepare_download_job(
             request_from_preset(
                 download_preset_for_key(None),
-                "https://example.com/clip".into(),
+                "https://www.youtube.com/watch?v=abcdefghijk".into(),
                 false,
             ),
             DownloadOptions::from(&AppConfig::default()),
@@ -90,6 +90,11 @@ fn integration_fake_download_commits_history_only_after_output_and_required_pers
         let details = get_history_details_from_db(&db, &job.id).unwrap();
         if fail_history {
             assert!(details.is_none());
+            assert!(
+                crate::creator_identity::read(&db.lock().unwrap(), &job.id, "youtube")
+                    .unwrap()
+                    .is_none()
+            );
             assert!(result.error.as_deref().unwrap().contains("preserved"));
             db.lock()
                 .unwrap()
@@ -106,6 +111,12 @@ fn integration_fake_download_commits_history_only_after_output_and_required_pers
             assert!(entry.sha256.is_some());
         }
         assert!(get_history_details_from_db(&db, &job.id).unwrap().is_some());
+        assert_eq!(
+            crate::creator_identity::read(&db.lock().unwrap(), &job.id, "youtube")
+                .unwrap()
+                .as_deref(),
+            Some("channel:UCaaaaaaaaaaaaaaaaaaaaaa")
+        );
         drop(db);
         let reopened = rusqlite::Connection::open(root.path("pinefetch.sqlite")).unwrap();
         database::initialize(&reopened).unwrap();

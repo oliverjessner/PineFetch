@@ -1850,3 +1850,20 @@ body {
         width: 100%;
     }
 }
+
+.pinefetch-keyword-evidence {
+    margin-block: var(--oj-space-5);
+    overflow-wrap: anywhere;
+}
+.pinefetch-keyword-evidence .pinefetch-text-viewport {
+    flex: none;
+    max-height: 24rem;
+}
+.pinefetch-keyword-evidence .pinefetch-history-media {
+    max-width: 32rem;
+}
+.pinefetch-keyword-evidence .oj-button,
+.pinefetch-keywords-table .oj-button {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}

@@ -163,6 +163,8 @@ pub(crate) struct InfoFormat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct InfoResponse {
+    #[serde(default)]
+    pub(crate) creator: crate::creator_identity::Metadata,
     pub(crate) title: Option<String>,
     pub(crate) uploader: Option<String>,
     pub(crate) duration: Option<i64>,

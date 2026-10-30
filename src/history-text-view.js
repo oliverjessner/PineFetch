@@ -1,11 +1,14 @@
+import { createTextPagination } from './text-pagination.js';
+import { textSections, sectionMatches, documentMatches } from './large-text.js';
+import { searchKey } from './unicode-search.js';
 import { trimSearchQuery } from './unicode-search.js';
 import { toast } from './vendor/oj/index.js';
-import { textTimestamp, textMatches, textEntries, entryAtTime } from './history-text.js';
+import { textTimestamp, textMatches, textEntries } from './history-text.js';
 
-export const highlightText = (element, text, query) => {
+export const highlightText = (element, text, query, ranges = textMatches(text, query)) => {
     const fragment = document.createDocumentFragment();
     let position = 0;
-    for (const match of textMatches(text, query)) {
+    for (const match of ranges) {
         fragment.append(document.createTextNode(text.slice(position, match.start)));
         const mark = document.createElement('mark');
         mark.textContent = text.slice(match.start, match.end);
@@ -15,15 +18,25 @@ export const highlightText = (element, text, query) => {
     fragment.append(document.createTextNode(text.slice(position)));
     element.replaceChildren(fragment);
 };
-export const bindTextSearch = (input, search) => {
-    input.addEventListener('input', search);
+export const bindTextSearch = (input, search, { delay = 0, invalidate = () => {} } = {}) => {
+    let timer;
+    const cancel = () => clearTimeout(timer);
+    input.addEventListener('input', () => {
+        cancel();
+        invalidate();
+        if (delay) timer = setTimeout(search, delay);
+        else search();
+    });
     input.addEventListener('keydown', event => {
         if (event.key === 'Escape' && input.value) {
             event.preventDefault();
             input.value = '';
+            cancel();
+            invalidate();
             search();
         }
     });
+    return cancel;
 };
 export const copyAllText = async ({
     getText,
@@ -47,7 +60,7 @@ export const copyAllText = async ({
         return false;
     }
 };
-export const createTextEntry = (row, query = '') => {
+export const createTextEntry = (row, query = '', ranges) => {
     const item = document.createElement('li');
     item.className = 'pinefetch-text-entry';
     if (row.time !== null) item.dataset.timeMs = String(row.time);
@@ -60,7 +73,7 @@ export const createTextEntry = (row, query = '') => {
     time.setAttribute('aria-label', row.time === null ? 'Text without timestamps' : `Go to ${textTimestamp(row.time)}`);
     const text = document.createElement('p');
     text.className = 'oj-text';
-    highlightText(text, row.text, query);
+    highlightText(text, row.text, query, ranges);
     item.append(time, text);
     return { item, time, text };
 };
@@ -77,29 +90,44 @@ export const createTextReader = ({ input, copy, status, count, viewport, list, a
     let selected = null;
     let revision = 0;
     const elements = new Map();
+    let cachedQuery = null;
+    let plain = false;
+    let rawMode = false;
+    let matches = [];
+    let timed = [];
+    const pager = createTextPagination(viewport, () => {
+        selected = null;
+        render();
+    });
     const select = (row, seek = true) => {
         selected = row?.id;
-        const selectedVisible = visible.some(entry => entry.id === selected);
+        const selectedVisible = elements.has(selected);
         for (const [id, entry] of elements) {
             entry.item.setAttribute('aria-current', String(id === selected));
             entry.time.setAttribute('aria-pressed', String(id === selected));
-            entry.time.tabIndex = id === selected || (!selectedVisible && id === visible[0]?.id) ? 0 : -1;
+            entry.time.tabIndex = id === selected || (!selectedVisible && id === elements.keys().next().value) ? 0 : -1;
         }
         if (row && seek && row.time !== null) onSelect(row.time / 1000);
     };
     const render = () => {
         const query = trimSearchQuery(input.value);
-        visible = query
-            ? rows.filter(
-                  row =>
-                      textMatches(row.text, query).length ||
-                      textMatches(row.time === null ? '' : textTimestamp(row.time), query).length
-              )
-            : rows;
+        if (query !== cachedQuery) {
+            const key = searchKey(query);
+            matches = plain && query ? documentMatches(source, query) : [];
+            visible = !query
+                ? rows
+                : rows.filter(row =>
+                      plain
+                          ? sectionMatches(row, matches).length > 0
+                          : row.search.includes(key) || row.timeSearch.includes(key)
+                  );
+            cachedQuery = query;
+            pager.reset();
+        }
         elements.clear();
         const fragment = document.createDocumentFragment();
-        for (const row of visible) {
-            const entry = createTextEntry(row, query);
+        for (const row of pager.window(visible)) {
+            const entry = createTextEntry(row, query, plain && query ? sectionMatches(row, matches) : undefined);
             entry.item.dataset.textId = row.id;
             elements.set(row.id, entry);
             fragment.append(entry.item);
@@ -159,31 +187,82 @@ export const createTextReader = ({ input, copy, status, count, viewport, list, a
         )
             return;
         event.preventDefault();
-        const current = visible.findIndex(row => row.id === selected);
+        const found = visible.findIndex(row => row.id === selected);
+        const current = found >= pager.start && found < pager.start + pager.size ? found : -1;
         const index =
             event.key === 'Home'
                 ? 0
                 : event.key === 'End'
                   ? visible.length - 1
-                  : Math.max(0, Math.min(visible.length - 1, current + (event.key === 'ArrowDown' ? 1 : -1)));
+                  : current < 0
+                    ? pager.start
+                    : Math.max(0, Math.min(visible.length - 1, current + (event.key === 'ArrowDown' ? 1 : -1)));
         const row = visible[index];
+        if (pager.show(index)) {
+            render();
+            viewport.scrollTop = 0;
+        }
         select(row);
         const entry = elements.get(row.id);
         (row.time === null ? viewport : entry.time).focus({ preventScroll: true });
         revealTextEntry(viewport, entry.item);
     });
     return Object.freeze({
-        set: text => {
-            if (source === (text || '')) return;
+        set: (text, { raw = false } = {}) => {
+            if (source === (text || '') && rawMode === raw) return;
+            rawMode = raw;
             revision++;
             source = text || '';
-            rows = textEntries(source);
+            rows = raw ? [] : textEntries(source);
+            plain = raw || (rows.length === 1 && rows[0].time === null && source.length > 8192);
+            if (plain)
+                rows = source
+                    ? textSections(source).map(row => ({
+                          ...row,
+                          sourceStart: row.sourceStart ?? 0,
+                          sourceEnd: row.sourceEnd ?? source.length,
+                      }))
+                    : [];
+            rows = rows.map(row => ({
+                ...row,
+                search: searchKey(row.text),
+                timeSearch: row.time === null ? '' : textTimestamp(row.time),
+            }));
+            const firstAtTime = new Map();
+            for (const row of rows) if (row.time !== null && !firstAtTime.has(row.time)) firstAtTime.set(row.time, row);
+            timed = [...firstAtTime.values()].sort((a, b) => a.time - b.time);
+            cachedQuery = null;
             selected = null;
             render();
+        },
+        reveal: ({ query, offset = 0 }) => {
+            input.value = query;
+            render();
+            const row = visible.find(
+                row => offset >= (row.sourceStart ?? 0) && offset < (row.sourceEnd ?? source.length)
+            );
+            const index = visible.indexOf(row);
+            if (!row) return;
+            if (pager.show(index)) render();
+            select(row, false);
+            const entry = elements.get(row.id);
+            const ranges = plain ? sectionMatches(row, matches) : textMatches(row.text, query);
+            const local = offset - (row.sourceStart ?? 0);
+            const matchIndex = Math.max(
+                0,
+                ranges.findIndex(range => local >= range.start && local < range.end)
+            );
+            const target = entry.text.querySelectorAll('mark')[matchIndex] || entry.item;
+            target.tabIndex = -1;
+            target.focus({ preventScroll: true });
+            revealTextEntry(viewport, target);
+            target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         },
         reset: () => {
             revision++;
             source = '';
+            cachedQuery = null;
+            timed = [];
             rows = [];
             selected = null;
             input.value = '';
@@ -191,8 +270,17 @@ export const createTextReader = ({ input, copy, status, count, viewport, list, a
             render();
         },
         sync: seconds => {
-            const row = entryAtTime(rows, seconds * 1000);
+            let low = 0;
+            let high = timed.length;
+            while (low < high) {
+                const middle = (low + high) >>> 1;
+                if (timed[middle].time <= seconds * 1000) low = middle + 1;
+                else high = middle;
+            }
+            const row = timed[low - 1];
             if (row?.id === selected) return;
+            const index = visible.findIndex(entry => entry.id === row?.id);
+            if (!viewport.matches(':focus-within') && pager.show(index)) render();
             select(row, false);
             const entry = elements.get(row?.id);
             if (entry && !viewport.matches(':focus-within')) revealTextEntry(viewport, entry.item);

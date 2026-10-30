@@ -60,6 +60,7 @@ export const checkUnicodeSearch = async (browser, origin) => {
                     failures.push(message);
                 },
             });
+            globalThis.__reader = reader;
             reader.set(source);
             return failures;
         }, cases);
@@ -83,6 +84,40 @@ export const checkUnicodeSearch = async (browser, origin) => {
         await input.fill('cafe');
         assert.equal(await page.locator('#count').textContent(), '0 entries found');
         assert.match(await page.locator('#list').textContent(), /No text matches/);
+        const measurement = await page.evaluate(async () => {
+            const { textTimestamp } = await import('/history-text.js');
+            const source = Array.from({ length: 25000 }, (_, i) => `[${textTimestamp(i * 1000)}] Row ${i}`).join('\n');
+            globalThis.__unicodeSource = source;
+            globalThis.document.getElementById('query').value = '';
+            const before = performance.now();
+            globalThis.__reader.set(source);
+            return {
+                milliseconds: performance.now() - before,
+                rendered: globalThis.document.querySelectorAll('#list li').length,
+            };
+        });
+        assert.equal(measurement.rendered, 200);
+        await page.locator('#viewport').focus();
+        await page.keyboard.press('End');
+        assert.equal(await page.evaluate(() => globalThis.__unicodeSeek), 24999);
+        assert.ok((await page.locator('#list li').count()) <= 200);
+        await input.fill('Row 24999');
+        assert.equal(await page.locator('#count').textContent(), '1 entry found');
+        await page.locator('#copy').click();
+        await page.waitForFunction(() => globalThis.__unicodeCopied === globalThis.__unicodeSource);
+        await page.evaluate(() => {
+            globalThis.document.getElementById('query').value = '';
+            globalThis.__unicodeSource = 'a'.repeat(998) + 'Straße' + 'b'.repeat(1000000);
+            globalThis.__reader.set(globalThis.__unicodeSource);
+        });
+        assert.ok((await page.locator('#list li').count()) <= 200);
+        await input.fill('STRASSE');
+        assert.equal((await page.locator('#list mark').allTextContents()).join(''), 'Straße');
+        await page.locator('#copy').click();
+        await page.waitForFunction(() => globalThis.__unicodeCopied === globalThis.__unicodeSource);
+        process.stdout.write(
+            `[test:ui] 25,000 text rows: ${measurement.rendered} rendered, ${measurement.milliseconds.toFixed(1)} ms initial view.\n`
+        );
         assert.deepEqual(errors, []);
     } finally {
         await context.close();

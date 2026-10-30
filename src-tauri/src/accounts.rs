@@ -34,6 +34,14 @@ struct Context {
     url: String,
     source: String,
     uploader: String,
+    creator_id: Option<String>,
+}
+impl Context {
+    fn key(&self) -> String {
+        self.creator_id
+            .clone()
+            .unwrap_or_else(|| format!("entry:{}", self.id))
+    }
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct AccountSnapshot {
@@ -48,6 +56,7 @@ pub(crate) struct AccountSnapshot {
 pub(crate) struct AccountPage {
     source: String,
     uploader: String,
+    identity_verified: bool,
     saved: HistoryPage,
     insights: Option<AccountSnapshot>,
 }
@@ -82,7 +91,10 @@ fn context(conn: &rusqlite::Connection, id: &str) -> Result<Context, String> {
     let uploader = uploader
         .filter(|s| !s.trim().is_empty())
         .ok_or("No account is saved for this video.")?;
+    let source = crate::creator_identity::canonical_source(&source);
+    let creator_id = crate::creator_identity::read(conn, id, &source)?;
     Ok(Context {
+        creator_id,
         id: id.into(),
         url,
         source,
@@ -94,7 +106,7 @@ fn current(db: &Database, id: &str) -> Result<Context, String> {
     context(&conn, id)
 }
 fn reserve<'a>(state: &'a AccountState, ctx: &Context, action: &str) -> Result<Guard<'a>, String> {
-    let key = (ctx.source.clone(), ctx.uploader.clone(), action.to_string());
+    let key = (ctx.source.clone(), ctx.key(), action.to_string());
     if !state
         .active
         .lock()
@@ -108,8 +120,8 @@ fn reserve<'a>(state: &'a AccountState, ctx: &Context, action: &str) -> Result<G
 fn snapshot(db: &Database, ctx: &Context) -> Result<Option<AccountSnapshot>, String> {
     let conn = db.lock().map_err(|_| "SQLite lock poisoned")?;
     let row: Option<(String,u64,String,String)> = conn.query_row(
-        "SELECT profile_url,fetched_at,fetchary_version,payload_json FROM history_account_insights WHERE source=?1 AND uploader=?2",
-        params![ctx.source,ctx.uploader], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e| e.to_string())?;
+        "SELECT profile_url,fetched_at,fetchary_version,payload_json FROM creator_account_insights WHERE source=?1 AND creator_id IN (?2,?3) ORDER BY CASE WHEN creator_id=?2 THEN 0 ELSE 1 END LIMIT 1",
+        params![ctx.source,ctx.key(),format!("entry:{}",ctx.id)], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|e| e.to_string())?;
     row.map(|(profile_url, fetched_at, fetchary_version, json)| {
         let data =
             serde_json::from_str(&json).map_err(|_| "Saved account insights could not be read.")?;
@@ -126,6 +138,10 @@ fn snapshot(db: &Database, ctx: &Context) -> Result<Option<AccountSnapshot>, Str
     })
     .transpose()
 }
+pub(crate) fn history_filter(db: &Database, id: &str) -> Result<HistoryFilter, String> {
+    let ctx = current(db, id)?;
+    HistoryFilter::for_account(&ctx.source, ctx.creator_id.as_deref(), &ctx.id)
+}
 #[cfg(test)]
 pub(crate) fn get(db: &Database, id: &str, offset: u32) -> Result<AccountPage, String> {
     get_page(db, id, offset, None)
@@ -141,11 +157,12 @@ pub(crate) fn get_page(
         db,
         20,
         offset,
-        HistoryFilter::new(Some(&ctx.uploader), Some("user"), Some(&ctx.source), true)?,
+        HistoryFilter::for_account(&ctx.source, ctx.creator_id.as_deref(), &ctx.id)?,
         cursor,
     )?;
     let insights = snapshot(db, &ctx)?;
     Ok(AccountPage {
+        identity_verified: ctx.creator_id.is_some(),
         source: ctx.source,
         uploader: ctx.uploader,
         saved,
@@ -219,9 +236,13 @@ fn resolve_profile(
     yt_dlp: &str,
     deno: Option<&str>,
 ) -> Result<String, String> {
-    if let Some(saved) = snapshot(db, ctx)? {
-        if matches!(saved.data["status"].as_str(), Some("available" | "partial")) {
-            return Ok(saved.profile_url);
+    if ctx.source == "youtube" {
+        if let Some(channel) = ctx
+            .creator_id
+            .as_deref()
+            .and_then(|id| id.strip_prefix("channel:"))
+        {
+            return Ok(format!("https://www.youtube.com/channel/{channel}"));
         }
     }
     crate::url_rules::validate_download_url(&ctx.url).map_err(|e| e.to_string())?;
@@ -235,6 +256,28 @@ fn resolve_profile(
         config.youtube_cookie_browser.as_deref(),
     )?;
     let data: Value = serde_json::from_str(&raw).map_err(|_| "Invalid account metadata.")?;
+    let identity = crate::creator_identity::Metadata::parse(&data).identity(&ctx.source);
+    if ctx.creator_id.is_some() && identity.is_none() {
+        return Err(
+            "The platform did not verify the saved creator ID. Previous insights were preserved."
+                .into(),
+        );
+    }
+    if let Some(identity) = identity {
+        let conn = db.lock().map_err(|_| "SQLite lock poisoned")?;
+        let tx = database::write_transaction(&conn)?;
+        if context(&tx, &ctx.id)? != *ctx {
+            return Err("The History entry changed while resolving the account.".into());
+        }
+        crate::creator_identity::store(&tx, &ctx.id, &ctx.source, &identity)?;
+        tx.commit().map_err(|e| e.to_string())?;
+        if ctx.source == "youtube" {
+            return Ok(format!(
+                "https://www.youtube.com/channel/{}",
+                identity.trim_start_matches("channel:")
+            ));
+        }
+    }
     // TikTok's channel_url contains the internal secUid, while uploader_url
     // contains the public handle that Fetchary can verify against the page.
     let fields = if ctx.source == "tiktok" {
@@ -282,8 +325,8 @@ fn save(db: &Database, ctx: &Context, saved: AccountSnapshot) -> Result<AccountS
     if context(&tx, &ctx.id)? != *ctx {
         return Err("The History entry changed. Account insights were not saved.".into());
     }
-    tx.execute("INSERT INTO history_account_insights(source,uploader,profile_url,fetched_at,fetchary_version,payload_json) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(source,uploader) DO UPDATE SET profile_url=excluded.profile_url,fetched_at=excluded.fetched_at,fetchary_version=excluded.fetchary_version,payload_json=excluded.payload_json",
-        params![saved.source,saved.uploader,saved.profile_url,saved.fetched_at,saved.fetchary_version,json]).map_err(|e| format!("Account insights save failed: {e}"))?;
+    tx.execute("INSERT INTO creator_account_insights(source,creator_id,profile_url,fetched_at,fetchary_version,payload_json) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(source,creator_id) DO UPDATE SET profile_url=excluded.profile_url,fetched_at=excluded.fetched_at,fetchary_version=excluded.fetchary_version,payload_json=excluded.payload_json",
+        params![saved.source,ctx.key(),saved.profile_url,saved.fetched_at,saved.fetchary_version,json]).map_err(|e| format!("Account insights save failed: {e}"))?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(saved)
 }
@@ -299,6 +342,20 @@ pub(crate) fn fetch_insights(
     let ctx = current(db, id)?;
     let _guard = reserve(state, &ctx, "insights")?;
     let profile_url = resolve_profile(db, &ctx, processes, yt_dlp, deno)?;
+    let resolved = current(db, id)?;
+    if resolved.id != ctx.id
+        || resolved.url != ctx.url
+        || resolved.source != ctx.source
+        || resolved.uploader != ctx.uploader
+    {
+        return Err("The History entry changed while resolving the account.".into());
+    }
+    let _resolved_guard = if resolved.key() != ctx.key() {
+        Some(reserve(state, &resolved, "insights")?)
+    } else {
+        None
+    };
+    let ctx = resolved;
     let (fetchary_version, data) = social_insights::fetch_url(processes, &profile_url, tools)?;
     save(
         db,
@@ -328,6 +385,20 @@ pub(crate) fn fetch_videos(
     let ctx = current(db, id)?;
     let _guard = reserve(state, &ctx, "videos")?;
     let profile_url = resolve_profile(db, &ctx, processes, yt_dlp, deno)?;
+    let resolved = current(db, id)?;
+    if resolved.id != ctx.id
+        || resolved.url != ctx.url
+        || resolved.source != ctx.source
+        || resolved.uploader != ctx.uploader
+    {
+        return Err("The History entry changed while resolving the account.".into());
+    }
+    let _resolved_guard = if resolved.key() != ctx.key() {
+        Some(reserve(state, &resolved, "videos")?)
+    } else {
+        None
+    };
+    let ctx = resolved;
     let target = if ctx.source == "youtube" {
         format!("{profile_url}/videos")
     } else {
@@ -429,6 +500,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         database::initialize(&conn).unwrap();
         conn.execute_batch("INSERT INTO history_entries(id,url,source,uploader,created_at) VALUES ('one','https://www.youtube.com/watch?v=abcdefghijk','youtube','Creator',1),('two','https://www.youtube.com/watch?v=lmnopqrstuv','youtube','Creator',2),('other','https://www.tiktok.com/@creator/video/1234567890123456789','tiktok','Creator',3),('similar','https://www.youtube.com/watch?v=abcdefghijk','youtube','Creator Extra',4);").unwrap();
+        conn.execute("UPDATE history_entries SET creator_source=lower(source),creator_id=CASE WHEN source='youtube' THEN 'channel:UCaaaaaaaaaaaaaaaaaaaaaa' ELSE 'user:123' END WHERE uploader='Creator'", []).unwrap();
         Database::new(conn)
     }
     fn insight(count: u64) -> AccountSnapshot {
@@ -455,6 +527,7 @@ mod tests {
         for i in 0..25 {
             db.lock().unwrap().execute("INSERT INTO history_entries(id,url,source,uploader,created_at) VALUES (?1,'https://www.youtube.com/watch?v=abcdefghijk','youtube','Creator',?2)",params![format!("extra-{i}"),10+i]).unwrap();
         }
+        db.lock().unwrap().execute("UPDATE history_entries SET creator_source='youtube',creator_id='channel:UCaaaaaaaaaaaaaaaaaaaaaa' WHERE id LIKE 'extra-%'", []).unwrap();
         let first = get(&db, "one", 0).unwrap();
         assert_eq!(first.saved.total_count, 27);
         assert_eq!(first.saved.entries.len(), 20);
@@ -476,7 +549,7 @@ mod tests {
             0
         );
         assert!(get(&db, "other", 0).unwrap().insights.is_none());
-        db.lock().unwrap().execute_batch("CREATE TRIGGER reject_account BEFORE UPDATE ON history_account_insights BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;").unwrap();
+        db.lock().unwrap().execute_batch("CREATE TRIGGER reject_account BEFORE UPDATE ON creator_account_insights BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;").unwrap();
         assert!(save(&db, &ctx, insight(456)).is_err());
         assert_eq!(
             get(&db, "one", 0).unwrap().insights.unwrap().fetched_at,
@@ -493,7 +566,7 @@ mod tests {
         assert_eq!(
             db.lock()
                 .unwrap()
-                .query_row("SELECT COUNT(*) FROM history_account_insights", [], |r| r
+                .query_row("SELECT COUNT(*) FROM creator_account_insights", [], |r| r
                     .get::<_, i64>(
                     0
                 ))
@@ -541,7 +614,7 @@ mod tests {
         assert_eq!(
             db.lock()
                 .unwrap()
-                .query_row("SELECT COUNT(*) FROM history_account_insights", [], |r| r
+                .query_row("SELECT COUNT(*) FROM creator_account_insights", [], |r| r
                     .get::<_, i64>(
                     0
                 ))
@@ -662,8 +735,8 @@ mod tests {
         // Earlier versions saved failed secUid results. Seed one without using
         // save(), which now rejects identity mismatches.
         db.lock().unwrap().execute(
-            "INSERT INTO history_account_insights(source,uploader,profile_url,fetched_at,fetchary_version,payload_json) VALUES (?1,?2,?3,?4,?5,?6)",
-            params![legacy.source,legacy.uploader,legacy.profile_url,legacy.fetched_at,legacy.fetchary_version,legacy.data.to_string()],
+            "INSERT INTO creator_account_insights(source,creator_id,profile_url,fetched_at,fetchary_version,payload_json) VALUES (?1,?2,?3,?4,?5,?6)",
+            params![legacy.source,"user:123",legacy.profile_url,legacy.fetched_at,legacy.fetchary_version,legacy.data.to_string()],
         ).unwrap();
         let state = AccountState::default();
         let processes = ProcessState::default();
@@ -688,7 +761,7 @@ mod tests {
             internal_url
         );
 
-        let metadata = serde_json::json!({"channel_url":internal_url,"uploader_url":public_url});
+        let metadata = serde_json::json!({"channel_url":internal_url,"uploader_url":public_url,"uploader_id":"123"});
         fs::write(&yt, format!("#!/bin/sh\nprintf '%s' '{metadata}'\n")).unwrap();
         let mut data = legacy.data.clone();
         data["url"] = public_url.into();
@@ -722,8 +795,8 @@ mod tests {
             get(&db, "other", 0).unwrap().insights.unwrap().profile_url,
             public_url
         );
-        // A successful snapshot still supplies its verified URL without
-        // repeating the metadata request on every subsequent action.
+        // A mutable handle must be resolved again. Failure preserves the last
+        // successful snapshot rather than assigning a possibly renamed handle.
         fs::write(&yt, "#!/bin/sh\nexit 1\n").unwrap();
         assert!(fetch_insights(
             &db,
@@ -734,7 +807,11 @@ mod tests {
             yt.to_str().unwrap(),
             None
         )
-        .is_ok());
+        .is_err());
+        assert_eq!(
+            get(&db, "other", 0).unwrap().insights.unwrap().profile_url,
+            public_url
+        );
     }
     #[cfg(unix)]
     #[test]
@@ -745,8 +822,10 @@ mod tests {
         let node = root.path("node");
         fs::write(&yt,"#!/bin/sh\ncase \"$2\" in --flat-playlist) printf '%s' '{\"entries\":[{\"id\":\"abcdefghijk\",\"title\":\"Public video\"}]}' ;; *) printf '%s' '{\"channel_url\":\"https://www.youtube.com/@creator\",\"uploader_url\":\"https://www.youtube.com/@other\"}' ;; esac\n").unwrap();
         fs::set_permissions(&yt, fs::Permissions::from_mode(0o700)).unwrap();
-        let reply = serde_json::json!({"fetchary_version":"2.0.4","data":insight(123).data});
-        fs::write(&node,format!("#!/bin/sh\n[ \"$2\" = 'https://www.youtube.com/@creator' ] || exit 2\nprintf '%s' '{}'\n",reply)).unwrap();
+        let mut data = insight(123).data;
+        data["url"] = "https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa".into();
+        let reply = serde_json::json!({"fetchary_version":"2.0.4","data":data});
+        fs::write(&node,format!("#!/bin/sh\n[ \"$2\" = 'https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa' ] || exit 2\nprintf '%s' '{}'\n",reply)).unwrap();
         fs::set_permissions(&node, fs::Permissions::from_mode(0o700)).unwrap();
         let tools = SocialInsightsTools {
             node: node.clone(),

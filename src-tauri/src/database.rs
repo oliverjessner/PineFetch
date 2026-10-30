@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 13;
+pub(super) const SCHEMA_VERSION: i64 = 14;
 
 const QUEUE_SQL: &str = r#"
 CREATE TABLE queue_state (
@@ -84,7 +84,14 @@ pub(crate) fn restore_schema11_queue_fixture(conn: &Connection) {
 }
 
 #[cfg(test)]
+pub(crate) fn restore_schema13_creator_fixture(conn: &Connection) {
+    conn.execute_batch("DROP INDEX idx_history_identity_order; ALTER TABLE history_entries DROP COLUMN creator_source; ALTER TABLE history_entries DROP COLUMN creator_id; DROP TABLE creator_account_insights; PRAGMA user_version=13;").unwrap();
+}
+
+#[cfg(test)]
 pub(crate) fn restore_schema12_history_indexes_fixture(conn: &Connection) {
+    restore_schema13_creator_fixture(conn);
+
     conn.execute_batch("DROP INDEX idx_history_order; DROP INDEX idx_history_source_order; DROP INDEX idx_history_creator_order;
         CREATE INDEX idx_history_entries_completed_at ON history_entries(completed_at,created_at);
         CREATE INDEX idx_history_account_lookup ON history_entries(source,uploader);").unwrap();
@@ -293,6 +300,7 @@ pub(super) enum MigrationPoint {
     TranscriptMedia,
     Queue,
     HistoryIndexes,
+    CreatorIdentities,
 }
 
 pub(super) fn initialize_with_hook(
@@ -445,6 +453,13 @@ pub(super) fn initialize_with_hook(
         tx.pragma_update(None, "user_version", 13)
             .map_err(|error| error.to_string())?;
         hook(MigrationPoint::HistoryIndexes)?;
+    }
+    if version < 14 {
+        tx.execute_batch(crate::creator_identity::SCHEMA_SQL)
+            .map_err(|e| format!("SQLite migration 14 failed: {e}"))?;
+        tx.pragma_update(None, "user_version", 14)
+            .map_err(|e| e.to_string())?;
+        hook(MigrationPoint::CreatorIdentities)?;
     }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
@@ -702,6 +717,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             .execute_batch(crate::history_query::INDEX_SQL)
             .map_err(|error| error.to_string())?;
     }
+    if version >= 14 {
+        reference
+            .execute_batch(crate::creator_identity::SCHEMA_SQL)
+            .map_err(|e| e.to_string())?;
+    }
     reference
         .execute_batch("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .map_err(|e| e.to_string())?;
@@ -719,6 +739,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|e| e.to_string())?;
     let tables: HashSet<&str> = objects.iter().map(|(name, _, _)| name.as_str()).collect();
+    if version >= 14 && !tables.contains("creator_account_insights") {
+        return Err(
+            "Inconsistent schema 14: missing creator_account_insights; database preserved".into(),
+        );
+    }
     if version > 0 {
         if version >= 12 && !tables.contains("queue_state") {
             return Err("Inconsistent schema 12: missing queue_state; database preserved".into());

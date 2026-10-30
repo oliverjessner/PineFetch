@@ -342,3 +342,63 @@ fn statistics_preserve_legacy_unicode_blank_sources_and_url_platform_fallbacks()
         ]
     );
 }
+
+#[test]
+fn integration_unicode_search_keeps_large_archive_cursor_order_and_bounded_sorting() {
+    let (_root, db) = archive();
+    let original = "O\u{308}sterreich Straße";
+    let expected = {
+        let conn = db.lock().unwrap();
+        conn.execute(
+            "UPDATE history_entries SET title=?1 WHERE CAST(substr(id,6) AS INTEGER)%10000=0",
+            [original],
+        )
+        .unwrap();
+        let mut statement = conn.prepare("SELECT id FROM history_entries WHERE title=?1 ORDER BY COALESCE(completed_at,created_at) DESC,created_at DESC,id DESC").unwrap();
+        let rows = statement
+            .query_map([original], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        rows
+    };
+    let filter = |query| {
+        crate::history_query::HistoryFilter::new(Some(query), Some("title"), Some("youtube"), false)
+            .unwrap()
+    };
+    let start = Instant::now();
+    let first =
+        crate::history_query::read_page(&db, 7, 0, filter("ÖSTERREICH STRASSE"), None).unwrap();
+    eprintln!(
+        "[archive] unicode-title-first: {:.3} ms; total={}",
+        start.elapsed().as_secs_f64() * 1000.,
+        first.total_count
+    );
+    assert_eq!(first.total_count, 20);
+    assert!(crate::history_query::last_query_work().sorts <= 1);
+    let second = crate::history_query::read_page(
+        &db,
+        7,
+        0,
+        filter("österreich straße"),
+        first.next_cursor.as_deref(),
+    )
+    .unwrap();
+    let last = crate::history_query::read_page(
+        &db,
+        7,
+        0,
+        filter("O\u{308}STERREICH STRASSE"),
+        second.next_cursor.as_deref(),
+    )
+    .unwrap();
+    assert!(!last.has_more && last.next_cursor.is_none());
+    let found = first
+        .entries
+        .into_iter()
+        .chain(second.entries)
+        .chain(last.entries)
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+    assert_eq!(found, expected);
+}

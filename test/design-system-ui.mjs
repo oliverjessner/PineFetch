@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { chromium, webkit } from 'playwright';
 import { createDevServer } from '../scripts/dev-server.mjs';
 import { installScreenshotBridge } from '../scripts/screenshot-fixtures.mjs';
+import { checkUnicodeSearch } from './unicode-search-ui.mjs';
 
 // Exercise the production markup and modules with isolated native API responses.
 // No real downloads, history deletion, settings changes or external requests.
@@ -758,6 +759,7 @@ try {
         console.log(`[test:ui] Checking ${engine.name()}...`);
         const browser = await engine.launch();
         try {
+            await checkUnicodeSearch(browser, origin);
             const context = await browser.newContext({
                 viewport: { width: 1400, height: 960 },
                 timezoneId: 'Europe/Vienna',
@@ -4541,7 +4543,7 @@ try {
             assert(loadedFonts.some(url => url.includes('fa-solid')));
             assert.deepEqual(errors, []);
             console.log(
-                `[test:ui] ${engine.name()}: offline assets, preset restoration/keyboard/persistence, queue requests/progress, playlist auto-import/retry/deduplication/clipboard, history filters/creator/reset, breadcrumb hierarchy/keyboard/missing creator/retained History state, account navigation/pagination/insights/profile video selection, transcription model/save rollback, menus, tabs, full-container details, local keyword counts/filtering/pagination/late replies, OCR frame grouping/native pagination/search/full export/confirmed deletion/late replies, background navigation, confirmations and switches passed.`
+                `[test:ui] ${engine.name()}: Unicode search/highlighting/copy, offline assets, preset restoration/keyboard/persistence, queue requests/progress, playlist auto-import/retry/deduplication/clipboard, history filters/creator/reset, breadcrumb hierarchy/keyboard/missing creator/retained History state, account navigation/pagination/insights/profile video selection, transcription model/save rollback, menus, tabs, full-container details, local keyword counts/filtering/pagination/late replies, OCR frame grouping/native pagination/search/full export/confirmed deletion/late replies, background navigation, confirmations and switches passed.`
             );
         } finally {
             await browser.close();

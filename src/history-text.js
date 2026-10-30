@@ -1,3 +1,5 @@
+import { searchMatches } from './unicode-search.js';
+
 // Shared, DOM-free text rules. Source text is retained verbatim for copying.
 export const textTimestamp = milliseconds => {
     const ms = Math.max(0, Math.round(Number(milliseconds) || 0));
@@ -43,14 +45,7 @@ export const textEntries = text => {
     if (rows.length) return rows.map(row => ({ ...row, text: row.text.trim() }));
     return String(text || '').trim() ? [{ id: 'text-0', time: null, end: null, text: String(text) }] : [];
 };
-export const textMatches = (text, query) => {
-    if (!query.trim()) return [];
-    const escaped = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return [...String(text).matchAll(new RegExp(escaped, 'giu'))].map(match => ({
-        start: match.index,
-        end: match.index + match[0].length,
-    }));
-};
+export const textMatches = searchMatches;
 export const entryAtTime = (entries, milliseconds) => {
     let selected = null;
     for (const entry of entries) {

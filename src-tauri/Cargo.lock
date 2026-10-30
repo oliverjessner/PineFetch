@@ -2635,6 +2635,7 @@ dependencies = [
  "base64 0.22.1",
  "dirs 6.0.0",
  "getrandom 0.4.3",
+ "icu_normalizer",
  "libc",
  "mac-notification-sys",
  "muda",

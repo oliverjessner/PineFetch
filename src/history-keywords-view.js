@@ -1,3 +1,4 @@
+import { searchKey, trimSearchQuery } from './unicode-search.js';
 import { createDropdownChoice } from './dropdown-choice.js';
 
 export const createHistoryKeywordsView = ({ els, api, appendLog }) => {
@@ -15,11 +16,11 @@ export const createHistoryKeywordsView = ({ els, api, appendLog }) => {
     ]);
     const render = () => {
         const content = state.content;
-        const query = els.historyKeywordsSearch.value.trim().toLocaleLowerCase();
+        const query = searchKey(trimSearchQuery(els.historyKeywordsSearch.value));
         const source = sourceChoice.getValue();
         const terms = (content?.terms || []).filter(
             term =>
-                term.term.toLocaleLowerCase().includes(query) &&
+                searchKey(term.term).includes(query) &&
                 (source === 'all' || (source === 'shared' ? term.sources === 3 : term[source] > 0))
         );
         els.historyKeywordsRefreshBtn.disabled = !api.available || !state.id || state.loading;

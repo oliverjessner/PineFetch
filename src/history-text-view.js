@@ -1,3 +1,4 @@
+import { trimSearchQuery } from './unicode-search.js';
 import { toast } from './vendor/oj/index.js';
 import { textTimestamp, textMatches, textEntries, entryAtTime } from './history-text.js';
 
@@ -87,7 +88,7 @@ export const createTextReader = ({ input, copy, status, count, viewport, list, a
         if (row && seek && row.time !== null) onSelect(row.time / 1000);
     };
     const render = () => {
-        const query = input.value.trim();
+        const query = trimSearchQuery(input.value);
         visible = query
             ? rows.filter(
                   row =>

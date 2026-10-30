@@ -19,6 +19,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-notification = "2"
 regex = "1"
+icu_normalizer = { version = "2.1", default-features = false, features = ["compiled_data"] }
 base64 = "0.22"
 getrandom = "0.4"
 rusqlite = { version = "0.40", features = ["bundled", "backup", "functions", "fallible_uint"] }

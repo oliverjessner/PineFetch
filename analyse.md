@@ -12,8 +12,6 @@
 
 - [ ] **E16 — Zusätzliche Metadatenabrufe und defekte Dokumentationslinks bereinigen:** Queue-Vorschaubilder können weitere Abrufe derselben Metadaten auslösen, während einige Entwicklungsverweise ins Leere führen. Gemeinsam genutzte laufende Abrufe sparen Netzarbeit, und gültige Dokumentationslinks machen die beschriebenen Prüfungen nachvollziehbar.
 
-- [ ] **D3 — Suche mit Umlauten und Unicode vereinheitlichen:** Unterschiedliche Groß- und Kleinschreibung bei Namen wie Österreich kann derzeit zu abweichenden Treffern führen. Einheitliche Suchregeln verhindern, dass bereits gespeicherte Inhalte übersehen werden.
-
 - [ ] **D4 — Fehlende Untertiteltabellen früh erkennen:** Eine beschädigte Datenbank ohne erforderliche Untertiteltabelle wird nicht in jedem Fall schon beim Start erkannt. Eine vollständige Schemaprüfung meldet das Problem früh, statt Nutzer erst beim Öffnen eines Eintrags scheitern zu lassen.
 
 - [ ] **D5 — Lange Datenbankzugriffe messen und verkürzen:** Große Keyword- und Statistikabfragen teilen sich den Datenbankzugriff mit Downloads und Einstellungen und können diese dadurch aufhalten. Messungen zeigen, welche Berechnungen außerhalb des gesperrten Zugriffs stattfinden sollten, ohne die Datenkonsistenz zu verlieren.

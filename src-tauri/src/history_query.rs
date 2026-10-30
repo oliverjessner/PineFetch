@@ -1,7 +1,7 @@
 //! Parameterized filters and keyset pagination shared by History and Accounts.
 use crate::database::Database;
 use crate::history::{
-    history_search_pattern, i64_to_millis, map_history_entry, optional_i64_to_millis,
+    history_search_key, i64_to_millis, map_history_entry, optional_i64_to_millis,
 };
 use crate::models::{HistoryOcrSummary, HistoryPage};
 use rusqlite::{params_from_iter, types::Value};
@@ -53,7 +53,7 @@ impl HistoryFilter {
             return Err(format!("Unsupported history search field: {field}"));
         }
         Ok(Self {
-            pattern: history_search_pattern(query),
+            pattern: history_search_key(query),
             field: field.into(),
             source: source
                 .map(str::trim)
@@ -89,10 +89,10 @@ impl HistoryFilter {
             values.push(Value::Text(pattern.clone()));
             let n = values.len();
             clauses.push(match self.field.as_str() {
-                "title" => format!("history.title LIKE ?{n} ESCAPE '\\' COLLATE NOCASE"),
-                "user" => format!("history.uploader LIKE ?{n} ESCAPE '\\' COLLATE NOCASE"),
-                "description" => format!("EXISTS(SELECT 1 FROM captions WHERE captions.history_entry_id=history.id AND captions.text LIKE ?{n} ESCAPE '\\' COLLATE NOCASE)"),
-                "transcript" => format!("EXISTS(SELECT 1 FROM transcriptions WHERE transcriptions.history_entry_id=history.id AND transcriptions.text LIKE ?{n} ESCAPE '\\' COLLATE NOCASE)"),
+                "title" => format!("pinefetch_contains(history.title,?{n})"),
+                "user" => format!("pinefetch_contains(history.uploader,?{n})"),
+                "description" => format!("EXISTS(SELECT 1 FROM captions WHERE captions.history_entry_id=history.id AND pinefetch_contains(captions.text,?{n}))"),
+                "transcript" => format!("EXISTS(SELECT 1 FROM transcriptions WHERE transcriptions.history_entry_id=history.id AND pinefetch_contains(transcriptions.text,?{n}))"),
                 _ => unreachable!("validated search field"),
             });
         }

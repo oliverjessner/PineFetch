@@ -1,3 +1,4 @@
+import { searchContains, trimSearchQuery } from './unicode-search.js';
 import { createTextEntry, highlightText, copyAllText, bindTextSearch, revealTextEntry } from './history-text-view.js';
 import { textTimestamp as timestamp, entryAtTime } from './history-text.js';
 import { formatLocalDateTime, formatMediaTime } from './formatters.js';
@@ -65,9 +66,8 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
         frame_id: row.id,
     });
     const resultRows = content => {
-        const query = els.historyOcrSearchInput.value.trim().toLocaleLowerCase();
-        const fallback =
-            content?.text && (!query || content.text.toLocaleLowerCase().includes(query)) ? content.text : '';
+        const query = trimSearchQuery(els.historyOcrSearchInput.value);
+        const fallback = content?.text && (!query || searchContains(content.text, query)) ? content.text : '';
         return ocrEntries(state.frames, content?.has_more ? '' : fallback);
     };
     const clearFrame = () => {
@@ -254,7 +254,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
             state.cleanupRows();
             state.rowElements.clear();
             for (const row of rows) {
-                const { item, time, text } = createTextEntry(row, els.historyOcrSearchInput.value.trim());
+                const { item, time, text } = createTextEntry(row, trimSearchQuery(els.historyOcrSearchInput.value));
                 item.classList.add('pinefetch-ocr-result');
                 item.dataset.ocrKey = rowKey(row);
                 time.classList.add('pinefetch-ocr-select');
@@ -279,7 +279,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
             els.historyOcrListViewport.scrollTop = scrollTop;
             if (focusedKey) state.rowElements.get(focusedKey)?.time.focus({ preventScroll: true });
         }
-        const query = els.historyOcrSearchInput.value.trim();
+        const query = trimSearchQuery(els.historyOcrSearchInput.value);
         for (const { item, row } of state.rowElements.values())
             highlightText(item.querySelector('.oj-text'), row.text, query);
         const loaded = !state.pageLoading && state.loadedQuery === query;
@@ -442,7 +442,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
         if (!state.id || !visible() || state.disposed || !state.content?.result_revision) return;
         const id = state.id;
         const request = ++state.pageRequest;
-        const query = els.historyOcrSearchInput.value.trim();
+        const query = trimSearchQuery(els.historyOcrSearchInput.value);
         const revision = state.content.result_revision;
         const offset = append ? state.frames.length : 0;
         state.pageLoading = true;
@@ -490,7 +490,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
         state.pageRequest += 1;
         state.pageLoading = false;
         const revision = jobs.revision(id);
-        const query = els.historyOcrSearchInput.value.trim();
+        const query = trimSearchQuery(els.historyOcrSearchInput.value);
         state.loading = true;
         render();
         try {
@@ -671,11 +671,16 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
             if (!state.rows.length || state.pageLoading) return;
             event.preventDefault();
             const id = state.id;
-            const query = els.historyOcrSearchInput.value.trim();
+            const query = trimSearchQuery(els.historyOcrSearchInput.value);
             const current = state.selected ? state.rows.findIndex(row => rowKey(row) === rowKey(state.selected)) : -1;
             if (event.key === 'ArrowDown' && current === state.rows.length - 1 && state.content?.has_more)
                 await loadPage(true);
-            if (id !== state.id || !visible() || query !== els.historyOcrSearchInput.value.trim() || !state.rows.length)
+            if (
+                id !== state.id ||
+                !visible() ||
+                query !== trimSearchQuery(els.historyOcrSearchInput.value) ||
+                !state.rows.length
+            )
                 return;
             const index =
                 event.key === 'Home'

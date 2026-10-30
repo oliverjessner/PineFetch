@@ -1,5 +1,9 @@
 # 3.0.0
 
+- Unified History, creator search, descriptions, transcripts, OCR, subtitles and keyword filtering with locale-independent Unicode case folding and canonical normalization, including umlauts, ß/SS and composed/decomposed text.
+- Kept highlights aligned with the original text when normalization or case folding changes character lengths, preserving copied text and timestamp navigation.
+- Applied the same comparisons to existing archives without a schema migration; preserved indexed exact creator navigation and stable cursor pagination.
+
 - Automatically trim unused local playback previews to 2 GiB and remove previews unused for 30 days, with cleanup at startup and once per minute.
 - Protect loaded players with shared file leases, release obsolete replies and closed views, and clear old-page references on reload without blocking playback during conversion.
 - Preserve originals, linked files and foreign cache contents; recover interrupted preview conversions safely and recreate evicted previews when needed.

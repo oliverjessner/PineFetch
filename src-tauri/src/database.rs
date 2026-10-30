@@ -301,18 +301,23 @@ pub(super) fn initialize_with_hook(
 ) -> Result<(), String> {
     conn.busy_timeout(LOCK_TIMEOUT)
         .map_err(|e| format!("SQLite timeout setup failed: {e}"))?;
-    // Unicode substring matching retains the viewer's German/English search
-    // meaning. SQLite still filters and pages rows; no full-video JSON is read.
+    // One locale-independent comparison for History and OCR. Cache the folded
+    // constant query once per statement; NULL titles/creators are non-matches.
     conn.create_scalar_function(
         "pinefetch_contains",
         2,
         rusqlite::functions::FunctionFlags::SQLITE_UTF8
             | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            Ok(ctx
-                .get::<String>(0)?
-                .to_lowercase()
-                .contains(&ctx.get::<String>(1)?.to_lowercase()))
+            let Some(text) = ctx.get::<Option<String>>(0)? else {
+                return Ok(false);
+            };
+            let query = ctx.get_or_create_aux(1, |value| {
+                value.as_str().map(|query| {
+                    crate::unicode_search::key(crate::unicode_search::trim_query(query))
+                })
+            })?;
+            Ok(crate::unicode_search::key(&text).contains(query.as_str()))
         },
     )
     .map_err(|e| e.to_string())?;

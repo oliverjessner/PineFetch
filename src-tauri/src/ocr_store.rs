@@ -193,7 +193,14 @@ pub(crate) fn page(
     let conn = db.lock().map_err(|_| "SQLite lock poisoned")?;
     // A read snapshot keeps count, page and revision consistent across processes.
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-    let content = read_page(&tx, id, limit, offset, search.trim(), revision)?;
+    let content = read_page(
+        &tx,
+        id,
+        limit,
+        offset,
+        crate::unicode_search::trim_query(search),
+        revision,
+    )?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(content)
 }

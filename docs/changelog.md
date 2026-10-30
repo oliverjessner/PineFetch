@@ -1,5 +1,7 @@
 # 3.0.0
 
+- Bound captured subprocess output to a shared 128 MiB stdout/stderr budget while reading. Oversized output fails explicitly and terminates the process group, with timeout, inherited-pipe and exact-budget regressions.
+
 - Shortened shared database lock windows by snapshotting keyword text before counting and sorting, preserving source order, limits and complete OCR/caption coverage.
 - Moved legacy statistics URL classification and source-count sorting outside the shared connection lock, with one consistent read transaction for totals, groups and fallback data.
 - Serialized heavy analyses on a separate gate so queued work cannot reserve the database connection or accumulate large text snapshots; added lock measurements and concurrent settings/completion-write regressions.

@@ -664,3 +664,46 @@ fn integration_publication_and_temporary_cleanup_preserve_symlink_targets() {
     assert_eq!(fs::read(&target).unwrap(), b"unrelated user file");
     assert_eq!(fs::read(&published).unwrap(), b"new output");
 }
+
+#[test]
+fn integration_capture_budget_is_shared_by_both_pipes_and_never_truncates_success() {
+    use crate::process::run_command_output_limited;
+    let fake = FakeProcess::new("huge-output");
+    let state = ProcessState::default();
+    let output = run_command_output_limited(
+        fake.command(),
+        None,
+        Some(&state),
+        Some(TEST_TIMEOUT),
+        2 * 1024 * 1024,
+    )
+    .unwrap();
+    assert_eq!(
+        (output.stdout.len(), output.stderr.len()),
+        (1024 * 1024, 1024 * 1024)
+    );
+    let failed = run_command_output_limited(
+        fake.command(),
+        None,
+        Some(&state),
+        Some(TEST_TIMEOUT),
+        1536 * 1024,
+    )
+    .unwrap_err();
+    assert!(matches!(failed, ProcessError::OutputLimit));
+    assert!(state.utility_children.lock().unwrap().is_empty());
+    let infinite = FakeProcess::new("oversized-line");
+    let started = Instant::now();
+    assert!(matches!(
+        run_command_output_limited(
+            infinite.command(),
+            Some(&state),
+            None,
+            Some(TEST_TIMEOUT),
+            256 * 1024
+        ),
+        Err(ProcessError::OutputLimit)
+    ));
+    assert!(started.elapsed() < TEST_TIMEOUT);
+    assert!(state.current_child.lock().unwrap().is_none());
+}

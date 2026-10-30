@@ -75,6 +75,9 @@ mod social_insights;
 mod startup;
 mod state;
 mod subtitles;
+mod tags;
+#[cfg(test)]
+mod tags_tests;
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]
@@ -198,6 +201,17 @@ fn main() {
             commands::enqueue_playlist,
             commands::cancel_download,
             commands::get_history,
+            commands::list_tags,
+            commands::get_tag,
+            commands::create_tag,
+            commands::update_tag,
+            commands::delete_tag,
+            commands::get_history_tags,
+            commands::get_history_tags_batch,
+            commands::add_history_tag,
+            commands::remove_history_tag,
+            commands::get_tag_content,
+            commands::get_tag_accounts,
             commands::get_history_stats,
             commands::get_history_account,
             commands::load_history_account_insights,

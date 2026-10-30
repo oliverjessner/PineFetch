@@ -210,6 +210,7 @@ pub(crate) async fn get_history(
     exact_user: Option<bool>,
     cursor: Option<String>,
     creator_entry_id: Option<String>,
+    tag_id: Option<String>,
 ) -> Result<HistoryPage, String> {
     let limit = limit.unwrap_or(20).clamp(1, 100);
     let offset = offset.unwrap_or(0);
@@ -226,6 +227,7 @@ pub(crate) async fn get_history(
         } else {
             filter
         };
+        let filter = filter.with_tag(tag_id.as_deref())?;
         read_page(&db, limit, offset, filter, cursor.as_deref())
     })
     .await
@@ -896,4 +898,158 @@ pub(crate) async fn get_history_keyword_source(
     })
     .await
     .map_err(|e| format!("Keyword source failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn list_tags(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::tags::TagSummary>, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::tags::list(&db))
+        .await
+        .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn get_tag(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<crate::tags::TagSummary, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::tags::get(&db, &id))
+        .await
+        .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn create_tag(
+    state: State<'_, AppState>,
+    tag: crate::tags::TagInput,
+) -> Result<crate::tags::Tag, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::tags::create(&db, tag))
+        .await
+        .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn update_tag(
+    state: State<'_, AppState>,
+    id: String,
+    tag: crate::tags::TagInput,
+) -> Result<crate::tags::Tag, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::tags::update(&db, &id, tag))
+        .await
+        .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn delete_tag(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::tags::delete(&db, &id))
+        .await
+        .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn get_history_tags(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<crate::tags::Tag>, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::tags::batch(&db, &[id]).map(|mut entries| entries.remove(0).tags)
+    })
+    .await
+    .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn get_history_tags_batch(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<Vec<crate::tags::EntryTags>, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::tags::batch(&db, &ids))
+        .await
+        .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn add_history_tag(
+    state: State<'_, AppState>,
+    id: String,
+    tag_id: String,
+) -> Result<(), String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::tags::assign(&db, &id, &tag_id, true))
+        .await
+        .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn remove_history_tag(
+    state: State<'_, AppState>,
+    id: String,
+    tag_id: String,
+) -> Result<(), String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::tags::assign(&db, &id, &tag_id, false))
+        .await
+        .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[tauri::command]
+pub(crate) async fn get_tag_accounts(
+    state: State<'_, AppState>,
+    id: String,
+    query: Option<String>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+) -> Result<crate::tags::AccountPage, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::tags::accounts(
+            &db,
+            &id,
+            query.as_deref().unwrap_or(""),
+            limit.unwrap_or(20),
+            cursor.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Tag request failed: {e}"))?
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub(crate) async fn get_tag_content(
+    state: State<'_, AppState>,
+    id: String,
+    query: Option<String>,
+    search_field: Option<String>,
+    source: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    cursor: Option<String>,
+) -> Result<HistoryPage, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        read_page(
+            &db,
+            limit.unwrap_or(20).clamp(1, 100),
+            offset.unwrap_or(0),
+            HistoryFilter::new(
+                query.as_deref(),
+                search_field.as_deref(),
+                source.as_deref(),
+                false,
+            )?
+            .with_tag(Some(&id))?,
+            cursor.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("Tag request failed: {e}"))?
 }

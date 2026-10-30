@@ -220,23 +220,9 @@ body {
 
 .pinefetch-history-search-controls {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(130px, 180px) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: end;
     gap: var(--oj-space-2);
-}
-
-.pinefetch-history-filter-label {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.pinefetch-history-filter-clear {
-    min-height: 0;
-    padding: 0;
-    border: 0;
-    font-size: var(--oj-text-sm);
-    line-height: inherit;
 }
 
 .pinefetch-history-tag-filter .oj-select {
@@ -773,7 +759,7 @@ body {
 
 .pinefetch-history-media-actions {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--oj-space-3);
 }
 
@@ -1236,14 +1222,6 @@ body {
     .pinefetch-list-card-layout .pinefetch-media-thumbnail {
         max-width: 160px;
         justify-self: end;
-    }
-
-    .pinefetch-history-search-controls {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    }
-
-    .pinefetch-history-search-query {
-        grid-column: 1 / -1;
     }
 
     .pinefetch-history-overview-list {
@@ -2048,9 +2026,6 @@ button.pinefetch-tag-name,
     overflow: auto;
     overscroll-behavior: contain;
 }
-.pinefetch-tags-view [data-tags-definitions] {
-    gap: 0;
-}
 .pinefetch-tags-view [data-tags-search] {
     inline-size: 100%;
     max-inline-size: calc(var(--oj-space-8) * 16);
@@ -2061,8 +2036,6 @@ button.pinefetch-tag-name,
     grid-template-columns: auto minmax(0, 1fr) auto auto auto;
     align-items: center;
     gap: var(--oj-space-3);
-    padding: var(--oj-space-3) var(--oj-space-2);
-    border-bottom: 1px solid var(--oj-border-subtle);
 }
 .pinefetch-tag-definition-open {
     position: absolute;
@@ -2070,6 +2043,7 @@ button.pinefetch-tag-name,
     inline-size: 100%;
     block-size: 100%;
     border: 0;
+    border-radius: inherit;
 }
 .pinefetch-tag-definition > :not(.pinefetch-tag-definition-open) {
     position: relative;

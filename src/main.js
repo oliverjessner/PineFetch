@@ -115,9 +115,7 @@ const els = Object.seal({
     historyFiltersPopover: document.getElementById('historyFiltersPopover'),
     historyFiltersValue: document.getElementById('historyFiltersValue'),
     historyClearFiltersBtn: document.getElementById('historyClearFiltersBtn'),
-    historyClearSourceFilter: document.getElementById('historyClearSourceFilter'),
     historyTagFilter: document.getElementById('historyTagFilter'),
-    historyClearTagFilter: document.getElementById('historyClearTagFilter'),
     historyManageTagsBtn: document.getElementById('historyManageTagsBtn'),
     historyDetailsTags: document.getElementById('historyDetailsTags'),
 
@@ -125,6 +123,7 @@ const els = Object.seal({
     historyResultCount: document.getElementById('historyResultCount'),
     historySearchInput: document.getElementById('historySearchInput'),
     historySearchFieldDropdown: document.getElementById('historySearchFieldDropdown'),
+    historySearchFieldTrigger: document.getElementById('historySearchFieldTrigger'),
     historySearchFieldValue: document.getElementById('historySearchFieldValue'),
     historySearchFieldMenu: document.getElementById('historySearchFieldMenu'),
     historySourceDropdown: document.getElementById('historySourceDropdown'),

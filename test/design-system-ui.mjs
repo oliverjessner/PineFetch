@@ -1146,7 +1146,7 @@ try {
                 ['historySearchField', 'title', 'description', 'transcript'],
                 ['historySource', '', 'youtube', 'tiktok'],
             ]) {
-                if (prefix === 'historySource') await openHistoryFilters();
+                if (['historySearchField', 'historySource'].includes(prefix)) await openHistoryFilters();
                 const trigger = page.locator(`#${prefix}Trigger`);
                 const menu = page.locator(`#${prefix}Menu`);
                 await trigger.focus();
@@ -1199,7 +1199,7 @@ try {
                 );
             };
             const selectHistoryFilter = async (prefix, value, label, keyboard = false) => {
-                if (prefix === 'historySource') await openHistoryFilters();
+                if (['historySearchField', 'historySource'].includes(prefix)) await openHistoryFilters();
                 const trigger = page.locator(`#${prefix}Trigger`);
                 const menu = page.locator(`#${prefix}Menu`);
                 await trigger.click();

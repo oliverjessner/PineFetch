@@ -82,7 +82,7 @@ export const createTagsView = ({ root, api, tags, createItem, openVideo, openAcc
         const fragment = document.createDocumentFragment();
         for (const tag of items.slice(0, state.limit)) {
             const row = document.createElement('article');
-            row.className = 'pinefetch-tag-definition';
+            row.className = 'oj-panel oj-panel-compact oj-panel-interactive pinefetch-tag-definition';
             row.dataset.tagId = tag.id;
             const open = document.createElement('button');
             open.type = 'button';

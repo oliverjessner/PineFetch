@@ -136,18 +136,21 @@ export const createHistoryView = ({
     };
     const filters = createHistoryFilters({
         els,
-        values: () => ({ source: state.historySource, tagId: state.historyTagId }),
-        clear: ({ source = false, tag = false }) => {
-            if (source) {
-                state.historySource = '';
-                sourceChoice.setValue('');
-                state.historyExactUser = false;
-                state.historyCreatorEntryId = null;
-            }
-            if (tag) {
-                state.historyTagId = null;
-                els.historyTagFilter.value = '';
-            }
+        values: () => ({
+            searchField: state.historySearchField,
+            source: state.historySource,
+            tagId: state.historyTagId,
+        }),
+        clear: () => {
+            state.historySearchField = 'title';
+            searchFieldChoice.setValue('title');
+            els.historySearchInput.placeholder = 'Search titles';
+            state.historySource = '';
+            sourceChoice.setValue('');
+            state.historyExactUser = false;
+            state.historyCreatorEntryId = null;
+            state.historyTagId = null;
+            els.historyTagFilter.value = '';
             filters.update();
             state.historyFilterRevision++;
             invalidateHistoryCache();
@@ -780,12 +783,6 @@ export const createHistoryView = ({
             invalidateHistoryCache();
             void renderHistory({ force: true });
         });
-        els.historyClearTagFilter.addEventListener('click', () => {
-            els.historyTagFilter.focus({ preventScroll: true });
-            els.historyTagFilter.value = '';
-            els.historyTagFilter.dispatchEvent(new Event('change'));
-        });
-
         jobs.bindEvents();
         const unsubscribeJobs = jobs.subscribe((id, record) => {
             for (const indicator of els.historyList.querySelectorAll('[data-ocr-history-id]')) {

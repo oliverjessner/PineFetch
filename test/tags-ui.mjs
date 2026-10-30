@@ -882,7 +882,8 @@ try {
             await page.locator('#historySourceTrigger').click();
             await page.locator('#historySourceMenu [data-oj-value="tiktok"]').click();
             assert.equal(await page.locator('#historyFiltersValue').textContent(), 'Filters · 2');
-            await page.locator('#historyClearSourceFilter').click();
+            await page.locator('#historySourceTrigger').click();
+            await page.locator('#historySourceMenu [data-oj-value=""]').click();
             assert.equal(await page.locator('#historyFiltersValue').textContent(), 'Filters · 1');
             await page.locator('#historySourceTrigger').click();
             await page.locator('#historySourceMenu [data-oj-value="tiktok"]').click();
@@ -893,10 +894,7 @@ try {
                     'Clip 2'
             );
             await openFilters();
-            await page.locator('#historyClearTagFilter').click();
-            assert(
-                await page.locator('#historyTagFilter').evaluate(node => node === globalThis.document.activeElement)
-            );
+            await page.locator('#historyTagFilter').selectOption('');
             await page.waitForFunction(
                 () => !globalThis.__tagsUi.commands.findLast(call => call.command === 'get_history')?.args.tagId
             );
@@ -907,6 +905,22 @@ try {
                 const args = globalThis.__tagsUi.commands.findLast(call => call.command === 'get_history')?.args;
                 return args?.query === 'Clip 2' && !args.source && !args.tagId;
             });
+            assert.equal(await page.locator('#historyFiltersValue').textContent(), 'Filters');
+            assert.equal(
+                await page.locator('.pinefetch-history-search-controls #historySearchFieldDropdown').count(),
+                0
+            );
+            await page.locator('#historySearchFieldTrigger').click();
+            await page.locator('#historySearchFieldMenu [data-oj-value="description"]').click();
+            assert.equal(await page.locator('#historyFiltersValue').textContent(), 'Filters · 1');
+            assert.equal(await page.locator('#historySearchInput').getAttribute('placeholder'), 'Search descriptions');
+            await page.locator('#historyClearFiltersBtn').click();
+            await page.waitForFunction(() => {
+                const args = globalThis.__tagsUi.commands.findLast(call => call.command === 'get_history')?.args;
+                return args?.query === 'Clip 2' && args.searchField === 'title' && !args.source && !args.tagId;
+            });
+            assert.equal(await page.locator('#historySearchFieldValue').textContent(), 'Title');
+            assert.equal(await page.locator('#historySearchInput').inputValue(), 'Clip 2');
             assert.equal(await page.locator('#historyFiltersValue').textContent(), 'Filters');
             await page.keyboard.press('Escape');
             assert(
@@ -1220,7 +1234,7 @@ try {
                     probe.remove();
                     return {
                         mediaGap: remove.left - thumb.right,
-                        mediaCenter: Math.abs(remove.top + remove.height / 2 - (thumb.top + thumb.height / 2)),
+                        mediaTop: Math.abs(remove.top - thumb.top),
                         tagGap: tags.top - meta.bottom,
                         titleGap: meta.top - title.bottom,
                         tagAlignment: tags.left - title.left,
@@ -1244,7 +1258,7 @@ try {
                     Math.abs(geometry.mediaGap - geometry.space3) < 1,
                     `${width}px media gap: ${JSON.stringify(geometry)}`
                 );
-                assert(geometry.mediaCenter < 1 && geometry.separate);
+                assert(geometry.mediaTop < 1 && geometry.separate);
                 assert(
                     Math.abs(geometry.tagGap - geometry.space2) < 1,
                     `${width}px tag gap: ${JSON.stringify(geometry)}`

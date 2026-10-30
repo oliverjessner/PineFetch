@@ -199,7 +199,13 @@ const installTagsBridge = () => {
             };
         if (command === 'get_history_details') {
             const entry = records.find(row => row.id === args.id);
-            const result = { entry, output_file_available: false, captions: [], subtitles: [], has_transcript: false };
+            const result = {
+                entry,
+                output_file_available: false,
+                captions: state.description ? [{ media_path: entry.id }] : [],
+                subtitles: [],
+                has_transcript: false,
+            };
             if (state.holdDetailsRead) {
                 state.holdDetailsRead = false;
                 return new Promise(resolve => {
@@ -208,6 +214,8 @@ const installTagsBridge = () => {
             }
             return result;
         }
+        if (command === 'get_history_caption' && state.description)
+            return { media_path: args.mediaPath, file_available: true, text: state.description };
         if (command === 'get_history_account') {
             const entry = records.find(row => row.id === args.id);
             const rows = entry.identity
@@ -577,8 +585,11 @@ try {
             await page.locator('[data-tags-content] .pinefetch-history-open-btn').first().click();
             await page.locator('#historyDetailsContent').waitFor();
             await page.locator('#historyDetailsTags .pinefetch-tag-name').waitFor();
-            assert.equal(await page.locator('#historyDetailsHeader #historyDetailsTags').count(), 1);
-            assert.equal(await page.locator('#historyOverviewPanel #historyDetailsTags').count(), 0);
+            assert.equal(await page.locator('#historyDetailsHeader #historyDetailsTags').count(), 0);
+            assert.equal(
+                await page.locator('#historyOverviewPanel .pinefetch-overview-workspace > #historyDetailsTags').count(),
+                1
+            );
             const readsBeforeTabs = await page.evaluate(
                 () => globalThis.__tagsUi.commands.filter(call => call.command === 'get_history_tags').length
             );
@@ -591,8 +602,11 @@ try {
                 'historyOverviewTab',
             ]) {
                 await page.locator(`#${id}`).click();
-                assert(await page.locator('#historyDetailsTags').isVisible());
-                assert(await page.locator('#historyDetailsTags').getByText('Research', { exact: true }).isVisible());
+                assert.equal(await page.locator('#historyDetailsTags').isVisible(), id === 'historyOverviewTab');
+                if (id === 'historyOverviewTab')
+                    assert(
+                        await page.locator('#historyDetailsTags').getByText('Research', { exact: true }).isVisible()
+                    );
             }
             assert.equal(
                 await page.evaluate(
@@ -600,13 +614,15 @@ try {
                 ),
                 readsBeforeTabs
             );
-            await page.locator('#historyTranscriptTab').click();
             await page.locator('#historyDetailsTags [data-detail-tags-add]').click();
             await page
                 .locator('#historyTagsPopover')
                 .getByRole('checkbox', { name: 'Remove tag Research', exact: true })
                 .waitFor();
-            await page.keyboard.press('Escape');
+            await page.locator('#historyOverviewTab').focus();
+            await page.keyboard.press('ArrowRight');
+            assert(await page.locator('#historyTagsPopover').isHidden());
+            assert(await page.locator('#historyDetailsTags').isHidden());
             await page.locator('#historyOverviewTab').click();
             await page.locator('#historyDetailsTags').getByRole('button', { name: '+ Add Tag', exact: true }).click();
             const picker = page.locator('#historyTagsPopover');
@@ -630,7 +646,16 @@ try {
                 ),
                 additionsBeforeHold + 1
             );
+            await page.locator('#historyOverviewTab').focus();
+            await page.keyboard.press('ArrowRight');
+            assert(await picker.isHidden());
             await page.evaluate(() => globalThis.__tagsUi.releaseAssignment());
+            await page.waitForFunction(() =>
+                globalThis.document.querySelector('#historyDetailsTags').textContent.includes('Investigação')
+            );
+            assert(await page.locator('#historyDetailsTags').isHidden());
+            await page.locator('#historyOverviewTab').click();
+            await page.locator('#historyDetailsTags [data-detail-tags-add]').click();
             await picker.getByRole('checkbox', { name: 'Remove tag Investigação', exact: true }).waitFor();
             await page.evaluate(() => {
                 globalThis.__tagsUi.failAssignment = true;
@@ -1005,11 +1030,14 @@ try {
                 node.scrollTop = 0;
             });
             await page.screenshot({ path: `/tmp/pinefetch-tags-overview-${engine.name()}.png` });
-            // Header metadata persists across tabs and keeps overflow mutations local.
-            const longHeaderTagName = 'Investigation with a deliberately long label for compact header display';
+            // Overview tags span both columns and keep overflow mutations local.
+            const longDetailTagName = 'Investigation with a deliberately long label for compact tag row display';
             await page.evaluate(name => {
                 const ui = globalThis.__tagsUi;
                 const entry = ui.records.find(row => row.id === 'tag-entry-60');
+                ui.description = 'A saved video description with enough text to exercise the Overview column. '.repeat(
+                    30
+                );
                 entry.title = 'A long saved video title with creator context and details that wrap safely '.repeat(2);
                 entry.thumbnail =
                     'data:image/svg+xml,' +
@@ -1017,24 +1045,28 @@ try {
                         '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#35C9A5"/></svg>'
                     );
                 ui.definitions.find(tag => tag.name === 'Investigação').name = name;
-            }, longHeaderTagName);
+            }, longDetailTagName);
             await page.getByRole('button', { name: 'Open tag Research', exact: true }).click();
             await page.locator('[data-tags-content] .pinefetch-history-open-btn').first().click();
             const header = page.locator('#historyDetailsHeader');
-            const headerTags = header.locator('#historyDetailsTags');
-            const headerAdd = headerTags.locator('[data-detail-tags-add]');
-            const headerMore = headerTags.locator('[data-detail-tags-overflow]');
-            await headerAdd.waitFor();
+            const overviewTags = page.locator(
+                '#historyOverviewPanel .pinefetch-overview-workspace > #historyDetailsTags'
+            );
+            const overviewAdd = overviewTags.locator('[data-detail-tags-add]');
+            const overviewMore = overviewTags.locator('[data-detail-tags-overflow]');
+            await overviewAdd.waitFor();
+            await page.locator('#historyCaptionText').waitFor();
+            assert.equal(await header.locator('[data-detail-tags-add], .pinefetch-tag-chip').count(), 0);
             await page.waitForFunction(
                 () => !globalThis.document.querySelector('#historyDetailsTags [data-detail-tags-add]').disabled
             );
-            assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), 3);
+            assert.equal(await overviewTags.locator('.pinefetch-tag-chip').count(), 3);
             assert.equal(
-                await headerTags.getByText(longHeaderTagName, { exact: true }).getAttribute('title'),
-                longHeaderTagName
+                await overviewTags.getByText(longDetailTagName, { exact: true }).getAttribute('title'),
+                longDetailTagName
             );
-            const addBox = await headerAdd.boundingBox();
-            const moreBox = await headerMore.boundingBox();
+            const addBox = await overviewAdd.boundingBox();
+            const moreBox = await overviewMore.boundingBox();
             assert(addBox.x >= moreBox.x + moreBox.width && addBox.x - moreBox.x - moreBox.width <= 16);
             for (const width of [1200, 800, 520, 380]) {
                 await page.setViewportSize({ width, height: 900 });
@@ -1047,11 +1079,45 @@ try {
                 assert(
                     await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth)
                 );
-                assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), width <= 620 ? 1 : 3);
+                assert.equal(await overviewTags.locator('.pinefetch-tag-chip').count(), width <= 620 ? 1 : 3);
+                await overviewTags.scrollIntoViewIfNeeded();
+                const placement = await overviewTags.evaluate(tags => {
+                    const panel = tags.closest('#historyOverviewPanel');
+                    const columns = tags.parentElement.getBoundingClientRect();
+                    const row = tags.getBoundingClientRect();
+                    const divider = tags.querySelector('.oj-divider').getBoundingClientRect();
+                    const metadata = panel.querySelector('#historyOverviewList').getBoundingClientRect();
+                    const caption = panel.querySelector('#historyCaptionsPanel').getBoundingClientRect();
+                    const description = panel.querySelector('#historyCaptionText').getBoundingClientRect();
+                    const controls = tags.querySelector('[data-detail-tags-row]').getBoundingClientRect();
+                    const label = tags.querySelector('.oj-label').getBoundingClientRect();
+                    const firstChip = tags.querySelector('.pinefetch-tag-chip').getBoundingClientRect();
+                    const space2 = Number.parseFloat(
+                        globalThis.getComputedStyle(tags.querySelector('[data-detail-tags-row]')).gap
+                    );
+                    return {
+                        below: row.top >= Math.max(metadata.bottom, caption.bottom),
+                        fullWidth: Math.abs(row.left - columns.left) < 1 && Math.abs(row.width - columns.width) < 1,
+                        descriptionContained:
+                            description.bottom <= caption.bottom + 1 && description.top >= caption.top,
+                        separator: Math.abs(divider.width - row.width) < 1 && divider.bottom <= controls.top,
+                        compactGap: Math.abs(controls.top - divider.bottom - space2) < 1,
+                        compactHeight: row.height < 120,
+                        horizontal: Math.abs(label.top + label.height / 2 - firstChip.top - firstChip.height / 2) < 1,
+                        inViewport:
+                            row.bottom <= globalThis.innerHeight && row.left >= 0 && row.right <= globalThis.innerWidth,
+                        noOverflow: tags.scrollWidth <= tags.clientWidth,
+                    };
+                });
+                assert(
+                    Object.values(placement).every(Boolean),
+                    `${width}px Overview tag placement: ${JSON.stringify(placement)}`
+                );
+                assert.equal(await overviewTags.locator('.oj-panel').count(), 0);
                 const titleBox = await header.locator('#historyDetailsTitle').boundingBox();
                 const imageBox = await header.locator('#historyDetailsThumbnail').boundingBox();
                 assert(titleBox.x + titleBox.width <= imageBox.x);
-                await headerAdd.click();
+                await overviewAdd.click();
                 const popupBox = await picker.boundingBox();
                 assert(
                     popupBox.x >= 0 &&
@@ -1060,12 +1126,12 @@ try {
                         popupBox.y + popupBox.height <= 900
                 );
                 await page.keyboard.press('Escape');
-                assert(await headerAdd.evaluate(button => button === globalThis.document.activeElement));
+                assert(await overviewAdd.evaluate(button => button === globalThis.document.activeElement));
                 if ([1200, 380].includes(width))
-                    await page.screenshot({ path: `/tmp/pinefetch-header-tags-${engine.name()}-${width}.png` });
+                    await page.screenshot({ path: `/tmp/pinefetch-overview-tags-${engine.name()}-${width}.png` });
             }
             await page.setViewportSize({ width: 1200, height: 900 });
-            await headerMore.click();
+            await overviewMore.click();
             await picker.getByRole('checkbox', { name: 'Remove tag Delayed', exact: true }).waitFor();
             assert(await picker.locator('[data-quick-create]').isHidden());
             assert.equal(await picker.getByRole('checkbox', { name: 'Add tag Recovery', exact: true }).count(), 0);
@@ -1087,12 +1153,12 @@ try {
                 .getByRole('checkbox', { name: 'Remove tag Delayed', exact: true })
                 .waitFor({ state: 'detached' });
             await picker.getByRole('checkbox', { name: 'Remove tag Overflow', exact: true }).click();
-            await headerMore.waitFor({ state: 'hidden' });
+            await overviewMore.waitFor({ state: 'hidden' });
             assert(await picker.isVisible());
             await page.keyboard.press('Escape');
-            assert(await headerAdd.evaluate(button => button === globalThis.document.activeElement));
-            await headerTags.getByRole('button', { name: 'Remove tag Fresh', exact: true }).click();
-            await headerTags.getByText('Fresh', { exact: true }).waitFor({ state: 'detached' });
+            assert(await overviewAdd.evaluate(button => button === globalThis.document.activeElement));
+            await overviewTags.getByRole('button', { name: 'Remove tag Fresh', exact: true }).click();
+            await overviewTags.getByText('Fresh', { exact: true }).waitFor({ state: 'detached' });
             await page.waitForFunction(
                 () =>
                     globalThis.document.querySelectorAll('#historyDetailsTags .pinefetch-tag-remove:not(:disabled)')
@@ -1101,18 +1167,18 @@ try {
             await page.evaluate(() => {
                 globalThis.__tagsUi.failAssignment = true;
             });
-            await headerTags.getByRole('button', { name: `Remove tag ${longHeaderTagName}`, exact: true }).click();
+            await overviewTags.getByRole('button', { name: `Remove tag ${longDetailTagName}`, exact: true }).click();
             await page.waitForFunction(() =>
                 globalThis.document
                     .querySelector('#historyDetailsTags [data-detail-tag-status]')
                     .textContent.includes('failed')
             );
-            assert(await headerTags.getByText(longHeaderTagName, { exact: true }).isVisible());
+            assert(await overviewTags.getByText(longDetailTagName, { exact: true }).isVisible());
             await page.evaluate(() => {
                 globalThis.__tagsUi.failAssignment = false;
             });
-            await headerTags.getByRole('button', { name: `Remove tag ${longHeaderTagName}`, exact: true }).click();
-            await headerTags.getByText(longHeaderTagName, { exact: true }).waitFor({ state: 'detached' });
+            await overviewTags.getByRole('button', { name: `Remove tag ${longDetailTagName}`, exact: true }).click();
+            await overviewTags.getByText(longDetailTagName, { exact: true }).waitFor({ state: 'detached' });
             await page.locator('#historyDetailsView .pinefetch-tag-return').click();
             await page.evaluate(() => {
                 globalThis.__tagsUi.holdTagsRead = true;
@@ -1127,14 +1193,14 @@ try {
             });
             await page.locator('#historyList [data-history-id="tag-entry-57"] .pinefetch-history-open-btn').click();
             await page.waitForFunction(() => typeof globalThis.__tagsUi.releaseDetailsRead === 'function');
-            assert(await headerTags.isHidden());
+            assert(await overviewTags.isHidden());
             await page.evaluate(() => globalThis.__tagsUi.releaseDetailsRead());
-            await headerAdd.waitFor();
-            assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), 0);
-            assert(!(await headerTags.textContent()).includes('No tags assigned'));
+            await overviewAdd.waitFor();
+            assert.equal(await overviewTags.locator('.pinefetch-tag-chip').count(), 0);
+            assert(!(await overviewTags.textContent()).includes('No tags assigned'));
             await page.evaluate(() => globalThis.__tagsUi.releaseTagsRead());
             assert.equal(await page.locator('#historyDetailsTitle').textContent(), 'Clip 57');
-            assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), 0);
+            assert.equal(await overviewTags.locator('.pinefetch-tag-chip').count(), 0);
             await page.locator('#viewTagsBtn').click();
             await page.locator('[data-tags-overview]').click();
             for (const width of [1440, 1000, 800, 620, 520, 380]) {
@@ -1356,7 +1422,7 @@ try {
             assert(await page.evaluate(() => globalThis.__tagModalMaximum <= 1));
             assert.deepEqual(errors, []);
             console.log(
-                `[tags:ui] ${engine.name()}: token-based card layout/truncation, thumbnail actions, persistent header/overflow, Tags CRUD/context, filters, failure recovery/races, accounts, keyboard and responsive layouts passed.`
+                `[tags:ui] ${engine.name()}: token-based card layout/truncation, thumbnail actions, Overview-only tags/overflow, Tags CRUD/context, filters, failure recovery/races, accounts, keyboard and responsive layouts passed.`
             );
         } finally {
             await browser.close();

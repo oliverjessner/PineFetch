@@ -23,7 +23,7 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
     const state = {
         open: false,
         card: null,
-        header: null,
+        details: null,
         id: null,
         trigger: null,
         epoch: 0,
@@ -64,7 +64,7 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
         if (!state.open) return;
         if (!state.trigger?.isConnected || !state.trigger.getClientRects().length) {
             const replacement =
-                state.header?.querySelector('[data-detail-tags-add]') ||
+                state.details?.querySelector('[data-detail-tags-add]') ||
                 state.card?.querySelector('.pinefetch-history-open-btn');
             if (replacement?.isConnected && replacement.getClientRects().length) {
                 restoreTrigger();
@@ -406,7 +406,7 @@ export const createQuickTags = ({ api, choices, assign, onCreated, appendLog }) 
             state.id = id;
             setTrigger(trigger);
             state.card = trigger.closest('[data-history-id]');
-            state.header = trigger.closest('#historyDetailsTags');
+            state.details = trigger.closest('#historyDetailsTags');
             state.assignedOnly = assignedOnly;
             state.epoch++;
             const epoch = state.epoch;

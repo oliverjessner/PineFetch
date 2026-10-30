@@ -404,12 +404,14 @@ dialog when needed. `tags.js` retains the standalone full editor, guards against
 nested modals and serializes conflicting assignments. Quick creation captures the
 History ID and keeps a created definition available for assignment retry after a
 partial failure; stale replies cannot update another video's popover.
-Video Details owns a single persistent header tag region outside its tab panels.
-It renders three cached chips, or one at narrow widths, and uses the same quick
-popover in assigned-only mode for overflow. Header controls remain stable during
-refreshes; overflow can reanchor to Add Tag if its trigger disappears. Navigation
-clears the old header before loading another entry, and reads/mutations retain
-their captured entry IDs. Tab and responsive-layout changes do not reread tags.
+Video Details keeps its tag row in Overview, below both metadata and saved
+caption/description columns. An OJ divider separates it from the content; the
+header contains only title, platform and thumbnail. The row renders three cached
+chips, or one at narrow widths, and uses the same quick popover in assigned-only
+mode for overflow. Controls remain stable during refreshes; overflow can reanchor
+to Add Tag if its trigger disappears. Tab changes close the popover and hide the
+row without rereading tags. Navigation clears the old tags before loading another
+entry, and reads/mutations retain their captured entry IDs.
 History cards keep the open-content action and tag controls in one text column,
 with a separate thumbnail/remove action group. They reuse OJ `oj-panel-compact`,
 `oj-caption`, `oj-tag`, `oj-status-dot`, `oj-truncate` and existing danger buttons.

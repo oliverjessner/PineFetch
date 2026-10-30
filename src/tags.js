@@ -206,10 +206,10 @@ export const createTagController = ({ api, appendLog, onChange = () => {}, openT
         detailRequest = 0,
         detailLoading = false;
     const detailRemovals = new Set();
-    const compactHeader = matchMedia('(max-width: 620px)');
+    const compactDetails = matchMedia('(max-width: 620px)');
     if (detailsRoot)
         detailsRoot.innerHTML =
-            '<span aria-hidden="true">·</span><span class="oj-label">Tags</span><span data-detail-tags></span><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-detail-tags-overflow hidden></button><button type="button" class="oj-button oj-button-secondary oj-button-compact" data-detail-tags-add>+ Add Tag</button><span class="oj-helper oj-sr-only" role="status" data-detail-tag-status></span>';
+            '<hr class="oj-divider"><div class="oj-cluster" data-detail-tags-row><span class="oj-label">Tags</span><span data-detail-tags></span><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-detail-tags-overflow hidden></button><button type="button" class="oj-button oj-button-secondary oj-button-compact" data-detail-tags-add>+ Add Tag</button><span class="oj-helper oj-sr-only" role="status" data-detail-tag-status></span></div>';
     const detailStatus = (message = '', error = false) => {
         const status = detailsRoot?.querySelector('[data-detail-tag-status]');
         if (!status) return;
@@ -225,7 +225,7 @@ export const createTagController = ({ api, appendLog, onChange = () => {}, openT
         detailsRoot.hidden = !detailId;
         const id = detailId;
         const rows = assigned.get(id) || [];
-        const limit = compactHeader.matches ? 1 : 3;
+        const limit = compactDetails.matches ? 1 : 3;
         const busy = detailLoading || detailRemovals.has(detailId);
         detailsRoot.setAttribute('aria-busy', String(busy));
         list.replaceChildren();
@@ -279,7 +279,7 @@ export const createTagController = ({ api, appendLog, onChange = () => {}, openT
     detailsRoot?.querySelector('[data-detail-tags-overflow]').addEventListener('click', event => {
         if (detailId) void quick.open(detailId, event.currentTarget, { assignedOnly: true });
     });
-    compactHeader.addEventListener('change', renderDetails);
+    compactDetails.addEventListener('change', renderDetails);
     const showDetails = async id => {
         detailId = id;
         const request = ++detailRequest;

@@ -918,7 +918,7 @@ body {
 }
 
 #historyDetailsHeader {
-    grid-template-columns: minmax(0, 1fr) 96px;
+    grid-template-columns: minmax(0, 1fr) calc(var(--oj-space-8) * 3);
     align-items: start;
 }
 
@@ -1802,11 +1802,13 @@ body {
     user-select: text;
 }
 .pinefetch-overview-workspace {
-    flex: 1;
+    flex: 0 1 auto;
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-    gap: var(--oj-space-6);
+    grid-template-rows: minmax(0, 1fr) auto;
+    column-gap: var(--oj-space-6);
+    row-gap: var(--oj-space-2);
     overflow: hidden;
 }
 #historyOverviewList,
@@ -1879,11 +1881,7 @@ body {
     }
     .pinefetch-overview-caption {
         flex: 1;
-        min-height: 160px;
-        overflow: visible;
-    }
-    #historyCaptionText {
-        min-height: 120px;
+        min-height: calc(var(--oj-space-8) * 5);
     }
 }
 @media (max-width: 620px) {
@@ -2105,53 +2103,36 @@ button.pinefetch-tag-name,
     border-bottom: 1px solid var(--oj-border);
     padding-block: var(--oj-space-3);
 }
-.pinefetch-history-header-metadata,
-.pinefetch-header-tags {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--oj-space-2);
+.pinefetch-overview-tags {
+    grid-column: 1 / -1;
+    flex: none;
     min-width: 0;
 }
-.pinefetch-history-header-metadata {
-    align-items: baseline;
+.pinefetch-overview-tags > .oj-divider {
+    margin-block: 0 var(--oj-space-2);
 }
-.pinefetch-header-tags {
-    flex: 1;
+.pinefetch-overview-tags [data-detail-tags-row] {
+    --oj-gap: var(--oj-space-2);
+    min-width: 0;
 }
-.pinefetch-header-tags [data-detail-tags] {
+.pinefetch-overview-tags [data-detail-tags] {
     display: contents;
 }
-.pinefetch-header-tags .pinefetch-tag-chip {
-    max-inline-size: min(12rem, 100%);
+.pinefetch-overview-tags .pinefetch-tag-chip {
+    max-inline-size: min(calc(var(--oj-space-8) * 6), 100%);
 }
-.pinefetch-header-tags .pinefetch-tag-remove {
+.pinefetch-overview-tags .pinefetch-tag-remove {
     flex: none;
 }
-.pinefetch-header-tags [data-detail-tag-status]:not(.oj-sr-only) {
+.pinefetch-overview-tags [data-detail-tag-status]:not(.oj-sr-only) {
     flex-basis: 100%;
 }
-.pinefetch-header-tags [data-detail-tag-status]:empty {
+.pinefetch-overview-tags [data-detail-tag-status]:empty {
     display: none;
 }
 @media (max-width: 620px) {
     #historyDetailsHeader {
-        grid-template-columns: minmax(0, 1fr) 64px;
-    }
-    #historyDetailsHeader > .pinefetch-panel-heading {
-        display: contents;
-    }
-    #historyDetailsTitle {
-        grid-column: 1;
-        grid-row: 1;
-    }
-    #historyDetailsThumbnail {
-        grid-column: 2;
-        grid-row: 1;
-    }
-    .pinefetch-history-header-metadata {
-        grid-column: 1 / -1;
-        grid-row: 2;
+        grid-template-columns: minmax(0, 1fr) calc(var(--oj-space-8) * 2);
     }
 }
 .pinefetch-tag-return {

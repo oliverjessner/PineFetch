@@ -551,6 +551,7 @@ export const createHistoryDetailsView = ({
         });
         els.historyDetailsContent.addEventListener('oj:change', event => {
             if (event.target !== els.historyDetailsContent) return;
+            tags.closeQuick();
             transcriptMedia.pause();
             ocrMedia.pause();
             subtitleMedia.pause();

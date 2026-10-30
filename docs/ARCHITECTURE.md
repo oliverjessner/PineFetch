@@ -410,4 +410,14 @@ popover in assigned-only mode for overflow. Header controls remain stable during
 refreshes; overflow can reanchor to Add Tag if its trigger disappears. Navigation
 clears the old header before loading another entry, and reads/mutations retain
 their captured entry IDs. Tab and responsive-layout changes do not reread tags.
+History cards keep the open-content action and tag controls in one text column,
+with a separate thumbnail/remove action group. They reuse OJ `oj-panel-compact`,
+`oj-caption`, `oj-tag`, `oj-status-dot`, `oj-truncate` and existing danger buttons.
+Layout gaps come from `--oj-space-1`, `--oj-space-2` and `--oj-space-3`; chip
+typography, radii, surfaces and interactive/focus states stay with the library.
+OJ 0.2.1 has no thumbnail size token: the existing preview width is composed from
+four `--oj-space-8` units, reduced to two at the existing narrow-window breakpoint.
+This preserves the media aspect ratio without a local size/spacing scale. The
+per-tag `--tag-color` remains stored user data, independent of design-system UI
+colors. Long metadata values truncate within their column and retain tooltips.
 See [TAGS.md](TAGS.md) for persistence, deletion and identity semantics.

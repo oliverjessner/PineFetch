@@ -13,17 +13,26 @@ export const tagColor = color => {
     return /^[\dA-F]{6}$/i.test(value) ? '#' + value.toUpperCase() : tagPalette[0];
 };
 export const createTagChip = (tag, { open, remove, disabled = false } = {}) => {
-    const chip = document.createElement('span');
-    chip.className = 'pinefetch-tag-chip';
+    const directAction = Boolean(open && !remove);
+    const chip = document.createElement(directAction ? 'button' : 'span');
+    chip.className = 'oj-tag pinefetch-tag-chip';
+    if (directAction) {
+        chip.type = 'button';
+        chip.title = tag.name;
+        chip.addEventListener('click', event => {
+            event.stopPropagation();
+            open(tag);
+        });
+    }
     chip.style.setProperty('--tag-color', tagColor(tag.color));
     const dot = document.createElement('span');
-    dot.className = 'pinefetch-tag-dot';
+    dot.className = 'oj-status-dot pinefetch-tag-dot';
     dot.setAttribute('aria-hidden', 'true');
-    const label = document.createElement(open ? 'button' : 'span');
-    label.className = 'pinefetch-tag-name';
+    const label = document.createElement(open && !directAction ? 'button' : 'span');
+    label.className = 'oj-truncate pinefetch-tag-name';
     label.textContent = tag.name;
     label.title = tag.name;
-    if (open) {
+    if (open && !directAction) {
         label.type = 'button';
         label.addEventListener('click', event => {
             event.stopPropagation();

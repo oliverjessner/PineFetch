@@ -426,17 +426,22 @@ export const createHistoryDetailsView = ({
             const item = target?.closest('.pinefetch-history-item');
             if (!item || !historyCardsRoot.contains(item)) return;
             const interactive = target.closest('a, button, input, select, textarea, [contenteditable="true"]');
-            if (interactive && !interactive.classList.contains('pinefetch-history-open-btn')) {
+            if (interactive && !interactive.matches('.pinefetch-history-open-btn, .pinefetch-history-thumbnail-btn')) {
                 hideContextMenu();
                 return;
             }
             event.preventDefault();
-            openContextMenu(item, event.clientX, event.clientY, item.querySelector('.pinefetch-history-open-btn'));
+            openContextMenu(
+                item,
+                event.clientX,
+                event.clientY,
+                interactive || item.querySelector('.pinefetch-history-open-btn')
+            );
         });
         historyCardsRoot.addEventListener('keydown', event => {
             if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
             const target = event.target instanceof Element ? event.target : null;
-            const opener = target?.closest('.pinefetch-history-open-btn');
+            const opener = target?.closest('.pinefetch-history-open-btn, .pinefetch-history-thumbnail-btn');
             const item = opener?.closest('.pinefetch-history-item');
             if (!item || !historyCardsRoot.contains(item)) return;
             event.preventDefault();

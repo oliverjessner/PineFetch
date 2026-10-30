@@ -1640,7 +1640,6 @@ const historyView = createHistoryView({
     formatFileSize,
     formatDuration,
     detectPlatform,
-    appendTextSpans,
     isActive: () => state.activeView === 'history',
     activeSection: () => state.activeView,
     navigate: setActiveView,

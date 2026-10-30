@@ -16,7 +16,6 @@ export const createHistoryView = ({
     formatFileSize,
     formatDuration,
     detectPlatform,
-    appendTextSpans,
     isActive,
     activeSection,
     navigate,
@@ -411,9 +410,16 @@ export const createHistoryView = ({
         item.dataset.historyUploader = `${entry.uploader || ''}`.trim();
         item.dataset.historySource = `${entry.source || ''}`.trim().toLowerCase();
         const entryLabel = entry.title || entry.filename || entry.url || 'download';
+        const body = document.createElement('div');
+        body.className = 'pinefetch-history-card-body';
+        const mediaActions = document.createElement('div');
+        mediaActions.className = 'pinefetch-history-media-actions';
+        if (tagId && !entry.thumbnail) item.classList.add('pinefetch-history-no-media-actions');
+        item.append(body);
+        if (entry.thumbnail || !tagId) item.append(mediaActions);
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
-        openBtn.className = `pinefetch-history-open-btn pinefetch-list-card-layout ${entry.thumbnail ? '' : 'pinefetch-no-media'}`;
+        openBtn.className = 'pinefetch-history-open-btn';
         openBtn.setAttribute('aria-label', `Open video details: ${entryLabel}`);
         openBtn.setAttribute('aria-haspopup', 'menu');
         openBtn.setAttribute('aria-controls', 'historyContextMenu');
@@ -426,14 +432,15 @@ export const createHistoryView = ({
         const title = document.createElement('div');
         title.className = 'pinefetch-history-title';
         title.textContent = entryLabel;
+        title.title = entryLabel;
         content.appendChild(title);
 
         const meta = document.createElement('div');
-        meta.className = 'pinefetch-history-meta';
+        meta.className = 'oj-caption pinefetch-history-meta';
         const dateStr = formatHistoryDate(entry.completed_at);
         const source = entry.source || entry.platform || detectPlatform(entry.url) || 'unknown';
         const sourceLabel = document.createElement('span');
-        sourceLabel.className = 'pinefetch-history-platform';
+        sourceLabel.className = 'oj-truncate pinefetch-history-platform';
         sourceLabel.title = formatHistorySource(source);
         const sourceIcon = createPlatformIcon(source);
         if (sourceIcon) {
@@ -444,15 +451,30 @@ export const createHistoryView = ({
         } else {
             sourceLabel.textContent = sourceLabel.title;
         }
-        meta.appendChild(sourceLabel);
+        const medium = document.createElement('span');
+        medium.className = 'pinefetch-history-meta-group';
+        medium.append(sourceLabel, document.createTextNode(entry.medium || ''));
+        meta.append(medium);
+        const appendMeta = (text, className) => {
+            if (!text) return;
+            const group = document.createElement('span');
+            group.className = `pinefetch-history-meta-group ${className}`;
+            const separator = document.createElement('span');
+            separator.className = 'pinefetch-history-meta-separator';
+            separator.textContent = '·';
+            separator.setAttribute('aria-hidden', 'true');
+            const label = document.createElement('span');
+            label.className = 'oj-truncate';
+            label.textContent = text;
+            label.title = text;
+            group.append(separator, label);
+            meta.append(group);
+        };
         const uploadDate = formatUploadTimestamp(entry.timestamp) || formatUploadDate(entry.upload_date);
-        appendTextSpans(meta, [
-            entry.medium || '',
-            entry.uploader ? `by ${entry.uploader}` : '',
-            entry.filename || '',
-            uploadDate ? `uploaded ${uploadDate}` : '',
-            dateStr,
-        ]);
+        appendMeta(entry.uploader ? `by ${entry.uploader}` : '', 'pinefetch-history-creator');
+        appendMeta(entry.filename || '', 'pinefetch-history-filename');
+        appendMeta(uploadDate ? `uploaded ${uploadDate}` : '', 'pinefetch-history-upload-date');
+        appendMeta(dateStr, 'pinefetch-history-saved-date');
         content.appendChild(meta);
         const ocrIndicator = document.createElement('span');
         ocrIndicator.className = 'oj-caption pinefetch-history-ocr-indicator';
@@ -463,20 +485,30 @@ export const createHistoryView = ({
         openBtn.appendChild(content);
 
         if (entry.thumbnail) {
+            const thumbnailButton = document.createElement('button');
+            thumbnailButton.type = 'button';
+            thumbnailButton.className = 'pinefetch-history-thumbnail-btn';
+            thumbnailButton.setAttribute('aria-label', `Open video details from thumbnail: ${entryLabel}`);
+            thumbnailButton.setAttribute('aria-haspopup', 'menu');
+            thumbnailButton.setAttribute('aria-controls', 'historyContextMenu');
+            thumbnailButton.onclick = open || (() => void historyDetailsView.open(entry.id, thumbnailButton));
             const thumb = document.createElement('div');
             thumb.className = 'pinefetch-media-thumbnail pinefetch-history-thumb';
             thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
-            openBtn.appendChild(thumb);
+            thumbnailButton.append(thumb);
+            mediaActions.append(thumbnailButton);
         }
-        item.appendChild(openBtn);
-        item.append(tags.chips(entry.id));
+        body.append(openBtn, tags.chips(entry.id));
+        const actions = document.createElement('div');
+        actions.className = 'oj-cluster pinefetch-history-card-actions';
+        if (account || tagId) body.append(actions);
         if (account && entry.uploader) {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'oj-button oj-button-ghost oj-button-compact';
             button.textContent = `View creator: ${entry.uploader}`;
             button.addEventListener('click', account);
-            item.append(button);
+            actions.append(button);
         }
         if (tagId) {
             const button = document.createElement('button');
@@ -495,11 +527,12 @@ export const createHistoryView = ({
                     button.disabled = false;
                 }
             });
-            item.append(button);
+            actions.append(button);
             return item;
         }
 
         const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
         removeBtn.className = 'oj-icon-button oj-button-danger pinefetch-history-item-remove-btn';
         const removeIcon = document.createElement('i');
         removeIcon.className = 'fa-solid fa-xmark';
@@ -565,7 +598,7 @@ export const createHistoryView = ({
                 restoreHistoryRemovalFocus();
             }
         };
-        item.appendChild(removeBtn);
+        mediaActions.appendChild(removeBtn);
 
         return item;
     };

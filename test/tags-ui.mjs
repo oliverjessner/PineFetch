@@ -1026,6 +1026,151 @@ try {
             assert.equal(await headerTags.locator('.pinefetch-tag-chip').count(), 0);
             await page.locator('#viewTagsBtn').click();
             await page.locator('[data-tags-overview]').click();
+            // History cards keep their layout under real text and thumbnail pressure.
+            await page.evaluate(() => {
+                const ui = globalThis.__tagsUi;
+                const many = ui.records.find(row => row.id === 'tag-entry-60');
+                many.title = 'Layout audit: a very long title that remains readable without moving the preview '.repeat(
+                    3
+                );
+                many.uploader = 'A creator with a very long account name '.repeat(8);
+                many.filename = 'archive-' + 'extremely-long-filename-'.repeat(60) + '.mp4';
+                many.upload_date = '20261029';
+                ui.assignments.set(many.id, new Set(ui.definitions.map(tag => tag.id)));
+                const empty = ui.records.find(row => row.id === 'tag-entry-59');
+                empty.title = 'Layout audit: no tags';
+                empty.thumbnail = many.thumbnail;
+                ui.assignments.get(empty.id).clear();
+                const one = ui.records.find(row => row.id === 'tag-entry-58');
+                one.title = 'Layout audit: no thumbnail';
+                one.thumbnail = null;
+                ui.assignments.set(one.id, new Set([ui.definitions.find(tag => tag.name === 'Research').id]));
+            });
+            await page.locator('#viewHistoryBtn').click();
+            await page.locator('#historySearchInput').fill('Layout audit');
+            await page.waitForFunction(
+                () => globalThis.document.querySelectorAll('#historyList [data-history-id]').length === 3
+            );
+            for (const width of [1440, 1200, 1000, 800, 520, 380]) {
+                await page.setViewportSize({ width, height: 900 });
+                await page.evaluate(
+                    () =>
+                        new Promise(resolve =>
+                            globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))
+                        )
+                );
+                const geometry = await page.evaluate(() => {
+                    const row = globalThis.document.querySelector('#historyList [data-history-id="tag-entry-60"]');
+                    const box = selector => row.querySelector(selector).getBoundingClientRect();
+                    const thumb = box('.pinefetch-history-thumb');
+                    const remove = box('.pinefetch-history-item-remove-btn');
+                    const meta = box('.pinefetch-history-meta');
+                    const tags = box('.pinefetch-tag-chips');
+                    const body = box('.pinefetch-history-card-body');
+                    const title = box('.pinefetch-history-title');
+                    const filename = row.querySelector('.pinefetch-history-filename .oj-truncate');
+                    const creator = row.querySelector('.pinefetch-history-creator .oj-truncate');
+                    const probe = globalThis.document.createElement('span');
+                    row.append(probe);
+                    probe.style.display = 'block';
+                    probe.style.width = 'var(--oj-space-3)';
+                    const space3 = probe.getBoundingClientRect().width;
+                    probe.style.width = 'var(--oj-space-2)';
+                    const space2 = probe.getBoundingClientRect().width;
+                    probe.remove();
+                    return {
+                        mediaGap: remove.left - thumb.right,
+                        mediaCenter: Math.abs(remove.top + remove.height / 2 - (thumb.top + thumb.height / 2)),
+                        tagGap: tags.top - meta.bottom,
+                        titleGap: meta.top - title.bottom,
+                        tagAlignment: tags.left - title.left,
+                        ratio: thumb.width / thumb.height,
+                        separate: body.right <= thumb.left,
+                        filenameClipped:
+                            filename.scrollWidth > filename.clientWidth &&
+                            globalThis.getComputedStyle(filename).textOverflow === 'ellipsis',
+                        filenameTitle: filename.title,
+                        creatorClipped: creator.scrollWidth > creator.clientWidth,
+                        filenameWidths: [filename.clientWidth, filename.scrollWidth],
+                        creatorWidths: [creator.clientWidth, creator.scrollWidth],
+                        cardsFit: [...globalThis.document.querySelectorAll('#historyList [data-history-id]')].every(
+                            card => card.scrollWidth <= card.clientWidth
+                        ),
+                        space2,
+                        space3,
+                    };
+                });
+                assert(
+                    Math.abs(geometry.mediaGap - geometry.space3) < 1,
+                    `${width}px media gap: ${JSON.stringify(geometry)}`
+                );
+                assert(geometry.mediaCenter < 1 && geometry.separate);
+                assert(
+                    Math.abs(geometry.tagGap - geometry.space2) < 1,
+                    `${width}px tag gap: ${JSON.stringify(geometry)}`
+                );
+                assert(Math.abs(geometry.titleGap - geometry.space3) < 1);
+                assert(Math.abs(geometry.tagAlignment) < 1);
+                assert(Math.abs(geometry.ratio - 16 / 9) < 0.01);
+                assert(
+                    geometry.filenameClipped && geometry.creatorClipped && geometry.filenameTitle.endsWith('.mp4'),
+                    `${width}px truncation: ${JSON.stringify({ file: geometry.filenameWidths, creator: geometry.creatorWidths, clipped: geometry.filenameClipped })}`
+                );
+                assert(geometry.cardsFit);
+                assert(
+                    await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth)
+                );
+                if ([1440, 380].includes(width))
+                    await page.screenshot({
+                        path: `/tmp/pinefetch-history-cards-${engine.name()}-${width}.png`,
+                        fullPage: true,
+                    });
+            }
+            assert.equal(
+                await page
+                    .locator('#historyList [data-history-id="tag-entry-58"] .pinefetch-history-thumbnail-btn')
+                    .count(),
+                0
+            );
+            assert(await page.locator('#historyList [data-history-id="tag-entry-59"] .pinefetch-tag-chips').isHidden());
+            const thumbnailAction = page.locator(
+                '#historyList [data-history-id="tag-entry-59"] .pinefetch-history-thumbnail-btn'
+            );
+            await thumbnailAction.click();
+            await page.locator('#historyDetailsContent').waitFor();
+            await page.locator('#historyDetailsHistoryBtn').click();
+            assert(await thumbnailAction.evaluate(button => button === globalThis.document.activeElement));
+            await thumbnailAction.focus();
+            await page.keyboard.press('Shift+F10');
+            await page.locator('#historyContextMenu').waitFor();
+            await page.keyboard.press('Escape');
+            assert(await thumbnailAction.evaluate(button => button === globalThis.document.activeElement));
+            await page
+                .locator('#historyList [data-history-id="tag-entry-60"] .pinefetch-history-item-remove-btn')
+                .click();
+            const deleteCardDialog = page.getByRole('dialog', { name: 'Remove from history?', exact: true });
+            await deleteCardDialog.waitFor();
+            await deleteCardDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+            assert(await page.locator('#historyView').isVisible());
+            assert.equal(await page.locator('#historyList [data-history-id]').count(), 3);
+            const cardTag = page.locator('#historyList [data-history-id="tag-entry-58"] .pinefetch-tag-chip');
+            await page.keyboard.press('Tab');
+            await cardTag.focus();
+            assert(
+                await cardTag.evaluate(
+                    tag => tag.matches(':focus-visible') && globalThis.getComputedStyle(tag).outlineStyle !== 'none'
+                )
+            );
+            await page.keyboard.press('Enter');
+            await page.waitForFunction(
+                () => globalThis.document.querySelector('[data-tags-crumb]').textContent === 'Research'
+            );
+            assert.equal(await page.locator('#viewTagsBtn').getAttribute('aria-current'), 'page');
+            await page.locator('#viewHistoryBtn').click();
+            assert.equal(await page.locator('#historySearchInput').inputValue(), 'Layout audit');
+            assert.equal(await page.locator('#historyList [data-history-id]').count(), 3);
+            await page.locator('#viewTagsBtn').click();
+            await page.locator('[data-tags-overview]').click();
             // The isolated fixture can also represent a first launch with no tags.
             await page.evaluate(() => {
                 globalThis.__tagsUi.definitions.splice(0);
@@ -1051,7 +1196,7 @@ try {
             assert(await page.evaluate(() => globalThis.__tagModalMaximum <= 1));
             assert.deepEqual(errors, []);
             console.log(
-                `[tags:ui] ${engine.name()}: persistent header/tabs, responsive chip overflow/removal, stale header replies, standalone Tags/context, filters, CRUD, quick tagging, single parent modal, failure recovery, pagination, accounts and keyboard/focus passed.`
+                `[tags:ui] ${engine.name()}: token-based card layout/truncation, thumbnail actions, persistent header/overflow, Tags CRUD/context, filters, failure recovery/races, accounts, keyboard and responsive layouts passed.`
             );
         } finally {
             await browser.close();

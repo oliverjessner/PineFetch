@@ -1,5 +1,9 @@
 # 3.0.0
 
+- Shortened shared database lock windows by snapshotting keyword text before counting and sorting, preserving source order, limits and complete OCR/caption coverage.
+- Moved legacy statistics URL classification and source-count sorting outside the shared connection lock, with one consistent read transaction for totals, groups and fallback data.
+- Serialized heavy analyses on a separate gate so queued work cannot reserve the database connection or accumulate large text snapshots; added lock measurements and concurrent settings/completion-write regressions.
+
 - Unified History, creator search, descriptions, transcripts, OCR, subtitles and keyword filtering with locale-independent Unicode case folding and canonical normalization, including umlauts, ß/SS and composed/decomposed text.
 - Kept highlights aligned with the original text when normalization or case folding changes character lengths, preserving copied text and timestamp navigation.
 - Applied the same comparisons to existing archives without a schema migration; preserved indexed exact creator navigation and stable cursor pagination.

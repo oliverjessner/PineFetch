@@ -244,55 +244,49 @@ pub(super) fn list_history_entries_from_db(
     Ok(list_history_page_from_db(state, u32::MAX, 0)?.entries)
 }
 
-pub(super) fn get_history_stats_from_db(
-    state: &crate::database::Database,
-) -> Result<HistoryStats, String> {
-    let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
-    let mut stats = conn
-        .query_row(
-            "SELECT
-            COUNT(*),
-            COALESCE(SUM(duration_seconds), 0),
-            COALESCE(SUM(file_size_bytes), 0)
-         FROM history_entries",
-            [],
-            |row| {
-                let video_count: i64 = row.get(0)?;
-                let total_duration_seconds: i64 = row.get(1)?;
-                let total_file_size_bytes: i64 = row.get(2)?;
-                Ok(HistoryStats {
-                    video_count: video_count.max(0) as u64,
-                    total_duration_seconds: total_duration_seconds.max(0) as u64,
-                    total_file_size_bytes: total_file_size_bytes.max(0) as u64,
-                    source_counts: Vec::new(),
-                })
-            },
-        )
-        .map_err(|e| format!("History stats read failed: {e}"))?;
+struct StatsSnapshot {
+    totals: HistoryStats,
+    groups: Vec<(Option<String>, u64)>,
+    legacy: Vec<(String, Option<String>)>,
+}
 
-    // Most entries already have a source. Group the covering source index in
-    // SQLite instead of copying and parsing every archived URL on each refresh.
-    let mut stmt = conn
-        .prepare("SELECT source,COUNT(*) FROM history_entries GROUP BY source COLLATE NOCASE")
-        .map_err(|e| format!("History stats read failed: {e}"))?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?))
+fn read_stats(conn: &Connection) -> Result<StatsSnapshot, String> {
+    let totals = conn.query_row("SELECT COUNT(*),COALESCE(SUM(duration_seconds),0),COALESCE(SUM(file_size_bytes),0) FROM history_entries", [], |row| {
+        Ok(HistoryStats {
+            video_count: row.get::<_, i64>(0)?.max(0) as u64,
+            total_duration_seconds: row.get::<_, i64>(1)?.max(0) as u64,
+            total_file_size_bytes: row.get::<_, i64>(2)?.max(0) as u64,
+            source_counts: Vec::new(),
         })
-        .map_err(|e| format!("History stats read failed: {e}"))?;
-    let mut counts = BTreeMap::<String, u64>::new();
-    let mut fallback_sources = Vec::new();
-    for row in rows {
-        let (source, count) = row.map_err(|e| format!("History stats read failed: {e}"))?;
-        if let Some(normalized) = trim_optional_string(source.clone()) {
-            *counts.entry(normalized.to_ascii_lowercase()).or_default() += count.max(0) as u64;
-        } else {
-            fallback_sources.push(source);
-        }
-    }
-    // Bind the exact blank groups: Rust's Unicode trim also accepts whitespace
-    // that SQLite's default TRIM does not. Chunk only pathological legacy data.
-    for sources in fallback_sources.chunks(128) {
+    }).map_err(|e| format!("History stats read failed: {e}"))?;
+    let groups = {
+        let mut stmt = conn
+            .prepare("SELECT source,COUNT(*) FROM history_entries GROUP BY source COLLATE NOCASE")
+            .map_err(|e| format!("History stats read failed: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as u64,
+                ))
+            })
+            .map_err(|e| format!("History stats read failed: {e}"))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| format!("History stats read failed: {e}"))?
+    };
+    // Copy only the legacy blank-source projection. Modern archives retain the
+    // covering source-index path, without loading their URLs or other metadata.
+    let blank_sources: Vec<_> = groups
+        .iter()
+        .filter(|(source, _)| {
+            source
+                .as_deref()
+                .is_none_or(|source| source.trim().is_empty())
+        })
+        .map(|(source, _)| source.clone())
+        .collect();
+    let mut legacy = Vec::new();
+    for sources in blank_sources.chunks(128) {
         let predicate = (1..=sources.len())
             .map(|n| format!("source IS ?{n} COLLATE NOCASE"))
             .collect::<Vec<_>>()
@@ -308,21 +302,47 @@ pub(super) fn get_history_stats_from_db(
             })
             .map_err(|e| format!("History stats read failed: {e}"))?;
         for row in rows {
-            let (url, platform) = row.map_err(|e| format!("History stats read failed: {e}"))?;
-            let source = source_from_url(&url)
-                .or_else(|| trim_optional_string(platform).map(|value| value.to_ascii_lowercase()))
-                .unwrap_or_else(|| "unknown".to_string());
-            *counts.entry(source).or_default() += 1;
+            legacy.push(row.map_err(|e| format!("History stats read failed: {e}"))?);
         }
     }
-    stats.source_counts = counts
-        .into_iter()
-        .map(|(source, count)| HistorySourceCount { source, count })
-        .collect();
-    stats
-        .source_counts
-        .sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.source.cmp(&b.source)));
-    Ok(stats)
+    Ok(StatsSnapshot {
+        totals,
+        groups,
+        legacy,
+    })
+}
+
+impl StatsSnapshot {
+    fn finish(mut self) -> HistoryStats {
+        #[cfg(test)]
+        crate::db_contention_tests::analysis_started();
+        let mut counts = BTreeMap::<String, u64>::new();
+        for (source, count) in self.groups {
+            if let Some(source) = trim_optional_string(source) {
+                *counts.entry(source.to_ascii_lowercase()).or_default() += count;
+            }
+        }
+        for (url, platform) in self.legacy {
+            let source = source_from_url(&url)
+                .or_else(|| trim_optional_string(platform).map(|value| value.to_ascii_lowercase()))
+                .unwrap_or_else(|| "unknown".into());
+            *counts.entry(source).or_default() += 1;
+        }
+        self.totals.source_counts = counts
+            .into_iter()
+            .map(|(source, count)| HistorySourceCount { source, count })
+            .collect();
+        self.totals
+            .source_counts
+            .sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.source.cmp(&b.source)));
+        self.totals
+    }
+}
+
+pub(super) fn get_history_stats_from_db(
+    state: &crate::database::Database,
+) -> Result<HistoryStats, String> {
+    state.analyze(|| Ok(state.read_snapshot(read_stats)?.finish()))
 }
 
 #[cfg(test)]

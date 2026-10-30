@@ -221,7 +221,10 @@ try {
             });
             const page = await context.newPage();
             const errors = [];
-            page.on('pageerror', error => errors.push(error.message));
+            page.on('pageerror', error => {
+                errors.push(error.message);
+                console.error(`[tags:ui] ${engine.name()}: ${error.message}`);
+            });
             await page.route('**/*', route => {
                 const url = route.request().url();
                 if (url.startsWith(origin + '/')) return route.continue();
@@ -240,6 +243,10 @@ try {
                 }).observe(globalThis.document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });
             });
             await page.waitForFunction(() => globalThis.__pinefetchScreenshot?.ready);
+            const openFilters = async () => {
+                if (!(await page.locator('#historyFiltersPopover').evaluate(panel => panel.matches(':popover-open'))))
+                    await page.locator('#historyFiltersBtn').click();
+            };
             await page.locator('#viewHistoryBtn').click();
             await page.locator('#historyList [data-history-id="tag-entry-60"]').waitFor();
             assert.equal(
@@ -282,19 +289,36 @@ try {
                     globalThis.document.activeElement?.closest('[data-history-id]')?.dataset.historyId ===
                     'tag-entry-39'
             );
-            await page.locator('#historyTagsBtn').click();
+            await page.locator('#viewTagsBtn').click();
             await page.locator('[data-tags-definitions] article').first().waitFor();
-            await page.locator('[data-tags-section-content]').click();
+            assert.equal(await page.locator('#viewTagsBtn').getAttribute('aria-current'), 'page');
+            assert(await page.locator('#historySummaryView').isHidden());
+            assert(await page.locator('[data-tags-breadcrumb]').isHidden());
+            assert.equal(
+                await page.getByRole('navigation', { name: 'Main view' }).locator('[aria-current="page"]').count(),
+                1
+            );
+            await page.locator('#viewHistoryBtn').click();
             await page.locator('#historyView').waitFor();
-            assert.equal(await page.locator('#historyAllContentBtn').getAttribute('aria-current'), 'page');
-            await page.locator('#historyTagsBtn').click();
+            assert.equal(await page.locator('#historyList .pinefetch-history-item').count(), 40);
+            assert.equal(await page.locator('#viewHistoryBtn').getAttribute('aria-current'), 'page');
+            assert.equal(
+                await page.locator('.pinefetch-history-sections, #historyAllContentBtn, #historyTagsBtn').count(),
+                0
+            );
+            await page.locator('#viewTagsBtn').click();
             await page.locator('[data-tags-definitions] article').first().waitFor();
-            assert.equal(await page.locator('[data-tags-section-tags]').getAttribute('aria-current'), 'page');
+            assert.equal(await page.locator('#viewTagsBtn').getAttribute('aria-current'), 'page');
             assert.equal(await page.locator('[data-tags-definitions] article').count(), 2);
-            await page.locator('#historyTagsQuery').fill('unused');
+            await page.locator('#tagsQuery').fill('unused');
             assert.equal(await page.locator('[data-tags-definitions] article').count(), 1);
-            await page.locator('#historyTagsQuery').fill('');
-            await page.locator('#historyTagsView [data-tags-create]').click();
+            await page.locator('#viewDownloadBtn').click();
+            assert(await page.locator('#tagsView').isHidden());
+            await page.locator('#viewTagsBtn').click();
+            assert.equal(await page.locator('#tagsQuery').inputValue(), 'unused');
+            assert.equal(await page.locator('[data-tags-definitions] article').count(), 1);
+            await page.locator('#tagsQuery').fill('');
+            await page.locator('#tagsView [data-tags-create]').click();
             const editor = page.locator('#tagEditorDialog');
             await editor.locator('[type=submit]').click();
             assert.match(await editor.locator('[data-tag-error]').textContent(), /Enter a tag name/);
@@ -335,7 +359,7 @@ try {
             await editor.locator('[type=submit]').click();
             await editor.waitFor({ state: 'hidden' });
             await page.getByRole('button', { name: 'Open tag Investigação', exact: true }).waitFor();
-            await page.locator('#historyTagsView [data-tags-create]').click();
+            await page.locator('#tagsView [data-tags-create]').click();
             await editor.locator('#tagNameInput').fill('research');
             await editor.locator('[type=submit]').click();
             await page.waitForFunction(() =>
@@ -357,6 +381,22 @@ try {
             await page.waitForFunction(
                 () => globalThis.document.querySelectorAll('[data-tags-content] .pinefetch-history-item').length === 30
             );
+            const tagReadsBeforeSwitch = await page.evaluate(
+                () => globalThis.__tagsUi.commands.filter(call => call.command === 'get_tag_content').length
+            );
+            await page.locator('[data-tags-scroll]').evaluate(node => {
+                node.scrollTop = 140;
+            });
+            await page.locator('#viewDownloadBtn').click();
+            await page.locator('#viewTagsBtn').click();
+            assert.equal(await page.locator('[data-tags-content] .pinefetch-history-item').count(), 30);
+            assert.equal(await page.locator('[data-tags-scroll]').evaluate(node => node.scrollTop), 140);
+            assert.equal(
+                await page.evaluate(
+                    () => globalThis.__tagsUi.commands.filter(call => call.command === 'get_tag_content').length
+                ),
+                tagReadsBeforeSwitch
+            );
             await page.evaluate(() => {
                 globalThis.__tagsUi.failAssignment = true;
             });
@@ -366,7 +406,7 @@ try {
                 .first()
                 .click();
             await page.waitForFunction(() =>
-                globalThis.document.querySelector('#historyTagsView [data-tags-status]').textContent.includes('failed')
+                globalThis.document.querySelector('#tagsView [data-tags-status]').textContent.includes('failed')
             );
             assert.equal(await page.locator('[data-tags-content] .pinefetch-history-item').count(), 30);
             await page.evaluate(() => {
@@ -382,10 +422,11 @@ try {
             await page.keyboard.press('Shift+F10');
             await page.getByRole('menuitem', { name: 'Show More Data', exact: true }).click();
             await page.locator('#historyDetailsContent').waitFor();
+            assert.equal(await page.locator('#viewTagsBtn').getAttribute('aria-current'), 'page');
             assert(await page.locator('#historyDetailsView .pinefetch-tag-return').isVisible());
             await page.locator('#historyDetailsView .pinefetch-tag-return').click();
             assert.equal(await page.locator('[data-tags-content] .pinefetch-history-item').count(), 30);
-            await page.locator('#historyTagsQuery').fill('Clip 2');
+            await page.locator('#tagsQuery').fill('Clip 2');
             await page.waitForFunction(
                 () =>
                     globalThis.__tagsUi.commands.findLast(call => call.command === 'get_tag_content')?.args.query ===
@@ -394,7 +435,7 @@ try {
             await page.waitForFunction(
                 () => globalThis.document.querySelectorAll('[data-tags-content] .pinefetch-history-item').length < 20
             );
-            await page.locator('#historyTagsQuery').fill('');
+            await page.locator('#tagsQuery').fill('');
             await page.waitForFunction(
                 () => globalThis.document.querySelectorAll('[data-tags-content] .pinefetch-history-item').length === 20
             );
@@ -403,7 +444,7 @@ try {
             await page.locator('[data-tags-accounts] article').first().waitFor();
             assert.equal(await page.locator('#tagAccountsTab').getAttribute('aria-selected'), 'true');
             assert((await page.locator('[data-tags-accounts] article').count()) < 30);
-            await page.locator('#historyTagsQuery').fill('Creator 1');
+            await page.locator('#tagsQuery').fill('Creator 1');
             await page.waitForFunction(
                 () =>
                     globalThis.__tagsUi.commands.findLast(call => call.command === 'get_tag_accounts')?.args.query ===
@@ -414,10 +455,11 @@ try {
             );
             await page.locator('[data-tags-accounts] article button').first().click();
             await page.locator('#historyAccountView').waitFor();
+            assert.equal(await page.locator('#viewTagsBtn').getAttribute('aria-current'), 'page');
             assert(await page.locator('#historyAccountView .pinefetch-tag-return').isVisible());
             await page.locator('#historyAccountView .pinefetch-tag-return').click();
             assert.equal(await page.locator('#tagAccountsTab').getAttribute('aria-selected'), 'true');
-            assert.equal(await page.locator('#historyTagsQuery').inputValue(), 'Creator 1');
+            assert.equal(await page.locator('#tagsQuery').inputValue(), 'Creator 1');
             await page.locator('#tagContentTab').click();
             await page.locator('[data-tags-content] .pinefetch-history-open-btn').first().click();
             await page.locator('#historyDetailsContent').waitFor();
@@ -686,24 +728,49 @@ try {
             await page.keyboard.press('Escape');
             await page.locator('#historyDetailsView .pinefetch-tag-return').click();
 
-            await page.locator('[data-tags-history]').click();
+            await page.locator('#viewHistoryBtn').click();
             await page.locator('#historyView').waitFor();
+            await openFilters();
             await page.locator('#historyTagFilter').selectOption(researchId());
             await page.waitForFunction(
                 () => globalThis.document.querySelector('#historyResultCount').textContent === '30 found'
             );
+            await page.locator('#historySourceTrigger').click();
+            await page.locator('#historySourceMenu [data-oj-value="tiktok"]').click();
+            assert.equal(await page.locator('#historyFiltersValue').textContent(), 'Filters · 2');
+            await page.locator('#historyClearSourceFilter').click();
+            assert.equal(await page.locator('#historyFiltersValue').textContent(), 'Filters · 1');
+            await page.locator('#historySourceTrigger').click();
+            await page.locator('#historySourceMenu [data-oj-value="tiktok"]').click();
             await page.locator('#historySearchInput').fill('Clip 2');
             await page.waitForFunction(
                 () =>
                     globalThis.__tagsUi.commands.findLast(call => call.command === 'get_history')?.args.query ===
                     'Clip 2'
             );
+            await openFilters();
             await page.locator('#historyClearTagFilter').click();
+            assert(
+                await page.locator('#historyTagFilter').evaluate(node => node === globalThis.document.activeElement)
+            );
             await page.waitForFunction(
                 () => !globalThis.__tagsUi.commands.findLast(call => call.command === 'get_history')?.args.tagId
             );
             assert.equal(await page.locator('#historySearchInput').inputValue(), 'Clip 2');
-            await page.locator('#historyTagsBtn').click();
+            assert.equal(await page.locator('#historyFiltersValue').textContent(), 'Filters · 1');
+            await page.locator('#historyClearFiltersBtn').click();
+            await page.waitForFunction(() => {
+                const args = globalThis.__tagsUi.commands.findLast(call => call.command === 'get_history')?.args;
+                return args?.query === 'Clip 2' && !args.source && !args.tagId;
+            });
+            assert.equal(await page.locator('#historyFiltersValue').textContent(), 'Filters');
+            await page.keyboard.press('Escape');
+            assert(
+                await page.locator('#historyFiltersBtn').evaluate(node => node === globalThis.document.activeElement)
+            );
+            await page.locator('#viewTagsBtn').click();
+            assert.equal(await page.locator('[data-tags-crumb]').textContent(), 'Research');
+            await page.locator('[data-tags-overview]').click();
             await page.getByRole('button', { name: 'Open tag Research', exact: true }).waitFor();
             await page.evaluate(() => {
                 globalThis.__tagsUi.holdContent = true;
@@ -724,7 +791,7 @@ try {
             });
             await page.getByRole('button', { name: 'Open tag Research', exact: true }).click();
             await page.waitForFunction(() =>
-                globalThis.document.querySelector('#historyTagsView [data-tags-status]').textContent.includes('failed')
+                globalThis.document.querySelector('#tagsView [data-tags-status]').textContent.includes('failed')
             );
             assert(await page.locator('[data-tags-edit]').isDisabled());
             assert(await page.locator('[data-tags-delete]').isDisabled());
@@ -738,10 +805,74 @@ try {
             await page.setViewportSize({ width: 520, height: 800 });
             assert(await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth));
             await page.screenshot({ path: `/tmp/pinefetch-tags-${engine.name()}.png` });
+            await page.locator('#viewHistoryBtn').click();
+            assert.equal(await page.locator('#historyVideoCount').textContent(), '60');
+            for (const width of [1440, 1000, 800, 520, 380]) {
+                await page.setViewportSize({ width, height: 900 });
+                await openFilters();
+                await page.evaluate(
+                    () =>
+                        new Promise(resolve =>
+                            globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))
+                        )
+                );
+                const box = await page.locator('#historyFiltersPopover').boundingBox();
+                assert(
+                    box.x >= 0 && box.y >= 0 && box.x + box.width <= width && box.y + box.height <= 900,
+                    `${width}px: ${JSON.stringify(box)}`
+                );
+                assert(
+                    await page.evaluate(() => globalThis.document.documentElement.scrollWidth <= globalThis.innerWidth)
+                );
+                assert.equal(await page.locator('dialog:modal').count(), 0);
+                if (width === 1440)
+                    await page.screenshot({ path: `/tmp/pinefetch-history-filters-${engine.name()}.png` });
+                await page.keyboard.press('Escape');
+                assert(await page.locator('#historyFiltersPopover').evaluate(panel => !panel.matches(':popover-open')));
+                const visibleViews = await page
+                    .locator(
+                        '#downloadView, #historyView, #tagsView, #settingsView, #historyDetailsView, #historyAccountView'
+                    )
+                    .evaluateAll(nodes => nodes.filter(node => node.getClientRects().length).length);
+                assert.equal(visibleViews, 1);
+            }
+            await page.setViewportSize({ width: 1200, height: 900 });
+            await page.locator('#viewTagsBtn').focus();
+            await page.keyboard.press('Enter');
+            assert.equal(await page.locator('#viewTagsBtn').getAttribute('aria-current'), 'page');
+            await page.locator('[data-tags-overview]').click();
+            await page.locator('[data-tags-definitions] article').first().waitFor();
+            assert(await page.locator('[data-tags-breadcrumb]').isHidden());
+            await page.locator('[data-tags-scroll]').evaluate(node => {
+                node.scrollTop = 0;
+            });
+            await page.screenshot({ path: `/tmp/pinefetch-tags-overview-${engine.name()}.png` });
+            // The isolated fixture can also represent a first launch with no tags.
+            await page.evaluate(() => {
+                globalThis.__tagsUi.definitions.splice(0);
+                for (const assigned of globalThis.__tagsUi.assignments.values()) assigned.clear();
+            });
+            await page.locator('[data-tags-refresh]').click();
+            await page.locator('[data-tags-empty-state]').waitFor();
+            assert(await page.locator('[data-tags-search]').isHidden());
+            await page.screenshot({ path: `/tmp/pinefetch-tags-empty-${engine.name()}.png` });
+            await page.locator('[data-tags-empty-create]').click();
+            await editor.locator('#tagNameInput').fill('First collection');
+            await editor.locator('[type=submit]').click();
+            await page.getByRole('button', { name: 'Open tag First collection', exact: true }).waitFor();
+            assert(await page.locator('[data-tags-search]').isVisible());
+            assert(await page.locator('[data-tags-empty-state]').isHidden());
+            await page.waitForFunction(() => {
+                const root = globalThis.document.querySelector('#tagsView');
+                return (
+                    root.contains(globalThis.document.activeElement) &&
+                    globalThis.document.activeElement.getClientRects().length > 0
+                );
+            });
             assert(await page.evaluate(() => globalThis.__tagModalMaximum <= 1));
             assert.deepEqual(errors, []);
             console.log(
-                `[tags:ui] ${engine.name()}: CRUD, quick popover/inline create, single parent modal, partial-failure retry, captured IDs, ordered mutations, keyboard/focus, navigation, pagination, account grouping and compact layout passed.`
+                `[tags:ui] ${engine.name()}: standalone Tags, cached navigation/context, filter popover/combined queries/reset, empty state, CRUD, quick tagging, single parent modal, failure recovery, late replies, pagination, accounts, keyboard/focus and narrow layouts passed.`
             );
         } finally {
             await browser.close();

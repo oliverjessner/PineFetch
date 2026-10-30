@@ -1093,6 +1093,10 @@ try {
             assert.equal(await resultCount.isVisible(), false);
             const searchFieldMenu = page.locator('#historySearchFieldMenu');
             const sourceMenu = page.locator('#historySourceMenu');
+            const openHistoryFilters = async () => {
+                if (!(await page.locator('#historyFiltersPopover').evaluate(panel => panel.matches(':popover-open'))))
+                    await page.locator('#historyFiltersBtn').click();
+            };
             await sourceMenu.locator('[data-oj-value="tiktok"]').waitFor({ state: 'attached' });
             assert.equal(await page.locator('#historySearchFieldSelect, #historySourceSelect').count(), 0);
             assert.equal(await page.locator('#historySearchFieldValue').textContent(), 'Title');
@@ -1142,6 +1146,7 @@ try {
                 ['historySearchField', 'title', 'description', 'transcript'],
                 ['historySource', '', 'youtube', 'tiktok'],
             ]) {
+                if (prefix === 'historySource') await openHistoryFilters();
                 const trigger = page.locator(`#${prefix}Trigger`);
                 const menu = page.locator(`#${prefix}Menu`);
                 await trigger.focus();
@@ -1194,6 +1199,7 @@ try {
                 );
             };
             const selectHistoryFilter = async (prefix, value, label, keyboard = false) => {
+                if (prefix === 'historySource') await openHistoryFilters();
                 const trigger = page.locator(`#${prefix}Trigger`);
                 const menu = page.locator(`#${prefix}Menu`);
                 await trigger.click();
@@ -3523,8 +3529,8 @@ try {
             await page.locator('#infoCard').waitFor();
             assert.equal(await page.locator('#urlInput').inputValue(), videos[0].url);
             await page.locator('#viewHistoryBtn').click();
-            await page.locator('#historyAccountHistoryBtn').click();
             await page.locator('#historyView').waitFor();
+            assert(await page.locator('#historyAccountView').isHidden());
 
             // Social Insights load from SQLite on tab open; only a click starts a fetch.
             await openOcr('history-1');

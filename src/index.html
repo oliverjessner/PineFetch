@@ -32,6 +32,10 @@
                             <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
                             History
                         </button>
+                        <button id="viewTagsBtn" class="oj-nav-link" type="button">
+                            <i class="fa-solid fa-tag" aria-hidden="true"></i>
+                            Tags
+                        </button>
                         <button id="viewSettingsBtn" class="oj-nav-link" type="button">
                             <i class="fa-solid fa-gear" aria-hidden="true"></i>
                             Settings
@@ -164,33 +168,6 @@
                     </div>
 
                     <div id="historyView" class="pinefetch-panel-view oj-stack" hidden>
-                        <nav class="pinefetch-history-sections" aria-label="History sections">
-                            <button
-                                id="historyAllContentBtn"
-                                type="button"
-                                class="oj-button oj-button-secondary oj-button-compact"
-                                aria-current="page"
-                            >
-                                All Content
-                            </button>
-                            <button
-                                id="historyTagsBtn"
-                                type="button"
-                                class="oj-button oj-button-ghost oj-button-compact"
-                            >
-                                Tags
-                            </button>
-                        </nav>
-                        <div class="oj-cluster">
-                            <label class="oj-field oj-grow" for="historyTagFilter"
-                                ><span class="oj-label">Tag</span
-                                ><select id="historyTagFilter" class="oj-select">
-                                    <option value="">All Tags</option>
-                                </select></label
-                            ><button id="historyClearTagFilter" type="button" class="oj-button oj-button-ghost" hidden>
-                                Clear tag filter
-                            </button>
-                        </div>
                         <div class="pinefetch-history-search-controls">
                             <label class="oj-field pinefetch-history-search-query" for="historySearchInput">
                                 <span class="oj-label">Search history</span>
@@ -229,8 +206,51 @@
                                     ></div>
                                 </div>
                             </div>
+                            <button
+                                id="historyFiltersBtn"
+                                type="button"
+                                class="oj-button oj-button-secondary"
+                                popovertarget="historyFiltersPopover"
+                                aria-controls="historyFiltersPopover"
+                                aria-haspopup="dialog"
+                            >
+                                <i class="fa-solid fa-sliders" aria-hidden="true"></i
+                                ><span id="historyFiltersValue">Filters</span>
+                            </button>
+                        </div>
+                        <div
+                            id="historyFiltersPopover"
+                            class="pinefetch-history-filters oj-stack"
+                            popover="auto"
+                            role="dialog"
+                            aria-modal="false"
+                            aria-labelledby="historyFiltersTitle"
+                        >
+                            <div class="oj-cluster">
+                                <h3 id="historyFiltersTitle" class="oj-heading-3 oj-grow">Filters</h3>
+                                <button
+                                    type="button"
+                                    class="oj-button oj-button-ghost oj-button-compact"
+                                    popovertarget="historyFiltersPopover"
+                                    popovertargetaction="hide"
+                                    aria-label="Close filters"
+                                >
+                                    ×
+                                </button>
+                            </div>
                             <div class="oj-field">
-                                <span id="historySourceLabel" class="oj-label">Source</span>
+                                <div class="pinefetch-history-filter-label">
+                                    <span id="historySourceLabel" class="oj-label">Source</span>
+                                    <button
+                                        id="historyClearSourceFilter"
+                                        type="button"
+                                        class="oj-button oj-button-ghost pinefetch-history-filter-clear"
+                                        aria-label="Clear source filter"
+                                        hidden
+                                    >
+                                        Clear
+                                    </button>
+                                </div>
                                 <div
                                     id="historySourceDropdown"
                                     class="oj-dropdown pinefetch-choice-dropdown"
@@ -256,6 +276,32 @@
                                     ></div>
                                 </div>
                             </div>
+                            <div class="oj-field pinefetch-history-tag-filter">
+                                <div class="pinefetch-history-filter-label">
+                                    <label class="oj-label" for="historyTagFilter">Tag</label>
+                                    <button
+                                        id="historyClearTagFilter"
+                                        type="button"
+                                        class="oj-button oj-button-ghost pinefetch-history-filter-clear"
+                                        aria-label="Clear tag filter"
+                                        hidden
+                                    >
+                                        Clear
+                                    </button>
+                                </div>
+                                <select id="historyTagFilter" class="oj-select">
+                                    <option value="">All Tags</option>
+                                </select>
+                            </div>
+                            <button
+                                id="historyClearFiltersBtn"
+                                type="button"
+                                class="oj-button oj-button-ghost"
+                                disabled
+                            >
+                                Clear all filters
+                            </button>
+                            <p class="oj-helper">Changes apply immediately.</p>
                         </div>
                         <p class="oj-helper" id="historyHint" hidden>
                             No history yet. Downloaded items will appear here.
@@ -1211,9 +1257,9 @@
                 </section>
 
                 <section
-                    id="historyTagsView"
-                    class="oj-panel pinefetch-panel pinefetch-history-details-view pinefetch-tags-view"
-                    aria-labelledby="historyTagsTitle"
+                    id="tagsView"
+                    class="oj-panel pinefetch-panel pinefetch-tags-view"
+                    aria-labelledby="tagsTitle"
                     hidden
                 ></section>
                 <section

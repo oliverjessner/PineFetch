@@ -3,24 +3,18 @@ import { searchContains } from './unicode-search.js';
 import { createTagChip } from './tag-ui.js';
 import { formatHistorySource, formatLocalDateTime } from './formatters.js';
 
-export const createHistoryTagsView = ({
-    root,
-    api,
-    tags,
-    createItem,
-    openVideo,
-    openAccount,
-    toHistory,
-    appendLog,
-}) => {
-    root.innerHTML = `<nav class="pinefetch-history-sections" aria-label="History sections"><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-section-content>All Content</button><button type="button" class="oj-button oj-button-secondary oj-button-compact" aria-current="page" data-tags-section-tags>Tags</button></nav><nav class="oj-breadcrumb" aria-label="Tag breadcrumb"><ol><li><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-history>History</button></li><li><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-overview>Tags</button></li><li aria-current="page" data-tags-crumb hidden></li></ol></nav>
-    <div class="oj-cluster"><h2 id="historyTagsTitle" class="oj-heading-2 oj-grow" tabindex="-1">Tags</h2><button type="button" class="oj-button oj-button-ghost" data-tags-refresh>Refresh</button><button type="button" class="oj-button oj-button-primary" data-tags-create>Create Tag</button><button type="button" class="oj-button oj-button-secondary" data-tags-edit hidden>Edit Tag</button><button type="button" class="oj-button oj-button-danger" data-tags-delete hidden>Delete Tag</button></div>
-    <div data-tags-description class="oj-text"></div><p data-tags-count class="oj-helper"></p><label class="oj-field"> <span data-tags-search-label>Search Tags</span><input id="historyTagsQuery" class="oj-input" type="search" autocomplete="off"></label>
-    <p data-tags-status class="oj-status" role="status"></p><div class="pinefetch-tags-scroll" data-tags-scroll><div class="oj-stack" data-tags-definitions></div><div class="oj-tabs" data-oj-tabs data-tags-tabs hidden><div class="oj-tab-list" role="tablist" aria-label="Tagged archive"><button type="button" class="oj-tab" id="tagContentTab" role="tab" aria-controls="tagContentPanel" aria-selected="true">Content</button><button type="button" class="oj-tab" id="tagAccountsTab" role="tab" aria-controls="tagAccountsPanel">Accounts</button></div><section id="tagContentPanel" role="tabpanel" aria-labelledby="tagContentTab" class="oj-tab-panel"><div class="oj-stack" data-tags-content></div></section><section id="tagAccountsPanel" role="tabpanel" aria-labelledby="tagAccountsTab" class="oj-tab-panel" hidden><p class="oj-helper">Accounts are derived from tagged content. Verified creator IDs are grouped; unverified downloads remain separate.</p><div class="oj-stack" data-tags-accounts></div></section></div><p class="oj-helper" data-tags-empty></p><button type="button" class="oj-button oj-button-ghost" data-tags-more hidden>Load more</button></div>`;
+export const createTagsView = ({ root, api, tags, createItem, openVideo, openAccount, appendLog }) => {
+    root.innerHTML = `<nav class="oj-breadcrumb" aria-label="Tag breadcrumb" data-tags-breadcrumb hidden><ol><li><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-overview>Tags</button></li><li aria-current="page" data-tags-crumb></li></ol></nav>
+    <div class="oj-cluster"><h2 id="tagsTitle" class="oj-heading-2 oj-grow" tabindex="-1">Tags</h2><button type="button" class="oj-button oj-button-ghost" data-tags-refresh>Refresh</button><button type="button" class="oj-button oj-button-primary" data-tags-create>Create Tag</button><button type="button" class="oj-button oj-button-secondary" data-tags-edit hidden>Edit Tag</button><button type="button" class="oj-button oj-button-danger" data-tags-delete hidden>Delete Tag</button></div>
+    <div data-tags-description class="oj-text"></div><p data-tags-count class="oj-helper"></p><label class="oj-field" data-tags-search> <span data-tags-search-label>Search Tags</span><input id="tagsQuery" class="oj-input" type="search" autocomplete="off"></label>
+    <p data-tags-status class="oj-status" role="status"></p><div class="pinefetch-tags-scroll" data-tags-scroll><div class="oj-stack" data-tags-definitions></div><div class="oj-tabs" data-oj-tabs data-tags-tabs hidden><div class="oj-tab-list" role="tablist" aria-label="Tagged archive"><button type="button" class="oj-tab" id="tagContentTab" role="tab" aria-controls="tagContentPanel" aria-selected="true">Content</button><button type="button" class="oj-tab" id="tagAccountsTab" role="tab" aria-controls="tagAccountsPanel">Accounts</button></div><section id="tagContentPanel" role="tabpanel" aria-labelledby="tagContentTab" class="oj-tab-panel"><div class="oj-stack" data-tags-content></div></section><section id="tagAccountsPanel" role="tabpanel" aria-labelledby="tagAccountsTab" class="oj-tab-panel" hidden><p class="oj-helper">Accounts are derived from tagged content. Verified creator IDs are grouped; unverified downloads remain separate.</p><div class="oj-stack" data-tags-accounts></div></section></div><section class="oj-empty-state" data-tags-empty-state hidden><h3 class="oj-heading-3">No tags yet</h3><p class="oj-helper">Organize your saved content by creating your first tag.</p><button type="button" class="oj-button oj-button-primary" data-tags-empty-create>Create Tag</button></section><p class="oj-helper" data-tags-empty></p><button type="button" class="oj-button oj-button-ghost" data-tags-more hidden>Load more</button></div>`;
     const el = name => root.querySelector(`[data-tags-${name}]`);
     initTabs(el('tabs'));
     const state = {
         definitions: [],
+        initialized: false,
+        overviewLoaded: false,
+        overviewScroll: 0,
         id: null,
         tag: null,
         tab: 'content',
@@ -40,18 +34,21 @@ export const createHistoryTagsView = ({
         el('status').classList.toggle('oj-status-error', error);
     };
     const controls = () => {
-        el('create').hidden = Boolean(state.id);
+        el('create').hidden = Boolean(state.id) || (state.overviewLoaded && !state.definitions.length);
         el('edit').hidden = !state.id;
         el('delete').hidden = !state.id;
         el('tabs').hidden = !state.id;
         el('definitions').hidden = Boolean(state.id);
-        el('crumb').hidden = !state.id;
+        el('breadcrumb').hidden = !state.id;
+        el('count').hidden = !state.id;
+        el('search').hidden = !state.id && !state.definitions.length;
+        el('empty-state').hidden = Boolean(state.id) || !state.overviewLoaded || Boolean(state.definitions.length);
         el('search-label').textContent = !state.id
             ? 'Search Tags'
             : state.tab === 'content'
               ? 'Search tagged content'
               : 'Search tagged accounts';
-        for (const button of [el('create'), el('edit'), el('delete'), el('refresh')])
+        for (const button of [el('create'), el('empty-create'), el('edit'), el('delete'), el('refresh')])
             button.disabled =
                 state.busy ||
                 state.loading ||
@@ -83,6 +80,7 @@ export const createHistoryTagsView = ({
             const description = document.createElement('p');
             description.className = 'oj-text';
             description.textContent = tag.description;
+            description.hidden = !tag.description;
             const count = document.createElement('p');
             count.className = 'oj-helper';
             count.textContent = `${tag.content_count.toLocaleString()} saved items · ${tag.account_count.toLocaleString()} accounts`;
@@ -91,18 +89,21 @@ export const createHistoryTagsView = ({
             edit.className = 'oj-button oj-button-ghost oj-button-compact';
             edit.textContent = 'Edit';
             edit.setAttribute('aria-label', `Edit tag ${tag.name}`);
-            edit.addEventListener('click', () => void mutate(() => tags.edit(tag)));
+            edit.addEventListener('click', event => void mutate(() => tags.edit(tag), event.currentTarget));
             const remove = document.createElement('button');
             remove.type = 'button';
             remove.className = 'oj-button oj-button-ghost oj-button-compact';
             remove.textContent = 'Delete';
             remove.setAttribute('aria-label', `Delete tag ${tag.name}`);
-            remove.addEventListener('click', () => void mutate(() => tags.removeDefinition(tag)));
+            remove.addEventListener(
+                'click',
+                event => void mutate(() => tags.removeDefinition(tag), event.currentTarget)
+            );
             row.append(open, description, count, edit, remove);
             fragment.append(row);
         }
         el('definitions').replaceChildren(fragment);
-        el('empty').hidden = items.length > 0;
+        el('empty').hidden = items.length > 0 || !state.definitions.length;
         el('empty').textContent = state.definitions.length
             ? 'No tags match your search.'
             : 'Create a tag to organize saved downloads.';
@@ -115,12 +116,13 @@ export const createHistoryTagsView = ({
         el('crumb').textContent = tag.name;
         root.querySelector('h2').replaceChildren(createTagChip(tag));
         el('description').textContent = tag.description;
+        el('description').hidden = !tag.description;
         el('count').textContent =
             `${tag.content_count.toLocaleString()} saved items · ${tag.account_count.toLocaleString()} accounts`;
         root.querySelector('#tagContentTab').textContent = `Content (${tag.content_count.toLocaleString()})`;
         root.querySelector('#tagAccountsTab').textContent = `Accounts (${tag.account_count.toLocaleString()})`;
     };
-    const load = async (append = false) => {
+    const load = async (append = false, restoreScroll = null) => {
         const request = ++state.request;
         const id = state.id;
         state.loading = true;
@@ -134,6 +136,7 @@ export const createHistoryTagsView = ({
                 const definitions = await tags.refresh();
                 if (request !== state.request) return;
                 state.definitions = definitions;
+                state.overviewLoaded = true;
                 renderDefinitions();
                 status();
                 return;
@@ -223,11 +226,11 @@ export const createHistoryTagsView = ({
             if (request === state.request) {
                 state.loading = false;
                 controls();
-                el('scroll').scrollTop = append ? scroll : 0;
+                el('scroll').scrollTop = restoreScroll ?? (append ? scroll : 0);
             }
         }
     };
-    const mutate = async action => {
+    const mutate = async (action, opener = document.activeElement) => {
         const owner = state.id;
         const generation = state.request;
         if (state.busy) return;
@@ -241,29 +244,46 @@ export const createHistoryTagsView = ({
         } finally {
             state.busy = false;
             controls();
+            const focused = document.activeElement;
+            if (
+                !root.hidden &&
+                !document.querySelector('dialog:modal') &&
+                (!focused || !root.contains(focused) || !focused.getClientRects().length)
+            ) {
+                const target =
+                    opener?.isConnected && !opener.disabled && opener.getClientRects().length
+                        ? opener
+                        : root.querySelector('h2');
+                target.focus({ preventScroll: true });
+            }
         }
     };
     const openOverview = () => {
+        state.initialized = true;
+        if (!state.id && !root.hidden) state.overviewScroll = el('scroll').scrollTop;
         state.id = null;
         state.tag = null;
-        state.limit = 200;
         state.cursor = null;
         state.query = '';
         state.accountQuery = '';
         root.querySelector('h2').textContent = 'Tags';
-        el('description').textContent = 'Organize saved content with your own tags.';
+        el('description').textContent = 'Organize and explore your saved content.';
+        el('description').hidden = false;
         el('count').textContent = '';
         root.querySelector('input').value = state.overviewQuery;
         controls();
-        void load();
+        void load(false, state.overviewScroll);
     };
     const openTag = async id => {
+        if (!state.id && !root.hidden) state.overviewScroll = el('scroll').scrollTop;
+        state.initialized = true;
         el('content').replaceChildren();
         el('accounts').replaceChildren();
         state.tag = null;
         el('crumb').textContent = 'Tag';
         root.querySelector('h2').textContent = 'Loading tag…';
         el('description').textContent = '';
+        el('description').hidden = true;
         el('count').textContent = '';
         state.id = id;
         state.tab = 'content';
@@ -275,7 +295,7 @@ export const createHistoryTagsView = ({
         root.querySelector('#tagContentTab').click();
         controls();
         if (!switching) await load();
-        root.querySelector('h2').focus({ preventScroll: true });
+        if (state.id === id && !root.hidden) root.querySelector('h2').focus({ preventScroll: true });
     };
     let timer;
     root.querySelector('input').addEventListener('input', () => {
@@ -309,18 +329,20 @@ export const createHistoryTagsView = ({
         } else void load(true);
     });
     el('refresh').addEventListener('click', () => void load());
-    el('create').addEventListener('click', () => void mutate(() => tags.edit()));
-    el('edit').addEventListener('click', () => void mutate(() => tags.edit(state.tag)));
-    el('delete').addEventListener('click', () => void mutate(() => tags.removeDefinition(state.tag)));
-    el('section-content').addEventListener('click', toHistory);
-    el('section-tags').addEventListener('click', openOverview);
-    el('history').addEventListener('click', toHistory);
+    el('create').addEventListener('click', event => void mutate(() => tags.edit(), event.currentTarget));
+    el('empty-create').addEventListener('click', event => void mutate(() => tags.edit(), event.currentTarget));
+    el('edit').addEventListener('click', event => void mutate(() => tags.edit(state.tag), event.currentTarget));
+    el('delete').addEventListener(
+        'click',
+        event => void mutate(() => tags.removeDefinition(state.tag), event.currentTarget)
+    );
     el('overview').addEventListener('click', openOverview);
     return Object.freeze({
         openOverview,
         openTag,
         resume: () => {
-            if (state.dirty) void load();
+            if (!state.initialized) openOverview();
+            else if (state.dirty) void load(false, state.scroll);
             else el('scroll').scrollTop = state.scroll;
         },
         deactivate: () => {
@@ -334,7 +356,10 @@ export const createHistoryTagsView = ({
                 state.id = null;
                 state.tag = null;
                 if (!root.hidden) openOverview();
-                else state.dirty = true;
+                else {
+                    state.initialized = false;
+                    state.dirty = true;
+                }
                 return;
             }
             state.dirty = true;
@@ -342,6 +367,7 @@ export const createHistoryTagsView = ({
         },
         remember: () => {
             state.scroll = el('scroll').scrollTop;
+            if (!state.id) state.overviewScroll = state.scroll;
         },
         current: () => state.tag,
     });

@@ -1,5 +1,6 @@
 import { createTagController } from './tags.js';
-import { createHistoryTagsView } from './history-tags-view.js';
+import { createTagsView } from './tags-view.js';
+import { createHistoryFilters } from './history-filters.js';
 import { confirmDialog } from './vendor/oj/index.js';
 import { createDropdownChoice } from './dropdown-choice.js';
 import { formatHistorySource, formatLocalDateTime, formatUploadDate } from './formatters.js';
@@ -17,6 +18,8 @@ export const createHistoryView = ({
     detectPlatform,
     appendTextSpans,
     isActive,
+    activeSection,
+    navigate,
     prepareDownload,
 }) => {
     const state = Object.seal({
@@ -62,16 +65,7 @@ export const createHistoryView = ({
     const sourceChoice = createDropdownChoice({ menu: els.historySourceMenu, value: els.historySourceValue });
     sourceChoice.setOptions([{ value: '', label: 'All sources' }]);
     let tagsView;
-    const toTags = (id = null) => {
-        if (state.page === 'list') state.scrollTop = els.historyList.scrollTop;
-        historyDetailsView.leave();
-        accountView.leave();
-        state.page = 'tags';
-        state.tagContext = null;
-        activate();
-        if (id) void tagsView.openTag(id);
-        else tagsView.openOverview();
-    };
+    const toTags = id => navigate('tags', { tagId: id });
     const returnToTag = () => {
         historyDetailsView.leave();
         accountView.leave();
@@ -98,7 +92,7 @@ export const createHistoryView = ({
             if (deletedFilter) {
                 state.historyTagId = null;
                 els.historyTagFilter.value = '';
-                els.historyClearTagFilter.hidden = true;
+                filters.update();
             }
             if (deletedFilter || membershipFilter || state.historyLoading) {
                 invalidateHistoryCache();
@@ -136,17 +130,38 @@ export const createHistoryView = ({
             );
             state.historyTagId = definitions.some(tag => tag.id === selected) ? selected : null;
             els.historyTagFilter.value = state.historyTagId || '';
-            els.historyClearTagFilter.hidden = !state.historyTagId;
+            filters.update();
         } catch (error) {
             appendLog(`[Tags] ${error}`, true);
         }
     };
+    const filters = createHistoryFilters({
+        els,
+        values: () => ({ source: state.historySource, tagId: state.historyTagId }),
+        clear: ({ source = false, tag = false }) => {
+            if (source) {
+                state.historySource = '';
+                sourceChoice.setValue('');
+                state.historyExactUser = false;
+                state.historyCreatorEntryId = null;
+            }
+            if (tag) {
+                state.historyTagId = null;
+                els.historyTagFilter.value = '';
+            }
+            filters.update();
+            state.historyFilterRevision++;
+            invalidateHistoryCache();
+            void renderHistory({ force: true });
+        },
+    });
     const returnToHistory = returnFocus => {
         historyDetailsView.leave();
         accountView.leave();
         state.page = 'list';
         state.tagContext = null;
-        activate();
+        if (activeSection() !== 'history') navigate('history');
+        else activate();
         void renderHistory().then(() => {
             if (state.page !== 'list' || !isActive()) return;
             els.historyList.scrollTop = state.scrollTop;
@@ -202,11 +217,15 @@ export const createHistoryView = ({
     const activate = () => {
         state.historyViewRevision += 1;
         state.historyRemovalFocus = null;
-        const detail = isActive() && state.page === 'detail';
-        const account = isActive() && state.page === 'account';
+        const archiveActive = isActive() || activeSection() === 'tags';
+        const detail = archiveActive && state.page === 'detail';
+        const account = archiveActive && state.page === 'account';
         const list = isActive() && state.page === 'list';
-        const tagPage = isActive() && state.page === 'tags';
-        els.historyTagsView.hidden = !tagPage;
+        const tagPage = activeSection() === 'tags' && state.page === 'tags';
+        if (!els.tagsView.hidden && !tagPage) tagsView?.remember();
+        if (!els.historyView.hidden && !list) state.scrollTop = els.historyList.scrollTop;
+        if (!list) filters.close();
+        els.tagsView.hidden = !tagPage;
         if (!tagPage) tagsView?.deactivate();
         for (const button of tagBackButtons) {
             button.hidden = !(detail || account) || !state.tagContext;
@@ -218,7 +237,8 @@ export const createHistoryView = ({
         els.historySummaryView.hidden = !list;
         els.historyView
             .closest('.pinefetch-split')
-            .classList.toggle('pinefetch-history-details-active', detail || account || tagPage);
+            .classList.toggle('pinefetch-history-details-active', detail || account);
+        els.tagsView.closest('.pinefetch-split').classList.toggle('pinefetch-tags-active', tagPage);
         updateHistoryResultCount();
         historyDetailsView.hideContextMenu();
         historyDetailsView.activate();
@@ -353,6 +373,7 @@ export const createHistoryView = ({
         const previousSource = state.historySource;
         updateHistorySourceOptions();
         state.historySource = sourceChoice.getValue();
+        filters.update();
         return state.historySource !== previousSource;
     };
 
@@ -551,7 +572,7 @@ export const createHistoryView = ({
 
     const renderHistory = async ({ append = false, force = false } = {}) => {
         updateHistoryResultCount();
-        if (state.page === 'detail') return;
+        if (state.page !== 'list') return;
         if (!append && !force && state.historyLoaded && !state.historyDirty) return;
 
         if (!api.available) {
@@ -657,7 +678,7 @@ export const createHistoryView = ({
 
     const showSavedVideosByCreator = ({ uploader, source, entryId }) => {
         if (!uploader || !source) return;
-        if (state.page === 'tags') {
+        if (activeSection() === 'tags') {
             state.tagContext = tagsView.current();
             tagsView.remember();
             historyDetailsView.leave();
@@ -680,18 +701,18 @@ export const createHistoryView = ({
         state.historyOffset = 0;
         updateHistorySourceOptions();
         sourceChoice.setValue(source);
+        filters.update();
         invalidateHistoryCache();
         els.historySearchInput.focus({ preventScroll: true });
         void renderHistory({ force: true });
     };
 
-    tagsView = createHistoryTagsView({
-        root: els.historyTagsView,
+    tagsView = createTagsView({
+        root: els.tagsView,
         api,
         tags,
         createItem: createHistoryItem,
         appendLog,
-        toHistory: () => returnToHistory(),
         openVideo: (id, tag) => {
             state.tagContext = tag;
             void historyDetailsView.open(id);
@@ -704,20 +725,30 @@ export const createHistoryView = ({
             accountView.open(id);
         },
     });
+    const selectSection = (section, { tagId } = {}) => {
+        if (!els.historyView.hidden) state.scrollTop = els.historyList.scrollTop;
+        if (!els.tagsView.hidden) tagsView.remember();
+        historyDetailsView.leave();
+        accountView.leave();
+        state.tagContext = null;
+        state.page = section === 'tags' ? 'tags' : 'list';
+        activate();
+        if (section === 'tags') {
+            if (tagId) void tagsView.openTag(tagId);
+            else tagsView.resume();
+        } else els.historyList.scrollTop = state.scrollTop;
+    };
     const bindEvents = () => {
         void refreshTagOptions();
-        els.historyTagsBtn.addEventListener('click', () => toTags());
-        els.historyAllContentBtn.addEventListener('click', () => {
-            if (state.page !== 'list') returnToHistory();
-        });
         els.historyTagFilter.addEventListener('change', () => {
             state.historyTagId = els.historyTagFilter.value || null;
             state.historyFilterRevision++;
-            els.historyClearTagFilter.hidden = !state.historyTagId;
+            filters.update();
             invalidateHistoryCache();
             void renderHistory({ force: true });
         });
         els.historyClearTagFilter.addEventListener('click', () => {
+            els.historyTagFilter.focus({ preventScroll: true });
             els.historyTagFilter.value = '';
             els.historyTagFilter.dispatchEvent(new Event('change'));
         });
@@ -759,6 +790,7 @@ export const createHistoryView = ({
             state.historyQuery = query;
             state.historySearchField = searchField;
             state.historySource = source;
+            filters.update();
             state.historyExactUser = false;
             state.historyCreatorEntryId = null;
             invalidateHistoryCache();
@@ -822,6 +854,7 @@ export const createHistoryView = ({
                 state.historyQuery = '';
                 state.historySearchField = 'title';
                 state.historySource = '';
+                filters.update();
                 state.historyExactUser = false;
                 state.historyCreatorEntryId = null;
                 invalidateHistoryCache();
@@ -871,5 +904,5 @@ export const createHistoryView = ({
         icon.setAttribute('aria-hidden', 'true');
         element.append(icon, document.createTextNode(label));
     };
-    return Object.freeze({ render: renderHistory, bindEvents, onChanged, activate });
+    return Object.freeze({ render: renderHistory, bindEvents, onChanged, activate, selectSection });
 };

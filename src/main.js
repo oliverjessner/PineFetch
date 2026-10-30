@@ -109,9 +109,13 @@ const els = Object.seal({
     rightPanelTitle: document.getElementById('rightPanelTitle'),
     downloadView: document.getElementById('downloadView'),
     historyView: document.getElementById('historyView'),
-    historyTagsView: document.getElementById('historyTagsView'),
-    historyTagsBtn: document.getElementById('historyTagsBtn'),
-    historyAllContentBtn: document.getElementById('historyAllContentBtn'),
+    tagsView: document.getElementById('tagsView'),
+    viewTagsBtn: document.getElementById('viewTagsBtn'),
+    historyFiltersBtn: document.getElementById('historyFiltersBtn'),
+    historyFiltersPopover: document.getElementById('historyFiltersPopover'),
+    historyFiltersValue: document.getElementById('historyFiltersValue'),
+    historyClearFiltersBtn: document.getElementById('historyClearFiltersBtn'),
+    historyClearSourceFilter: document.getElementById('historyClearSourceFilter'),
     historyTagFilter: document.getElementById('historyTagFilter'),
     historyClearTagFilter: document.getElementById('historyClearTagFilter'),
     historyManageTagsBtn: document.getElementById('historyManageTagsBtn'),
@@ -124,6 +128,7 @@ const els = Object.seal({
     historySearchFieldValue: document.getElementById('historySearchFieldValue'),
     historySearchFieldMenu: document.getElementById('historySearchFieldMenu'),
     historySourceDropdown: document.getElementById('historySourceDropdown'),
+    historySourceTrigger: document.getElementById('historySourceTrigger'),
     historySourceValue: document.getElementById('historySourceValue'),
     historySourceMenu: document.getElementById('historySourceMenu'),
     historyHint: document.getElementById('historyHint'),
@@ -485,7 +490,7 @@ const setInfoBadge = text => {
     els.infoBadge.classList.toggle('oj-badge-danger', ['Error', 'Formats unavailable', 'Invalid URL'].includes(text));
 };
 
-const setActiveView = view => {
+const setActiveView = (view, route = {}) => {
     // Keep native Dock/startup requests compatible with the Settings category.
     if (view === 'linkDump') {
         setActiveView('settings');
@@ -494,6 +499,7 @@ const setActiveView = view => {
     }
     const isDownload = view === 'download';
     const isHistory = view === 'history';
+    const isTags = view === 'tags';
     const isSettings = view === 'settings';
     state.activeView = view;
     const split = els.settingsView.closest('.pinefetch-split');
@@ -510,7 +516,6 @@ const setActiveView = view => {
     };
 
     els.downloadView.hidden = !isDownload;
-    els.historyView.hidden = !isHistory;
     els.historyResultCount.hidden = true;
     els.settingsView.hidden = !isSettings;
     els.queueProgressView.hidden = !isDownload || state.queueCollapsed;
@@ -522,10 +527,12 @@ const setActiveView = view => {
     els.settingsView.classList.toggle('pinefetch-is-active', isSettings);
     els.queueProgressView.classList.toggle('pinefetch-is-active', isDownload);
     els.historySummaryView.classList.toggle('pinefetch-is-active', isHistory);
-    historyView.activate();
+    if (isHistory || isTags) historyView.selectSection(view, route);
+    else historyView.activate();
 
     els.viewDownloadBtn.setAttribute('aria-current', isDownload ? 'page' : 'false');
     els.viewHistoryBtn.setAttribute('aria-current', isHistory ? 'page' : 'false');
+    els.viewTagsBtn.setAttribute('aria-current', isTags ? 'page' : 'false');
     els.viewSettingsBtn.setAttribute('aria-current', isSettings ? 'page' : 'false');
 
     if (isDownload) {
@@ -542,6 +549,10 @@ const setActiveView = view => {
         runAfterViewPaint(() => {
             void historyView.render();
         });
+    } else if (isTags) {
+        els.leftPanelTitle.textContent = 'Tags';
+        els.queueBadge.style.display = 'none';
+        els.infoBadge.style.display = 'none';
     } else {
         els.leftPanelTitle.textContent = 'Settings';
         els.rightPanelTitle.textContent = 'Options';
@@ -1631,6 +1642,8 @@ const historyView = createHistoryView({
     detectPlatform,
     appendTextSpans,
     isActive: () => state.activeView === 'history',
+    activeSection: () => state.activeView,
+    navigate: setActiveView,
     prepareDownload: url => {
         setActiveView('download');
         els.urlInput.value = url;
@@ -1733,6 +1746,7 @@ const bindEvents = () => {
     els.viewDownloadBtn.addEventListener('click', () => setActiveView('download'));
     els.brandHistoryBtn.addEventListener('click', () => setActiveView('history'));
     els.viewHistoryBtn.addEventListener('click', () => setActiveView('history'));
+    els.viewTagsBtn.addEventListener('click', () => setActiveView('tags'));
     els.viewSettingsBtn.addEventListener('click', () => setActiveView('settings'));
     els.queueContextMenu.addEventListener('contextmenu', event => {
         event.preventDefault();

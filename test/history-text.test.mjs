@@ -51,3 +51,22 @@ test('search treats regex characters literally and returns Unicode-safe highligh
     ]);
     assert.deepEqual(textMatches('anything', '  '), []);
 });
+
+test('large untimed sections preserve Unicode, CRLF and matches across display boundaries', async () => {
+    const { textSections, sectionMatches } = await import('../src/large-text.js');
+    for (const source of ['a'.repeat(999) + '\r\n' + 'b'.repeat(10000), '🌲O\u0308'.repeat(4000)]) {
+        const sections = textSections(source);
+        assert.equal(sections.map(section => section.text).join(''), source);
+        const boundaries = new Set(
+            [...new Intl.Segmenter('und', { granularity: 'grapheme' }).segment(source)].map(item => item.index)
+        );
+        for (const section of sections) assert.ok(boundaries.has(section.sourceStart));
+    }
+    const source = 'a'.repeat(998) + 'Straße' + 'b'.repeat(10000);
+    const sections = textSections(source);
+    const matches = textMatches(source, 'STRASSE');
+    const highlights = sections.flatMap(section =>
+        sectionMatches(section, matches).map(range => section.text.slice(range.start, range.end))
+    );
+    assert.equal(highlights.join(''), 'Straße');
+});

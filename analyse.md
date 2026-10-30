@@ -4,6 +4,4 @@
 
 - [ ] **E8 — Keywords mit Fundstellen verbinden und Untertitel einbeziehen:** Gezählt wird bereits vorhandener Text, aber Nutzer können nicht direkt zur passenden Stelle springen und Creator-Untertitel fehlen als Quelle. Verlinkte Fundstellen und klar getrennte Untertitelsprachen machen die Ergebnisse überprüfbar und vollständiger.
 
-- [ ] **E15 — Große Texte und OCR-Ergebnisse flüssig bedienbar halten:** Die OCR-Suche startet bei jeder Eingabe Arbeit, und lange Textansichten bauen sämtliche Zeilen gleichzeitig auf. Weniger Suchanfragen sowie gemessene Verbesserungen für große Texte können Wartezeiten reduzieren, ohne Treffer, Kopieren oder Zeitnavigation einzuschränken.
-
 - [ ] **D6 — Accountbereinigung auf betroffene Einträge beschränken:** Beim Löschen eines History-Eintrags wird derzeit eine breite Suche nach verwaisten Accountdaten ausgeführt. Eine gezielte Prüfung reduziert unnötige Arbeit bei großen Archiven und erhält gemeinsam genutzte Insights bis zum letzten zugehörigen Download.

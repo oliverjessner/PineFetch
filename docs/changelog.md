@@ -1,5 +1,8 @@
 # 3.0.0
 
+- Limit text and loaded OCR views to 200 visible entries per page, with full-result search, unchanged copy exports and keyboard/time navigation across pages. Large untimed documents retain original offsets and Unicode-safe highlights across display sections.
+- Debounce OCR searches by 250 ms and invalidate older replies immediately. A 25,000-row browser fixture rendered 200 entries in about 23 ms in both tested engines.
+
 - Bound captured subprocess output to a shared 128 MiB stdout/stderr budget while reading. Oversized output fails explicitly and terminates the process group, with timeout, inherited-pipe and exact-budget regressions.
 
 - Shortened shared database lock windows by snapshotting keyword text before counting and sorting, preserving source order, limits and complete OCR/caption coverage.

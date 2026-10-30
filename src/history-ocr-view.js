@@ -1,3 +1,5 @@
+import { textSections, sectionMatches, documentMatches } from './large-text.js';
+import { createTextPagination } from './text-pagination.js';
 import { searchContains, trimSearchQuery } from './unicode-search.js';
 import { createTextEntry, highlightText, copyAllText, bindTextSearch, revealTextEntry } from './history-text-view.js';
 import { textTimestamp as timestamp, entryAtTime } from './history-text.js';
@@ -60,7 +62,12 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
     };
     const visible = () => !els.historyDetailsView.hidden && els.historyOcrTab.getAttribute('aria-selected') === 'true';
     const hasResult = () => state.content?.result_created_at !== null && state.content?.result_created_at !== undefined;
-    const rowKey = row => row.id || 'legacy-text';
+    let cancelSearch = () => {};
+    const pager = createTextPagination(els.historyOcrListViewport, () => {
+        state.renderedRows = null;
+        render();
+    });
+    const rowKey = row => row.displayKey || row.id || 'legacy-text';
     const selection = row => ({
         result_revision: state.content.result_revision,
         frame_id: row.id,
@@ -68,7 +75,17 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
     const resultRows = content => {
         const query = trimSearchQuery(els.historyOcrSearchInput.value);
         const fallback = content?.text && (!query || searchContains(content.text, query)) ? content.text : '';
-        return ocrEntries(state.frames, content?.has_more ? '' : fallback);
+        const rows = ocrEntries(state.frames);
+        if (!content?.has_more && fallback) {
+            const sections = textSections(fallback);
+            const matches = sections.length > 1 && query ? documentMatches(fallback, query) : null;
+            for (const section of sections) {
+                const ranges = matches ? sectionMatches(section, matches) : undefined;
+                if (matches && !ranges.length) continue;
+                rows.push({ ...section, id: null, displayKey: `legacy-${section.id}`, ranges });
+            }
+        }
+        return rows;
     };
     const clearFrame = () => {
         state.frameRequest += 1;
@@ -253,8 +270,12 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
             const fragment = document.createDocumentFragment();
             state.cleanupRows();
             state.rowElements.clear();
-            for (const row of rows) {
-                const { item, time, text } = createTextEntry(row, trimSearchQuery(els.historyOcrSearchInput.value));
+            for (const row of pager.window(rows)) {
+                const { item, time, text } = createTextEntry(
+                    row,
+                    trimSearchQuery(els.historyOcrSearchInput.value),
+                    row.ranges
+                );
                 item.classList.add('pinefetch-ocr-result');
                 item.dataset.ocrKey = rowKey(row);
                 time.classList.add('pinefetch-ocr-select');
@@ -281,7 +302,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
         }
         const query = trimSearchQuery(els.historyOcrSearchInput.value);
         for (const { item, row } of state.rowElements.values())
-            highlightText(item.querySelector('.oj-text'), row.text, query);
+            highlightText(item.querySelector('.oj-text'), row.text, query, row.ranges);
         const loaded = !state.pageLoading && state.loadedQuery === query;
         els.historyOcrResultCount.hidden = !hasResult();
         const count = query ? state.content?.matched_count : state.content?.total_count;
@@ -401,6 +422,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
         els.historyOcrPreviousResult.hidden = !hasResult() || status === 'completed';
     };
     const deactivate = () => {
+        cancelSearch();
         state.request += 1;
         state.pageRequest += 1;
         state.pageLoading = false;
@@ -411,6 +433,8 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
         }
     };
     const reset = id => {
+        cancelSearch();
+        pager.reset();
         state.id = id;
         state.request += 1;
         state.content = undefined;
@@ -448,6 +472,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
         state.pageLoading = true;
         state.actionError = '';
         if (!append) {
+            pager.reset();
             if (!state.pendingSelection) state.pendingSelection = { id: state.selected?.id, index: 0 };
             state.frames = [];
             state.rows = [];
@@ -466,6 +491,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
             if (id !== state.id || request !== state.pageRequest || !visible() || state.disposed) return;
             if (!content || content.result_revision !== revision) throw new Error('OCR results changed.');
             state.content = content;
+            if (append) pager.show(offset);
             state.frames = append ? [...state.frames, ...content.frames] : content.frames;
             state.loadedQuery = query;
             state.rows = resultRows(content);
@@ -487,6 +513,7 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
         if (!state.id || !visible() || state.disposed || state.deleting || state.cleaning) return;
         const id = state.id;
         const request = ++state.request;
+        pager.reset();
         state.pageRequest += 1;
         state.pageLoading = false;
         const revision = jobs.revision(id);
@@ -641,12 +668,31 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
                 }
             }
         });
-        bindTextSearch(els.historyOcrSearchInput, () => {
-            state.request += 1;
-            state.loading = false;
-            state.pendingSelection = null;
-            void loadPage(false);
-        });
+        cancelSearch = bindTextSearch(
+            els.historyOcrSearchInput,
+            () => {
+                state.request += 1;
+                state.loading = false;
+                state.pendingSelection = null;
+                if (!state.content?.result_revision) {
+                    state.pageLoading = false;
+                    state.rows = resultRows(state.content);
+                    state.renderedRows = null;
+                    render();
+                } else void loadPage(false);
+            },
+            {
+                delay: 250,
+                invalidate: () => {
+                    state.request++;
+                    state.pageRequest++;
+                    state.frameRequest++;
+                    pager.reset();
+                    state.pageLoading = true;
+                    render();
+                },
+            }
+        );
         els.historyOcrText.addEventListener('click', event => {
             const item = event.target.closest('[data-ocr-key]');
             const entry = state.rowElements.get(item?.dataset.ocrKey);
@@ -672,7 +718,8 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
             event.preventDefault();
             const id = state.id;
             const query = trimSearchQuery(els.historyOcrSearchInput.value);
-            const current = state.selected ? state.rows.findIndex(row => rowKey(row) === rowKey(state.selected)) : -1;
+            const found = state.selected ? state.rows.findIndex(row => rowKey(row) === rowKey(state.selected)) : -1;
+            const current = found >= pager.start && found < pager.start + pager.size ? found : -1;
             if (event.key === 'ArrowDown' && current === state.rows.length - 1 && state.content?.has_more)
                 await loadPage(true);
             if (
@@ -687,10 +734,16 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
                     ? 0
                     : event.key === 'End'
                       ? state.rows.length - 1
-                      : event.key === 'ArrowDown'
-                        ? Math.min(state.rows.length - 1, current + 1)
-                        : Math.max(0, current - 1);
+                      : current < 0
+                        ? pager.start
+                        : event.key === 'ArrowDown'
+                          ? Math.min(state.rows.length - 1, current + 1)
+                          : Math.max(0, current - 1);
             const row = state.rows[index];
+            if (pager.show(index)) {
+                state.renderedRows = null;
+                render();
+            }
             const entry = state.rowElements.get(rowKey(row));
             entry?.time.focus({ preventScroll: true });
             void selectFrame(row);
@@ -739,6 +792,10 @@ export const createHistoryOcrView = ({ els, api, appendLog, jobs, media }) => {
         state.selected = { ...row, revision: state.content?.result_revision };
         updateRowControls();
         els.historyOcrFrameTime.textContent = timestamp(row.time);
+        if (!els.historyOcrListViewport.matches(':focus-within') && pager.show(state.rows.indexOf(row))) {
+            state.renderedRows = null;
+            render();
+        }
         const entry = state.rowElements.get(rowKey(row));
         if (entry && !els.historyOcrListViewport.matches(':focus-within')) scrollRowIntoList(entry.item);
     };

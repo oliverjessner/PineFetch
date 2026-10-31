@@ -1,63 +1,43 @@
 # 3.0.0
 
-- Moved Video Details tags into a compact, full-width Overview row below metadata and the saved description, separated by an OJ divider. Kept the header to title, platform and thumbnail, preserved tagging and Quick Create, and close the popover when switching tabs.
-
-- Refined Tags into compact, navigable rows with color indicators, truncated descriptions, aligned usage counts and OJ action menus. Limited search width, added clear-search empty states and contextual retry, and retained automatic updates and existing creator identity counts.
-
-- Polished History cards with a coordinated thumbnail/remove group, tighter metadata-to-tag spacing, grouped and truncated metadata with full-value tooltips, and compact OJ tag components. Reused design-system spacing, typography, colors and focus styles across standard and narrow layouts.
-
-- Simplified History to search and a Filters popover for Search in, Source and Tag, with an active-filter count and a single Clear all filters reset action. Retained the narrower statistics sidebar and existing combined query behavior.
-- Separated quick tagging from full tag management in the dedicated Tags section. Preserved the full Create/Edit dialog, added safeguards against nested modals, and improved keyboard focus, narrow-window placement and delayed-request handling without changing tag storage.
-- Added locally persisted tags with Unicode-safe unique names, descriptions, a color palette, custom HEX colors and immediate multi-tag assignment for all saved media types.
-- Added centralized tag management, compact tag chips, Video Details controls and a Manage Tags context action. Tag deletion confirms affected items and preserves saved media and text.
-- Added dedicated tag Content and Accounts pages with search, pagination and return navigation, plus an independent History tag filter that combines with existing filters.
-- Added a backed-up schema-15 migration with indexed many-to-many membership, transactional writes, batched tag loading and account counts based on current verified creator IDs; unverified creators remain entry-scoped.
-- Associate saved creator videos and account insights with stable, platform-scoped IDs from download metadata. Creator filters also use those identities; names and handles no longer merge unrelated accounts or split renamed creators.
-- Keep older downloads without a stable ID isolated and explain their unverified status. Explicit profile loading can resolve membership; mutable profile handles are checked again, while YouTube uses its canonical channel URL.
-- Added a backed-up schema-14 migration, indexed identity pagination and separate identity-scoped account snapshots. Preserve legacy snapshots without guessing their creator.
-- Restrict deletion cleanup to the removed entry's identity and legacy name keys. Keep shared insights until the final member is removed, preserve unrelated snapshots and roll back entry deletion if cleanup fails. An isolated 200,000-entry / 20,000-insight archive completed targeted deletion in about 0.9 ms.
-- Include saved creator subtitles in local keyword counts, with separate language columns and filters and shared Unicode token rules for counts and source occurrences.
-- Link words and source counts to paginated occurrences, original saved source text and available video timestamps, adjusting subtitle playback for retained cuts. Full copying preserves original text; source revisions and view generations reject changed data and late replies.
-- Limit text and loaded OCR views to 200 visible entries per page, with full-result search, unchanged copy exports and keyboard/time navigation across pages. Large untimed documents retain original offsets and Unicode-safe highlights across display sections.
-- Debounce OCR searches by 250 ms and invalidate older replies immediately. A 25,000-row browser fixture rendered 200 entries in about 23 ms in both tested engines.
-- Bound captured subprocess output to a shared 128 MiB stdout/stderr budget while reading. Oversized output fails explicitly and terminates the process group, with timeout, inherited-pipe and exact-budget regressions.
-- Shortened shared database lock windows by snapshotting keyword text before counting and sorting, preserving source order, limits and complete OCR/caption coverage.
-- Moved legacy statistics URL classification and source-count sorting outside the shared connection lock, with one consistent read transaction for totals, groups and fallback data.
-- Serialized heavy analyses on a separate gate so queued work cannot reserve the database connection or accumulate large text snapshots; added lock measurements and concurrent settings/completion-write regressions.
-- Unified History, creator search, descriptions, transcripts, OCR, subtitles and keyword filtering with locale-independent Unicode case folding and canonical normalization, including umlauts, ß/SS and composed/decomposed text.
-- Kept highlights aligned with the original text when normalization or case folding changes character lengths, preserving copied text and timestamp navigation.
-- Applied the same comparisons to existing archives without a schema migration; preserved indexed exact creator navigation and stable cursor pagination.
-- Automatically trim unused local playback previews to 2 GiB and remove previews unused for 30 days, with cleanup at startup and once per minute.
-- Protect loaded players with shared file leases, release obsolete replies and closed views, and clear old-page references on reload without blocking playback during conversion.
-- Preserve originals, linked files and foreign cache contents; recover interrupted preview conversions safely and recreate evicted previews when needed.
-
-- Replaced the browser “Connected” label with “Public access checked” and explicitly kept YouTube sign-in and access to protected videos unverified.
-- Added private-data-safe browser diagnostics for profile and permission issues, locked databases, cookie decryption, empty cookie stores, network failures, sign-in challenges and rate limits, with actionable retry guidance.
-- Kept saved browser settings unchanged after failed checks, rejected incomplete success reports, and detected cookie-decryption warnings even when a public request succeeds.
-- Integrated Browser Import into Settings, including local server controls, extension pairing and saved connection management; native Dock shortcuts open the new category directly.
-- Left-aligned the Settings workspace, switches, fields and actions, and kept import drafts and generated secrets available when switching categories.
-- Redesigned Settings with a vertical category sidebar for Downloads, Files & Metadata, Browser and the existing Diagnostics tools, with compact navigation at smaller widths.
-- Kept all existing controls and automatic persistence, added concise descriptions with expandable help, and replaced permanent save confirmations with brief feedback after successful saves.
-- Distinguished saved browser choices from checked connections, retained permission and cookie guidance in Troubleshooting, and added responsive, keyboard, persistence and failure-state regressions.
-- Accelerated History and saved Account pages with matching order/source/creator indexes and focused, parameterized search queries.
-- Made Load more continue from the last saved position, retaining the initial count and avoiding shifted pages after new downloads or deletions. History reads now run outside the UI thread.
-- Grouped platform totals in SQLite and limited legacy URL fallback to entries without a source. Added a backed-up schema-13 migration, large-archive measurements and pagination regressions.
-- Persisted waiting downloads, their order and complete job options, plus Auto-start and Pause, across application restarts.
-- Restored unfinished jobs as Interrupted with preserved output paths and an explicit Queue again action. Completed receipts prevent automatic reprocessing after a crash.
-- Saved queue changes atomically before acknowledgement, protected each profile with an operating-system lock and added restart, process-exit, storage-failure and browser regressions.
-- Kept every transcript export linked to its actual retained video, including repeated exports with unique filenames, so History playback and OCR keep using the correct source.
-- Added atomic media-reference persistence and a backed-up schema-11 migration. Older transcripts retain conservative source lookup; new audio-only transcripts never select a neighboring video.
-- Replaced the Homebrew-linked Whisper virtual environment with checksum-pinned standalone CPython, its standard library and hash-pinned binary dependencies.
-- Added native dependency auditing, wheel relocation, isolated decoding checks and atomic runtime replacement with rollback; Python no longer needs to be installed separately.
-- Added an explicit moved-runtime decode and real model inference check with Homebrew access blocked. Documented the existing macOS 14 minimum of the transcription dependencies and reject older systems before downloading media.
-- Replaced premature Unsupported link warnings with a neutral Not checked state and guidance to check other HTTP(S) links manually.
-- Preserved explicitly requested metadata checks while an older request is running, without enabling automatic previews for additional sites.
-- Added confirmation before removing a History entry, naming its saved texts, subtitles, OCR results and insights while preserving downloaded files.
-- Clarified Clear History's deletion scope, prevented duplicate deletion actions and preserved keyboard focus and retry after failures.
-- Removed unused application CSS, obsolete DOM references and an unused field from internal Link Dump secret validation.
-- Consolidated History clipboard feedback and reused account snapshots to avoid a duplicate initial database read, preserving retry and stale-response handling.
-- Shared the download and Whisper streaming-process lifecycle, with bounded output draining, process cleanup and an 8 MiB line limit.
-- Added regression coverage for clipboard failures, account snapshot reuse, streaming cancellation, inherited pipes and malformed process output.
+- Added local tags with Unicode-safe unique names, descriptions, palette and HEX colors, and multi-tag assignment for all saved media.
+- Added a searchable Tags workspace with compact cards, color indicators, usage counts, action menus, empty states and contextual retry.
+- Placed Video Details tags in a full-width Overview row below metadata and descriptions, leaving only title, platform and thumbnail in the header.
+- Added non-modal quick tagging and Quick Create with keyboard navigation, responsive popovers and protection against late replies.
+- Added paginated tag Content and Accounts views with search and return navigation.
+- Added tag deletion confirmations that remove assignments while preserving saved media and text.
+- Unified History's Search in, Source and Tag controls in one Filters popover with an active count and Clear all filters.
+- Refined History with compact cards, truncated metadata, tag chips, separate thumbnails, top-right removal buttons and a narrower statistics sidebar.
+- Associated creator videos, filters and insights with stable platform-specific IDs while keeping unverified downloads separate.
+- Added explicit profile verification to resolve missing creator identities and recheck mutable handles before using saved account insights.
+- Scoped deletion cleanup to the affected creator while preserving shared insights and rolling back failed deletions.
+- Added backed-up database migrations for indexed tag relationships, creator identities, archive pagination, queue persistence and transcript media references.
+- Included saved creator subtitles in keyword counts with language filters and shared Unicode matching rules.
+- Linked keywords to paginated source occurrences and cut-aware video timestamps while preserving full-text copying and rejecting stale replies.
+- Limited text and OCR views to 200 entries per page with full-result search, complete exports and keyboard and timestamp navigation.
+- Debounced OCR searches by 250 ms and immediately invalidated older requests.
+- Unified search and highlighting across existing archives with Unicode case folding and normalization while preserving original text, timestamps and exact creator navigation.
+- Reduced database lock times for keywords and statistics and serialized heavy analyses to keep downloads and settings responsive.
+- Accelerated History, Account pages and platform statistics with indexed queries, grouped totals and background database reads.
+- Made Load more use stable cursors so new downloads and deletions do not shift subsequent pages.
+- Limited unused playback previews to 2 GiB and 30 days with automatic cleanup at startup and during use.
+- Protected originals and active players during preview cleanup and recovered interrupted conversions safely.
+- Replaced the browser “Connected” label with “Public access checked” while keeping YouTube sign-in and protected-content access explicitly unverified.
+- Added actionable, privacy-safe browser diagnostics while preserving saved settings when checks fail.
+- Redesigned Settings with left-aligned categories, integrated Browser Import, contextual help, automatic saving and brief save feedback.
+- Preserved Browser Import drafts and pairing secrets across category changes and linked native Dock shortcuts to Settings.
+- Persisted waiting downloads, order, job options, Auto-start and Pause across restarts using atomic saves and exclusive profile locks.
+- Restored unfinished jobs as Interrupted with Queue again and crash-safe completion receipts to prevent duplicate processing.
+- Kept transcript exports linked to their retained video with safe handling of repeated exports, older entries and audio-only downloads.
+- Bundled a checksum-pinned standalone Python and Whisper runtime that works without Homebrew or a separate Python installation.
+- Hardened runtime installation with native-library audits, decoding and inference checks after relocation, atomic replacement and rollback.
+- Enforced the transcription runtime's macOS 14 minimum before downloading media.
+- Replaced premature Unsupported warnings with Not checked and preserved manually requested metadata checks during concurrent requests.
+- Added clear History deletion confirmations, duplicate-action protection, focus recovery and retry while preserving downloaded files.
+- Removed unused code and consolidated clipboard feedback and account snapshot reads.
+- Shared download and Whisper process handling with bounded draining, cancellation, timeouts and inherited-pipe cleanup.
+- Limited captured subprocess output to 128 MiB and streaming lines to 8 MiB.
+- Expanded regression coverage for persistence, tagging, Unicode search, browser checks, clipboard failures and process cleanup.
 
 # 2.6.2
 

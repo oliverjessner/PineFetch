@@ -39,6 +39,7 @@ pub(crate) struct HistoryFilter {
     exact_uploader: Option<String>,
     identity: Option<(String, String)>,
     entry_id: Option<String>,
+    tag_id: Option<String>,
 }
 impl HistoryFilter {
     pub(crate) fn new(
@@ -55,6 +56,7 @@ impl HistoryFilter {
             return Err(format!("Unsupported history search field: {field}"));
         }
         Ok(Self {
+            tag_id: None,
             identity: None,
             entry_id: None,
             pattern: history_search_key(query),
@@ -86,6 +88,10 @@ impl HistoryFilter {
         }
         Ok(filter)
     }
+    pub(crate) fn with_tag(mut self, tag_id: Option<&str>) -> Result<Self, String> {
+        self.tag_id = tag_id.map(crate::tags::valid_id).transpose()?;
+        Ok(self)
+    }
     fn signature(&self) -> Result<String, String> {
         serde_json::to_vec(self)
             .map(|json| crate::hashing::sha256_hex(&json))
@@ -93,11 +99,22 @@ impl HistoryFilter {
     }
     // Only fixed SQL fragments enter the query. Every user value stays bound.
     pub(crate) fn predicate(&self) -> (String, Vec<Value>) {
+        self.tag_predicate(false)
+    }
+    fn tag_predicate(&self, exists: bool) -> (String, Vec<Value>) {
         let mut clauses = Vec::new();
         let mut values = Vec::new();
+        if let Some(tag) = &self.tag_id {
+            values.push(Value::Text(tag.clone()));
+            clauses.push(if exists {"EXISTS(SELECT 1 FROM history_entry_tags WHERE history_entry_id=history.id AND tag_id=?1)"} else {"history.id IN (SELECT history_entry_id FROM history_entry_tags WHERE tag_id=?1)"}.into());
+        }
         if let Some((source, id)) = &self.identity {
             values.extend([Value::Text(source.clone()), Value::Text(id.clone())]);
-            clauses.push("history.creator_source=?1 AND history.creator_id=?2".to_string());
+            clauses.push(format!(
+                "history.creator_source=?{} AND history.creator_id=?{}",
+                values.len() - 1,
+                values.len()
+            ));
         }
         if let Some(id) = &self.entry_id {
             values.push(Value::Text(id.clone()));
@@ -172,9 +189,42 @@ pub(crate) fn read_page(
     let tx = conn
         .unchecked_transaction()
         .map_err(|e| format!("History read failed: {e}"))?;
+    if let Some(tag) = &filter.tag_id {
+        crate::tags::require(&tx, tag)?;
+    }
+    let tag_count = if let Some(tag) = &filter.tag_id {
+        let mut stmt = tx
+            .prepare("SELECT COUNT(*) FROM history_entry_tags WHERE tag_id=?1")
+            .map_err(|e| e.to_string())?;
+        let count = stmt
+            .query_row([tag], |r| r.get::<_, u64>(0))
+            .map_err(|e| e.to_string())?;
+        #[cfg(test)]
+        {
+            work.count_steps += stmt.get_status(rusqlite::StatementStatus::VmStep);
+        }
+        Some(count)
+    } else {
+        None
+    };
+    let tag_only = filter.tag_id.is_some()
+        && filter.pattern.is_none()
+        && filter.source.is_none()
+        && filter.identity.is_none()
+        && filter.entry_id.is_none();
+    let dense_tag = if tag_count.is_some_and(|count| count >= 2000) {
+        let archive_count: u64 = tx
+            .query_row("SELECT COUNT(*) FROM history_entries", [], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        tag_count.unwrap_or(0).saturating_mul(32) >= archive_count
+    } else {
+        false
+    };
     let (predicate, mut values) = filter.predicate();
     let total = if let Some(cursor) = &cursor {
         cursor.total
+    } else if tag_only {
+        tag_count.unwrap_or(0)
     } else {
         let count_sql = if predicate == "1" {
             "SELECT COUNT(*) FROM history_entries".to_owned()
@@ -189,10 +239,11 @@ pub(crate) fn read_page(
             .map_err(|e| format!("History read failed: {e}"))?;
         #[cfg(test)]
         {
-            work.count_steps = count_stmt.get_status(rusqlite::StatementStatus::VmStep);
+            work.count_steps += count_stmt.get_status(rusqlite::StatementStatus::VmStep);
         }
         total.max(0) as u64
     };
+    let (predicate, _) = filter.tag_predicate(dense_tag);
     let keys = "SELECT history.id,COALESCE(history.completed_at,history.created_at) AS sort_time,history.created_at FROM history_entries AS history";
     // The bundled SQLite does not seek this expression-led row comparison.
     // Use three disjoint index ranges, each limited before merging. Omitting

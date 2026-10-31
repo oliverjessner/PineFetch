@@ -1,3 +1,6 @@
+import { createTagController } from './tags.js';
+import { createTagsView } from './tags-view.js';
+import { createHistoryFilters } from './history-filters.js';
 import { confirmDialog } from './vendor/oj/index.js';
 import { createDropdownChoice } from './dropdown-choice.js';
 import { formatHistorySource, formatLocalDateTime, formatUploadDate } from './formatters.js';
@@ -13,8 +16,9 @@ export const createHistoryView = ({
     formatFileSize,
     formatDuration,
     detectPlatform,
-    appendTextSpans,
     isActive,
+    activeSection,
+    navigate,
     prepareDownload,
 }) => {
     const state = Object.seal({
@@ -31,6 +35,8 @@ export const createHistoryView = ({
         historySource: '',
         historyExactUser: false,
         historyCreatorEntryId: null,
+        historyTagId: null,
+        tagContext: null,
         historyClearing: false,
         historyRemoving: false,
         historyRemovalFocus: null,
@@ -57,11 +63,107 @@ export const createHistoryView = ({
     ]);
     const sourceChoice = createDropdownChoice({ menu: els.historySourceMenu, value: els.historySourceValue });
     sourceChoice.setOptions([{ value: '', label: 'All sources' }]);
+    let tagsView;
+    const toTags = id => navigate('tags', { tagId: id });
+    const returnToTag = () => {
+        historyDetailsView.leave();
+        accountView.leave();
+        state.page = 'tags';
+        activate();
+        tagsView.resume();
+    };
+    const tagBackButtons = [els.historyDetailsView, els.historyAccountView].map(root => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'oj-button oj-button-ghost oj-button-compact pinefetch-tag-return';
+        button.addEventListener('click', returnToTag);
+        root.prepend(button);
+        return button;
+    });
+    const tags = createTagController({
+        api,
+        appendLog,
+        detailsRoot: els.historyDetailsTags,
+        openTag: tag => toTags(tag.id),
+        onChange: event => {
+            const deletedFilter = event.deleted && state.historyTagId === event.tagId;
+            const membershipFilter = event.historyId && state.historyTagId === event.tagId;
+            if (deletedFilter) {
+                state.historyTagId = null;
+                els.historyTagFilter.value = '';
+                filters.update();
+            }
+            if (deletedFilter || membershipFilter || state.historyLoading) {
+                invalidateHistoryCache();
+                if (isActive() && state.page === 'list') void renderHistory({ force: true });
+            } else void refreshVisibleTagChips(event.historyId);
+            if (!event.historyId) void refreshTagOptions();
+            void tags.refreshDetails();
+            tagsView?.changed(event);
+        },
+    });
+    const refreshVisibleTagChips = async historyId => {
+        const rows = [...els.historyList.children].filter(row => !historyId || row.dataset.historyId === historyId);
+        const ids = rows.map(row => row.dataset.historyId);
+        try {
+            for (let offset = 0; offset < ids.length; offset += 500) await tags.batch(ids.slice(offset, offset + 500));
+            for (const row of rows)
+                if (row.isConnected)
+                    row.querySelector('[data-tag-history-id]')?.replaceWith(tags.chips(row.dataset.historyId));
+        } catch (error) {
+            appendLog(`[Tags] ${error}`, true);
+            setHistoryActionStatus('Tag labels could not be refreshed. Reopen History to retry.', true);
+        }
+    };
+    let tagOptionsRequest = 0;
+    const refreshTagOptions = async () => {
+        const request = ++tagOptionsRequest;
+        if (!api.available) return;
+        try {
+            const definitions = await tags.choices();
+            if (request !== tagOptionsRequest) return;
+            const selected = state.historyTagId;
+            els.historyTagFilter.replaceChildren(
+                new Option('All Tags', ''),
+                ...definitions.map(tag => new Option(tag.name, tag.id))
+            );
+            state.historyTagId = definitions.some(tag => tag.id === selected) ? selected : null;
+            els.historyTagFilter.value = state.historyTagId || '';
+            filters.update();
+        } catch (error) {
+            appendLog(`[Tags] ${error}`, true);
+        }
+    };
+    const filters = createHistoryFilters({
+        els,
+        values: () => ({
+            searchField: state.historySearchField,
+            source: state.historySource,
+            tagId: state.historyTagId,
+        }),
+        clear: () => {
+            state.historySearchField = 'title';
+            searchFieldChoice.setValue('title');
+            els.historySearchInput.placeholder = 'Search titles';
+            state.historySource = '';
+            sourceChoice.setValue('');
+            state.historyExactUser = false;
+            state.historyCreatorEntryId = null;
+            state.historyTagId = null;
+            els.historyTagFilter.value = '';
+            filters.update();
+            state.historyFilterRevision++;
+            invalidateHistoryCache();
+            void renderHistory({ force: true });
+        },
+    });
     const returnToHistory = returnFocus => {
         historyDetailsView.leave();
         accountView.leave();
         state.page = 'list';
-        activate();
+        state.tagContext = null;
+        if (activeSection() !== 'history') navigate('history');
+        else activate();
         void renderHistory().then(() => {
             if (state.page !== 'list' || !isActive()) return;
             els.historyList.scrollTop = state.scrollTop;
@@ -82,6 +184,7 @@ export const createHistoryView = ({
         detectPlatform,
         showSavedVideosByCreator: creator => showSavedVideosByCreator(creator),
         jobs,
+        tags,
         openAccount: id => {
             historyDetailsView.leave();
             state.page = 'account';
@@ -89,6 +192,10 @@ export const createHistoryView = ({
             accountView.open(id);
         },
         navigateToDetails: id => {
+            if (state.page === 'tags') {
+                state.tagContext = tagsView.current();
+                tagsView.remember();
+            }
             if (state.page === 'list') {
                 state.scrollTop = els.historyList.scrollTop;
                 state.historyReturnId = id;
@@ -112,9 +219,20 @@ export const createHistoryView = ({
     const activate = () => {
         state.historyViewRevision += 1;
         state.historyRemovalFocus = null;
-        const detail = isActive() && state.page === 'detail';
-        const account = isActive() && state.page === 'account';
+        const archiveActive = isActive() || activeSection() === 'tags';
+        const detail = archiveActive && state.page === 'detail';
+        const account = archiveActive && state.page === 'account';
         const list = isActive() && state.page === 'list';
+        const tagPage = activeSection() === 'tags' && state.page === 'tags';
+        if (!els.tagsView.hidden && !tagPage) tagsView?.remember();
+        if (!els.historyView.hidden && !list) state.scrollTop = els.historyList.scrollTop;
+        if (!list) filters.close();
+        els.tagsView.hidden = !tagPage;
+        if (!tagPage) tagsView?.deactivate();
+        for (const button of tagBackButtons) {
+            button.hidden = !(detail || account) || !state.tagContext;
+            button.textContent = `Back to ${state.tagContext?.name || 'Tag'}`;
+        }
         els.historyAccountView.hidden = !account;
         els.historyDetailsView.hidden = !detail;
         els.historyView.hidden = !list;
@@ -122,6 +240,7 @@ export const createHistoryView = ({
         els.historyView
             .closest('.pinefetch-split')
             .classList.toggle('pinefetch-history-details-active', detail || account);
+        els.tagsView.closest('.pinefetch-split').classList.toggle('pinefetch-tags-active', tagPage);
         updateHistoryResultCount();
         historyDetailsView.hideContextMenu();
         historyDetailsView.activate();
@@ -193,7 +312,7 @@ export const createHistoryView = ({
     };
 
     const updateHistoryResultCount = () => {
-        const hasCount = Boolean(state.historyQuery) && state.historyTotalCount !== null;
+        const hasCount = Boolean(state.historyQuery || state.historyTagId) && state.historyTotalCount !== null;
         els.historyResultCount.textContent = hasCount ? `${state.historyTotalCount.toLocaleString()} found` : '';
         els.historyResultCount.hidden = !isActive() || state.page !== 'list' || !hasCount;
     };
@@ -256,6 +375,7 @@ export const createHistoryView = ({
         const previousSource = state.historySource;
         updateHistorySourceOptions();
         state.historySource = sourceChoice.getValue();
+        filters.update();
         return state.historySource !== previousSource;
     };
 
@@ -285,7 +405,7 @@ export const createHistoryView = ({
         updateHistoryResultCount();
     };
 
-    const createHistoryItem = entry => {
+    const createHistoryItem = (entry, { tagId = null, open, account, reportError } = {}) => {
         const item = document.createElement('div');
         item.className = 'oj-panel oj-panel-compact oj-panel-interactive pinefetch-history-item';
         item.dataset.historyId = entry.id;
@@ -293,14 +413,21 @@ export const createHistoryView = ({
         item.dataset.historyUploader = `${entry.uploader || ''}`.trim();
         item.dataset.historySource = `${entry.source || ''}`.trim().toLowerCase();
         const entryLabel = entry.title || entry.filename || entry.url || 'download';
+        const body = document.createElement('div');
+        body.className = 'pinefetch-history-card-body';
+        const mediaActions = document.createElement('div');
+        mediaActions.className = 'pinefetch-history-media-actions';
+        if (tagId && !entry.thumbnail) item.classList.add('pinefetch-history-no-media-actions');
+        item.append(body);
+        if (entry.thumbnail || !tagId) item.append(mediaActions);
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
-        openBtn.className = `pinefetch-history-open-btn pinefetch-list-card-layout ${entry.thumbnail ? '' : 'pinefetch-no-media'}`;
+        openBtn.className = 'pinefetch-history-open-btn';
         openBtn.setAttribute('aria-label', `Open video details: ${entryLabel}`);
         openBtn.setAttribute('aria-haspopup', 'menu');
         openBtn.setAttribute('aria-controls', 'historyContextMenu');
 
-        openBtn.onclick = () => void historyDetailsView.open(entry.id, openBtn);
+        openBtn.onclick = open || (() => void historyDetailsView.open(entry.id, openBtn));
 
         const content = document.createElement('div');
         content.className = 'pinefetch-history-content';
@@ -308,14 +435,15 @@ export const createHistoryView = ({
         const title = document.createElement('div');
         title.className = 'pinefetch-history-title';
         title.textContent = entryLabel;
+        title.title = entryLabel;
         content.appendChild(title);
 
         const meta = document.createElement('div');
-        meta.className = 'pinefetch-history-meta';
+        meta.className = 'oj-caption pinefetch-history-meta';
         const dateStr = formatHistoryDate(entry.completed_at);
         const source = entry.source || entry.platform || detectPlatform(entry.url) || 'unknown';
         const sourceLabel = document.createElement('span');
-        sourceLabel.className = 'pinefetch-history-platform';
+        sourceLabel.className = 'oj-truncate pinefetch-history-platform';
         sourceLabel.title = formatHistorySource(source);
         const sourceIcon = createPlatformIcon(source);
         if (sourceIcon) {
@@ -326,15 +454,30 @@ export const createHistoryView = ({
         } else {
             sourceLabel.textContent = sourceLabel.title;
         }
-        meta.appendChild(sourceLabel);
+        const medium = document.createElement('span');
+        medium.className = 'pinefetch-history-meta-group';
+        medium.append(sourceLabel, document.createTextNode(entry.medium || ''));
+        meta.append(medium);
+        const appendMeta = (text, className) => {
+            if (!text) return;
+            const group = document.createElement('span');
+            group.className = `pinefetch-history-meta-group ${className}`;
+            const separator = document.createElement('span');
+            separator.className = 'pinefetch-history-meta-separator';
+            separator.textContent = '·';
+            separator.setAttribute('aria-hidden', 'true');
+            const label = document.createElement('span');
+            label.className = 'oj-truncate';
+            label.textContent = text;
+            label.title = text;
+            group.append(separator, label);
+            meta.append(group);
+        };
         const uploadDate = formatUploadTimestamp(entry.timestamp) || formatUploadDate(entry.upload_date);
-        appendTextSpans(meta, [
-            entry.medium || '',
-            entry.uploader ? `by ${entry.uploader}` : '',
-            entry.filename || '',
-            uploadDate ? `uploaded ${uploadDate}` : '',
-            dateStr,
-        ]);
+        appendMeta(entry.uploader ? `by ${entry.uploader}` : '', 'pinefetch-history-creator');
+        appendMeta(entry.filename || '', 'pinefetch-history-filename');
+        appendMeta(uploadDate ? `uploaded ${uploadDate}` : '', 'pinefetch-history-upload-date');
+        appendMeta(dateStr, 'pinefetch-history-saved-date');
         content.appendChild(meta);
         const ocrIndicator = document.createElement('span');
         ocrIndicator.className = 'oj-caption pinefetch-history-ocr-indicator';
@@ -345,14 +488,54 @@ export const createHistoryView = ({
         openBtn.appendChild(content);
 
         if (entry.thumbnail) {
+            const thumbnailButton = document.createElement('button');
+            thumbnailButton.type = 'button';
+            thumbnailButton.className = 'pinefetch-history-thumbnail-btn';
+            thumbnailButton.setAttribute('aria-label', `Open video details from thumbnail: ${entryLabel}`);
+            thumbnailButton.setAttribute('aria-haspopup', 'menu');
+            thumbnailButton.setAttribute('aria-controls', 'historyContextMenu');
+            thumbnailButton.onclick = open || (() => void historyDetailsView.open(entry.id, thumbnailButton));
             const thumb = document.createElement('div');
             thumb.className = 'pinefetch-media-thumbnail pinefetch-history-thumb';
             thumb.style.backgroundImage = `url('${entry.thumbnail}')`;
-            openBtn.appendChild(thumb);
+            thumbnailButton.append(thumb);
+            mediaActions.append(thumbnailButton);
         }
-        item.appendChild(openBtn);
+        body.append(openBtn, tags.chips(entry.id));
+        const actions = document.createElement('div');
+        actions.className = 'oj-cluster pinefetch-history-card-actions';
+        if (account || tagId) body.append(actions);
+        if (account && entry.uploader) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'oj-button oj-button-ghost oj-button-compact';
+            button.textContent = `View creator: ${entry.uploader}`;
+            button.addEventListener('click', account);
+            actions.append(button);
+        }
+        if (tagId) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'oj-button oj-button-ghost oj-button-compact';
+            button.textContent = 'Remove this tag';
+            button.setAttribute('aria-label', `Remove this tag from ${entryLabel}`);
+            button.addEventListener('click', async () => {
+                if (button.disabled) return;
+                button.disabled = true;
+                try {
+                    await tags.assignEntry(entry.id, tagId, false);
+                } catch (error) {
+                    if (reportError) reportError(error);
+                    else setHistoryActionStatus(String(error), true);
+                    button.disabled = false;
+                }
+            });
+            actions.append(button);
+            return item;
+        }
 
         const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
         removeBtn.className = 'oj-icon-button oj-button-danger pinefetch-history-item-remove-btn';
         const removeIcon = document.createElement('i');
         removeIcon.className = 'fa-solid fa-xmark';
@@ -418,14 +601,14 @@ export const createHistoryView = ({
                 restoreHistoryRemovalFocus();
             }
         };
-        item.appendChild(removeBtn);
+        mediaActions.appendChild(removeBtn);
 
         return item;
     };
 
     const renderHistory = async ({ append = false, force = false } = {}) => {
         updateHistoryResultCount();
-        if (state.page === 'detail') return;
+        if (state.page !== 'list') return;
         if (!append && !force && state.historyLoaded && !state.historyDirty) return;
 
         if (!api.available) {
@@ -448,6 +631,7 @@ export const createHistoryView = ({
         const requestedSource = state.historySource;
         const requestedExactUser = state.historyExactUser;
         const requestedCreatorEntryId = state.historyCreatorEntryId;
+        const requestedTagId = state.historyTagId;
         let needsFollowUpRefresh = false;
         const offset = append ? state.historyOffset : 0;
         setHistoryLoading(true);
@@ -461,12 +645,23 @@ export const createHistoryView = ({
                 ...(requestedSource ? { source: requestedSource } : {}),
                 ...(requestedExactUser ? { exactUser: true } : {}),
                 ...(requestedCreatorEntryId ? { creatorEntryId: requestedCreatorEntryId } : {}),
+                ...(requestedTagId ? { tagId: requestedTagId } : {}),
             });
             if (state.historyRevision !== requestedRevision) {
                 needsFollowUpRefresh = true;
                 return;
             }
             const entries = Array.isArray(page) ? page : page?.entries || [];
+            try {
+                await tags.batch(entries.map(entry => entry.id));
+            } catch (error) {
+                appendLog(`[Tags] ${error}`, true);
+                setHistoryActionStatus('Tag labels could not be loaded. Reopen History to retry.', true);
+            }
+            if (state.historyRevision !== requestedRevision) {
+                needsFollowUpRefresh = true;
+                return;
+            }
             jobs.adoptSummaries(page?.ocr_statuses);
             const hasMore = Array.isArray(page)
                 ? entries.length === historyPageSize
@@ -519,6 +714,15 @@ export const createHistoryView = ({
 
     const showSavedVideosByCreator = ({ uploader, source, entryId }) => {
         if (!uploader || !source) return;
+        if (activeSection() === 'tags') {
+            state.tagContext = tagsView.current();
+            tagsView.remember();
+            historyDetailsView.leave();
+            state.page = 'account';
+            activate();
+            accountView.open(entryId);
+            return;
+        }
         state.historyFilterRevision += 1;
         if (historySearchTimer !== null) clearTimeout(historySearchTimer);
         historySearchTimer = null;
@@ -533,12 +737,52 @@ export const createHistoryView = ({
         state.historyOffset = 0;
         updateHistorySourceOptions();
         sourceChoice.setValue(source);
+        filters.update();
         invalidateHistoryCache();
         els.historySearchInput.focus({ preventScroll: true });
         void renderHistory({ force: true });
     };
 
+    tagsView = createTagsView({
+        root: els.tagsView,
+        api,
+        tags,
+        createItem: createHistoryItem,
+        appendLog,
+        openVideo: (id, tag) => {
+            state.tagContext = tag;
+            void historyDetailsView.open(id);
+        },
+        openAccount: (id, tag) => {
+            state.tagContext = tag;
+            historyDetailsView.leave();
+            state.page = 'account';
+            activate();
+            accountView.open(id);
+        },
+    });
+    const selectSection = (section, { tagId } = {}) => {
+        if (!els.historyView.hidden) state.scrollTop = els.historyList.scrollTop;
+        if (!els.tagsView.hidden) tagsView.remember();
+        historyDetailsView.leave();
+        accountView.leave();
+        state.tagContext = null;
+        state.page = section === 'tags' ? 'tags' : 'list';
+        activate();
+        if (section === 'tags') {
+            if (tagId) void tagsView.openTag(tagId);
+            else tagsView.resume();
+        } else els.historyList.scrollTop = state.scrollTop;
+    };
     const bindEvents = () => {
+        void refreshTagOptions();
+        els.historyTagFilter.addEventListener('change', () => {
+            state.historyTagId = els.historyTagFilter.value || null;
+            state.historyFilterRevision++;
+            filters.update();
+            invalidateHistoryCache();
+            void renderHistory({ force: true });
+        });
         jobs.bindEvents();
         const unsubscribeJobs = jobs.subscribe((id, record) => {
             for (const indicator of els.historyList.querySelectorAll('[data-ocr-history-id]')) {
@@ -576,6 +820,7 @@ export const createHistoryView = ({
             state.historyQuery = query;
             state.historySearchField = searchField;
             state.historySource = source;
+            filters.update();
             state.historyExactUser = false;
             state.historyCreatorEntryId = null;
             invalidateHistoryCache();
@@ -639,6 +884,7 @@ export const createHistoryView = ({
                 state.historyQuery = '';
                 state.historySearchField = 'title';
                 state.historySource = '';
+                filters.update();
                 state.historyExactUser = false;
                 state.historyCreatorEntryId = null;
                 invalidateHistoryCache();
@@ -660,6 +906,8 @@ export const createHistoryView = ({
     const onChanged = () => {
         historyDetailsView.hideContextMenu();
         invalidateHistoryCache();
+        void refreshTagOptions();
+        tagsView.changed({});
         if (isActive() && state.page === 'list') void renderHistory({ force: true });
     };
 
@@ -686,5 +934,5 @@ export const createHistoryView = ({
         icon.setAttribute('aria-hidden', 'true');
         element.append(icon, document.createTextNode(label));
     };
-    return Object.freeze({ render: renderHistory, bindEvents, onChanged, activate });
+    return Object.freeze({ render: renderHistory, bindEvents, onChanged, activate, selectSection });
 };

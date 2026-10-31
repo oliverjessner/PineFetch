@@ -386,3 +386,40 @@ stored text; it accepts no filesystem paths. Counting, hashing and token scannin
 run after the shared database lock is released, on the existing analysis gate.
 Text readers render 200 entries per page; copying retains complete original text.
 Captured processes share a 128 MiB stdout/stderr budget enforced during reading.
+
+Schema 15 adds `tags` and `history_entry_tags`. The `tags` module owns validation,
+transactional storage, batched memberships and derived creator queries. History
+filter signatures include the optional tag; sparse and dense memberships reuse
+the existing cursor reader with different indexed access paths. Definitions used
+by pickers do not calculate archive-wide counts. Main navigation's `activeView`
+separates Download, History, Tags and Settings. `tags-view.js` mounts a full-width
+Tags workspace with its own overview/detail state; the archive controller reuses
+existing item/account views and list cards, retaining the originating tag for Back
+navigation. Unchanged cached pages, searches and scroll positions survive main
+section switches. `history-filters.js` owns only the non-modal secondary-filter
+surface; values and query cursors remain in the existing History state. `tag-ui.js`
+shares chip/color rendering. `quick-tags.js` owns the anchored non-modal selector
+and inline creation, using the native popover top layer within an existing parent
+dialog when needed. `tags.js` retains the standalone full editor, guards against
+nested modals and serializes conflicting assignments. Quick creation captures the
+History ID and keeps a created definition available for assignment retry after a
+partial failure; stale replies cannot update another video's popover.
+Video Details keeps its tag row in Overview, below both metadata and saved
+caption/description columns. An OJ divider separates it from the content; the
+header contains only title, platform and thumbnail. The row renders three cached
+chips, or one at narrow widths, and uses the same quick popover in assigned-only
+mode for overflow. Controls remain stable during refreshes; overflow can reanchor
+to Add Tag if its trigger disappears. Tab changes close the popover and hide the
+row without rereading tags. Navigation clears the old tags before loading another
+entry, and reads/mutations retain their captured entry IDs.
+History cards keep the open-content action and tag controls in one text column,
+with a separate thumbnail/remove action group. They reuse OJ `oj-panel-compact`,
+`oj-caption`, `oj-tag`, `oj-status-dot`, `oj-truncate` and existing danger buttons.
+Layout gaps come from `--oj-space-1`, `--oj-space-2` and `--oj-space-3`; chip
+typography, radii, surfaces and interactive/focus states stay with the library.
+OJ 0.2.1 has no thumbnail size token: the existing preview width is composed from
+four `--oj-space-8` units, reduced to two at the existing narrow-window breakpoint.
+This preserves the media aspect ratio without a local size/spacing scale. The
+per-tag `--tag-color` remains stored user data, independent of design-system UI
+colors. Long metadata values truncate within their column and retain tooltips.
+See [TAGS.md](TAGS.md) for persistence, deletion and identity semantics.

@@ -32,6 +32,10 @@
                             <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
                             History
                         </button>
+                        <button id="viewTagsBtn" class="oj-nav-link" type="button">
+                            <i class="fa-solid fa-tag" aria-hidden="true"></i>
+                            Tags
+                        </button>
                         <button id="viewSettingsBtn" class="oj-nav-link" type="button">
                             <i class="fa-solid fa-gear" aria-hidden="true"></i>
                             Settings
@@ -175,6 +179,38 @@
                                     autocomplete="off"
                                 />
                             </label>
+                            <button
+                                id="historyFiltersBtn"
+                                type="button"
+                                class="oj-button oj-button-secondary"
+                                popovertarget="historyFiltersPopover"
+                                aria-controls="historyFiltersPopover"
+                                aria-haspopup="dialog"
+                            >
+                                <i class="fa-solid fa-sliders" aria-hidden="true"></i
+                                ><span id="historyFiltersValue">Filters</span>
+                            </button>
+                        </div>
+                        <div
+                            id="historyFiltersPopover"
+                            class="pinefetch-history-filters oj-stack"
+                            popover="auto"
+                            role="dialog"
+                            aria-modal="false"
+                            aria-labelledby="historyFiltersTitle"
+                        >
+                            <div class="oj-cluster">
+                                <h3 id="historyFiltersTitle" class="oj-heading-3 oj-grow">Filters</h3>
+                                <button
+                                    type="button"
+                                    class="oj-button oj-button-ghost oj-button-compact"
+                                    popovertarget="historyFiltersPopover"
+                                    popovertargetaction="hide"
+                                    aria-label="Close filters"
+                                >
+                                    ×
+                                </button>
+                            </div>
                             <div class="oj-field">
                                 <span id="historySearchFieldLabel" class="oj-label">Search in</span>
                                 <div
@@ -229,6 +265,21 @@
                                     ></div>
                                 </div>
                             </div>
+                            <div class="oj-field pinefetch-history-tag-filter">
+                                <label class="oj-label" for="historyTagFilter">Tag</label>
+                                <select id="historyTagFilter" class="oj-select">
+                                    <option value="">All Tags</option>
+                                </select>
+                            </div>
+                            <button
+                                id="historyClearFiltersBtn"
+                                type="button"
+                                class="oj-button oj-button-ghost"
+                                disabled
+                            >
+                                Clear all filters
+                            </button>
+                            <p class="oj-helper">Changes apply immediately.</p>
                         </div>
                         <p class="oj-helper" id="historyHint" hidden>
                             No history yet. Downloaded items will appear here.
@@ -1184,6 +1235,12 @@
                 </section>
 
                 <section
+                    id="tagsView"
+                    class="oj-panel pinefetch-panel pinefetch-tags-view"
+                    aria-labelledby="tagsTitle"
+                    hidden
+                ></section>
+                <section
                     id="historyDetailsView"
                     class="oj-panel pinefetch-panel pinefetch-history-details-view"
                     aria-labelledby="historyDetailsTitle"
@@ -1501,6 +1558,13 @@
                                             hidden
                                         ></pre>
                                     </section>
+                                    <div
+                                        id="historyDetailsTags"
+                                        class="pinefetch-overview-tags"
+                                        role="group"
+                                        aria-label="Saved item tags"
+                                        hidden
+                                    ></div>
                                 </div>
                             </section>
 
@@ -1932,6 +1996,9 @@
                 </button>
                 <button id="historyShowCreatorVideosBtn" class="oj-menu-item" type="button" role="menuitem">
                     Show saved videos by this creator
+                </button>
+                <button id="historyManageTagsBtn" class="oj-menu-item" type="button" role="menuitem">
+                    Manage Tags
                 </button>
                 <button id="historyOpenOcrBtn" class="oj-menu-item" type="button" role="menuitem">Open OCR</button>
             </div>

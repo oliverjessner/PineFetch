@@ -435,6 +435,12 @@ const installUiResponses = ({ fallbackFrame, playlistVideos, keywordFixture }) =
             }
             return result;
         }
+        if (['list_tags', 'get_tag_choices', 'get_history_tags', 'get_history_tags_batch'].includes(command)) {
+            if (command === 'list_tags' || command === 'get_tag_choices')
+                return [...(ui.tagDefinitions || [])].map(tag => ({ ...tag, content_count: 0, account_count: 0 }));
+            if (command === 'get_history_tags') return [];
+            return (args.ids || []).map(id => ({ history_entry_id: id, tags: [] }));
+        }
         if (command === 'get_history_account') {
             if (ui.failAccountRead) throw new Error('Fixture account read failed');
             const entries = historyEntries || (await invoke('get_history', { offset: 0, limit: 100 })).entries;
@@ -1087,6 +1093,10 @@ try {
             assert.equal(await resultCount.isVisible(), false);
             const searchFieldMenu = page.locator('#historySearchFieldMenu');
             const sourceMenu = page.locator('#historySourceMenu');
+            const openHistoryFilters = async () => {
+                if (!(await page.locator('#historyFiltersPopover').evaluate(panel => panel.matches(':popover-open'))))
+                    await page.locator('#historyFiltersBtn').click();
+            };
             await sourceMenu.locator('[data-oj-value="tiktok"]').waitFor({ state: 'attached' });
             assert.equal(await page.locator('#historySearchFieldSelect, #historySourceSelect').count(), 0);
             assert.equal(await page.locator('#historySearchFieldValue').textContent(), 'Title');
@@ -1136,6 +1146,7 @@ try {
                 ['historySearchField', 'title', 'description', 'transcript'],
                 ['historySource', '', 'youtube', 'tiktok'],
             ]) {
+                if (['historySearchField', 'historySource'].includes(prefix)) await openHistoryFilters();
                 const trigger = page.locator(`#${prefix}Trigger`);
                 const menu = page.locator(`#${prefix}Menu`);
                 await trigger.focus();
@@ -1188,6 +1199,7 @@ try {
                 );
             };
             const selectHistoryFilter = async (prefix, value, label, keyboard = false) => {
+                if (['historySearchField', 'historySource'].includes(prefix)) await openHistoryFilters();
                 const trigger = page.locator(`#${prefix}Trigger`);
                 const menu = page.locator(`#${prefix}Menu`);
                 await trigger.click();
@@ -3517,8 +3529,8 @@ try {
             await page.locator('#infoCard').waitFor();
             assert.equal(await page.locator('#urlInput').inputValue(), videos[0].url);
             await page.locator('#viewHistoryBtn').click();
-            await page.locator('#historyAccountHistoryBtn').click();
             await page.locator('#historyView').waitFor();
+            assert(await page.locator('#historyAccountView').isHidden());
 
             // Social Insights load from SQLite on tab open; only a click starts a fetch.
             await openOcr('history-1');

@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 14;
+pub(super) const SCHEMA_VERSION: i64 = 15;
 
 const QUEUE_SQL: &str = r#"
 CREATE TABLE queue_state (
@@ -84,7 +84,14 @@ pub(crate) fn restore_schema11_queue_fixture(conn: &Connection) {
 }
 
 #[cfg(test)]
+pub(crate) fn restore_schema14_tags_fixture(conn: &Connection) {
+    conn.execute_batch("DROP TABLE history_entry_tags; DROP TABLE tags; PRAGMA user_version=14;")
+        .unwrap();
+}
+
+#[cfg(test)]
 pub(crate) fn restore_schema13_creator_fixture(conn: &Connection) {
+    restore_schema14_tags_fixture(conn);
     conn.execute_batch("DROP INDEX idx_history_identity_order; ALTER TABLE history_entries DROP COLUMN creator_source; ALTER TABLE history_entries DROP COLUMN creator_id; DROP TABLE creator_account_insights; PRAGMA user_version=13;").unwrap();
 }
 
@@ -301,6 +308,7 @@ pub(super) enum MigrationPoint {
     Queue,
     HistoryIndexes,
     CreatorIdentities,
+    Tags,
 }
 
 pub(super) fn initialize_with_hook(
@@ -311,6 +319,7 @@ pub(super) fn initialize_with_hook(
         .map_err(|e| format!("SQLite timeout setup failed: {e}"))?;
     // One locale-independent comparison for History and OCR. Cache the folded
     // constant query once per statement; NULL titles/creators are non-matches.
+    crate::tags::register(conn)?;
     conn.create_scalar_function(
         "pinefetch_contains",
         2,
@@ -460,6 +469,13 @@ pub(super) fn initialize_with_hook(
         tx.pragma_update(None, "user_version", 14)
             .map_err(|e| e.to_string())?;
         hook(MigrationPoint::CreatorIdentities)?;
+    }
+    if version < 15 {
+        tx.execute_batch(crate::tags::SCHEMA_SQL)
+            .map_err(|e| format!("SQLite migration 15 failed: {e}"))?;
+        tx.pragma_update(None, "user_version", 15)
+            .map_err(|e| e.to_string())?;
+        hook(MigrationPoint::Tags)?;
     }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
@@ -722,6 +738,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             .execute_batch(crate::creator_identity::SCHEMA_SQL)
             .map_err(|e| e.to_string())?;
     }
+    if version >= 15 {
+        reference
+            .execute_batch(crate::tags::SCHEMA_SQL)
+            .map_err(|e| e.to_string())?;
+    }
     reference
         .execute_batch("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .map_err(|e| e.to_string())?;
@@ -739,6 +760,9 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|e| e.to_string())?;
     let tables: HashSet<&str> = objects.iter().map(|(name, _, _)| name.as_str()).collect();
+    if version >= 15 && (!tables.contains("tags") || !tables.contains("history_entry_tags")) {
+        return Err("Inconsistent schema 15: missing tag tables; database preserved".into());
+    }
     if version >= 14 && !tables.contains("creator_account_insights") {
         return Err(
             "Inconsistent schema 14: missing creator_account_insights; database preserved".into(),

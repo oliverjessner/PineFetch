@@ -1,6 +1,6 @@
 // This bridge exists only in the isolated screenshot browser, never in the app.
 // Titles and thumbnails are cached YouTube oEmbed data; all other values are demos.
-export const installScreenshotBridge = ({ videos, version, ocr = null, social = null, keywords = null }) => {
+export const installScreenshotBridge = ({ videos, version, ocr = null, social = null, keywords = null, tags = [] }) => {
     const listeners = new Map();
     const queue = [];
     let ready = false;
@@ -47,6 +47,84 @@ export const installScreenshotBridge = ({ videos, version, ocr = null, social = 
         file_size_bytes: (120 + index * 24) * 1024 * 1024,
         pinefetch_version: version,
     }));
+    const searchKey = value =>
+        String(value ?? '')
+            .normalize('NFD')
+            .toLowerCase()
+            .replaceAll('ß', 'ss')
+            .normalize('NFC');
+    const compare = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+    const tagDefinitions = tags
+        .map(tag => ({
+            id: tag.id,
+            name: tag.name,
+            description: tag.description,
+            color: tag.color,
+            created_at: tag.created_at,
+            updated_at: tag.updated_at,
+        }))
+        .sort((left, right) => compare(searchKey(left.name), searchKey(right.name)) || compare(left.id, right.id));
+    const tagAssignments = new Map(
+        history.map(entry => [
+            entry.id,
+            new Set(tags.filter(tag => tag.video_urls.includes(entry.url)).map(tag => tag.id)),
+        ])
+    );
+    const tagsFor = id => tagDefinitions.filter(tag => tagAssignments.get(id)?.has(tag.id));
+    const taggedHistory = id => history.filter(entry => tagAssignments.get(entry.id)?.has(id));
+    const tagAccounts = id => {
+        const accounts = new Map();
+        for (const entry of taggedHistory(id)) {
+            if (!entry.uploader?.trim() || !entry.source?.trim()) continue;
+            const verified = Boolean(entry.creator_source && entry.creator_id);
+            const source = verified ? entry.creator_source : entry.source;
+            // Match SQLite: downloads without creator IDs stay entry-scoped.
+            const identity = verified ? entry.creator_id : `entry:${entry.id}`;
+            const key = JSON.stringify([source, identity]);
+            const account = accounts.get(key) || {
+                history_entry_id: entry.id,
+                uploader: entry.uploader,
+                source,
+                identity,
+                content_count: 0,
+                identity_verified: verified,
+                latest_at: entry.completed_at,
+            };
+            account.content_count++;
+            account.latest_at = Math.max(account.latest_at, entry.completed_at);
+            if (entry.id < account.history_entry_id) {
+                account.history_entry_id = entry.id;
+                account.uploader = entry.uploader;
+            }
+            accounts.set(key, account);
+        }
+        return [...accounts.values()]
+            .sort((left, right) => compare(left.source, right.source) || compare(left.identity, right.identity))
+            .map(account => ({
+                history_entry_id: account.history_entry_id,
+                uploader: account.uploader,
+                source: account.source,
+                content_count: account.content_count,
+                identity_verified: account.identity_verified,
+                latest_at: account.latest_at,
+            }));
+    };
+    const tagSummary = id => {
+        const tag = tagDefinitions.find(tag => tag.id === id);
+        if (!tag) throw new Error(`Unknown tag fixture: ${id}`);
+        return { ...tag, content_count: taggedHistory(id).length, account_count: tagAccounts(id).length };
+    };
+    const tagPage = (entries, args) => {
+        const offset = args.cursor ? JSON.parse(args.cursor).offset : args.offset || 0;
+        const limit = args.limit || 20;
+        const end = offset + limit;
+        return structuredClone({
+            entries: entries.slice(offset, end),
+            total_count: entries.length,
+            has_more: end < entries.length,
+            next_cursor: end < entries.length ? JSON.stringify({ offset: end }) : null,
+        });
+    };
     const ocrHistoryId = history.find(entry => entry.url === ocr?.url)?.id;
     const ocrContent = ocr
         ? {
@@ -118,11 +196,35 @@ export const installScreenshotBridge = ({ videos, version, ocr = null, social = 
                             total_count: history.length,
                         };
                     case 'get_tag_choices':
+                        return structuredClone(tagDefinitions);
                     case 'list_tags':
+                        return structuredClone(tagDefinitions.map(tag => tagSummary(tag.id)));
+                    case 'get_tag':
+                        return structuredClone(tagSummary(args.id));
                     case 'get_history_tags':
-                        return [];
+                        return structuredClone(tagsFor(args.id));
                     case 'get_history_tags_batch':
-                        return (args.ids || []).map(id => ({ history_entry_id: id, tags: [] }));
+                        return structuredClone(
+                            (args.ids || []).map(id => ({ history_entry_id: id, tags: tagsFor(id) }))
+                        );
+                    case 'get_tag_content': {
+                        tagSummary(args.id);
+                        const query = searchKey((args.query || '').trim());
+                        return tagPage(
+                            taggedHistory(args.id).filter(entry =>
+                                [entry.title, entry.uploader, entry.url].some(value => searchKey(value).includes(query))
+                            ),
+                            args
+                        );
+                    }
+                    case 'get_tag_accounts': {
+                        tagSummary(args.id);
+                        const query = searchKey((args.query || '').trim());
+                        return tagPage(
+                            tagAccounts(args.id).filter(account => searchKey(account.uploader).includes(query)),
+                            args
+                        );
+                    }
                     case 'get_history_stats':
                         return {
                             video_count: history.length,

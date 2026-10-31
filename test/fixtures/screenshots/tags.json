@@ -1,0 +1,68 @@
+[
+    {
+        "id": "11111111-1111-4111-8111-111111111111",
+        "name": "Research",
+        "description": "Saved references for upcoming technology videos and product comparisons.",
+        "color": "#35C9A5",
+        "created_at": 1789810200000,
+        "updated_at": 1789900200000,
+        "video_urls": [
+            "https://www.youtube.com/watch?v=4mwxAcGQjnI",
+            "https://www.youtube.com/watch?v=7L4gAUMNXcs",
+            "https://www.youtube.com/watch?v=ltPbU0pxsZg",
+            "https://www.youtube.com/watch?v=9cjiHuBgjEY"
+        ]
+    },
+    {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "name": "Handhelds",
+        "description": "Portable consoles, emulation and unusual handheld hardware.",
+        "color": "#60A5FA",
+        "created_at": 1789810200000,
+        "updated_at": 1789900200000,
+        "video_urls": [
+            "https://www.youtube.com/watch?v=4mwxAcGQjnI",
+            "https://www.youtube.com/watch?v=ltPbU0pxsZg",
+            "https://www.youtube.com/watch?v=R3GT-giK0Q8"
+        ]
+    },
+    {
+        "id": "33333333-3333-4333-8333-333333333333",
+        "name": "Nintendo",
+        "description": "Nintendo consoles, accessories and retro gaming ideas.",
+        "color": "#F87171",
+        "created_at": 1789810200000,
+        "updated_at": 1789900200000,
+        "video_urls": [
+            "https://www.youtube.com/watch?v=4mwxAcGQjnI",
+            "https://www.youtube.com/watch?v=7L4gAUMNXcs",
+            "https://www.youtube.com/watch?v=R3GT-giK0Q8"
+        ]
+    },
+    {
+        "id": "44444444-4444-4444-8444-444444444444",
+        "name": "Product reviews",
+        "description": "Hands-on tests of webcams, headsets and other desk accessories.",
+        "color": "#A78BFA",
+        "created_at": 1789810200000,
+        "updated_at": 1789900200000,
+        "video_urls": [
+            "https://www.youtube.com/watch?v=9cjiHuBgjEY",
+            "https://www.youtube.com/watch?v=F5Y73AtPNP4",
+            "https://www.youtube.com/watch?v=B0Zq6IUYuC0"
+        ]
+    },
+    {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "name": "Watch later",
+        "description": "Videos to revisit before planning the next recording session.",
+        "color": "#FBBF24",
+        "created_at": 1789810200000,
+        "updated_at": 1789900200000,
+        "video_urls": [
+            "https://www.youtube.com/watch?v=7L4gAUMNXcs",
+            "https://www.youtube.com/watch?v=R3GT-giK0Q8",
+            "https://www.youtube.com/watch?v=B0Zq6IUYuC0"
+        ]
+    }
+]

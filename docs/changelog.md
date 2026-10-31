@@ -5,6 +5,7 @@
 - Placed Video Details tags in a full-width Overview row below metadata and descriptions, leaving only title, platform and thumbnail in the header.
 - Added non-modal quick tagging and Quick Create with keyboard navigation, responsive popovers and protection against late replies.
 - Added paginated tag Content and Accounts views with search and return navigation.
+- Added reproducible offline screenshots for the Tags overview, tagged content and derived accounts, with example tags and assignments.
 - Added tag deletion confirmations that remove assignments while preserving saved media and text.
 - Unified History's Search in, Source and Tag controls in one Filters popover with an active count and Clear all filters.
 - Refined History with compact cards, truncated metadata, tag chips, separate thumbnails, top-right removal buttons and a narrower statistics sidebar.

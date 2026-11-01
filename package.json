@@ -79,7 +79,7 @@
     "homepage": "https://oliverjessner.at/pinefetch",
     "dependencies": {
         "@puppeteer/browsers": "3.2.6",
-        "fetchary": "2.0.7",
+        "fetchary": "2.1.0",
         "oj-designsystem": "0.3.0",
         "puppeteer-core": "25.16.0"
     }

@@ -117,7 +117,7 @@ PineFetch history transcription --choose
 
 Without an argument, lists the latest **25 entries with a saved transcription**, newest first, using the same title, date and link columns as `history list`. Entries without a saved transcription are excluded before the limit is applied. The displayed numbers are their global history positions, so gaps are expected when other entries have no transcription.
 
-Add `--choose` to select a displayed history number and print its complete saved transcript. The selection stays tied to the displayed entry even if another download completes while you choose. Enter `q` or end input to cancel without printing a transcript.
+Add `--choose` to open a keyboard menu like NO-BULLSHIT-RSS. Move the highlighted selection with **↑/↓** or **j/k**, then press **Enter** to print the complete saved transcript. **Home/End** jump to the first or last entry; the list scrolls with the selection. **Esc**, **q** or **Ctrl+C** cancel without printing a transcript. The selection stays tied to the displayed entry even if another download completes while you choose. The terminal mode and cursor are restored when the menu closes.
 
 The chooser requires interactive standard input and standard error. Its list and prompt go to stderr; only the exact transcript text goes to stdout, so you can save it directly:
 

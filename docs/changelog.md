@@ -1,8 +1,9 @@
-# 3.0.1
+# 3.0.2
 
 - Added readable upload dates and history creation times to CLI history.
 - Added an optional history list count, JSON metadata reads by history number, and saved transcription output through the read-only CLI.
 - Added a list of the latest 25 saved transcriptions using global history numbers and an interactive chooser that keeps selections stable while downloads complete and prints the complete transcript.
+- Matched NO-BULLSHIT-RSS's chooser with arrow-key navigation, a scrolling selection, Enter to open, and terminal restoration on selection or cancellation.
 
 # 3.0.0
 

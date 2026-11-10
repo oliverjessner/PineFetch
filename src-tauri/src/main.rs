@@ -11,6 +11,7 @@ mod application_failure_tests;
 mod architecture_tests;
 mod browser_import;
 mod cli;
+mod cli_terminal;
 mod cli_transcription_choice;
 mod commands;
 mod completion;

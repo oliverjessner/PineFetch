@@ -933,13 +933,12 @@ fn decode_transcription_choices(response: &str) -> Result<Vec<Choice>, String> {
     serde_json::from_str(response).map_err(|e| format!("Invalid transcription list response: {e}"))
 }
 
-fn choose_transcription<R: BufRead, W: Write>(
-    input: &mut R,
-    output: &mut W,
+fn choose_transcription(
     mut request: impl FnMut(CliCommand) -> Result<String, String>,
+    select: impl FnOnce(&[Choice]) -> Result<Option<String>, String>,
 ) -> Result<String, String> {
     let choices = decode_transcription_choices(&request(CliCommand::HistoryTranscriptionList)?)?;
-    match crate::cli_transcription_choice::choose(&choices, input, output)? {
+    match select(&choices)? {
         Some(id) => request(CliCommand::HistoryTranscriptionById { id }),
         None => Ok(String::new()),
     }
@@ -960,9 +959,20 @@ pub(crate) fn run(command: CliCommand, config: &tauri::Config) -> Result<String,
             if !stdin.is_terminal() || !stderr.is_terminal() {
                 return Err("--choose requires an interactive terminal for input and prompts. Use history transcription <NUMBER> for non-interactive output.".into());
             }
-            choose_transcription(&mut stdin.lock(), &mut stderr.lock(), |command| {
-                send_command(&path, command, launch_desktop)
-            })
+            choose_transcription(
+                |command| send_command(&path, command, launch_desktop),
+                |choices| {
+                    let mut output = stderr.lock();
+                    if choices.is_empty() {
+                        writeln!(output, "No saved transcriptions.")
+                            .map_err(|error| error.to_string())?;
+                        return Ok(None);
+                    }
+                    let mut terminal = crate::cli_terminal::Terminal::enter()
+                        .map_err(|error| format!("Could not prepare terminal: {error}"))?;
+                    crate::cli_transcription_choice::choose(choices, &mut terminal, &mut output)
+                },
+            )
         }
         command => send_command(&path, command, launch_desktop),
     }
@@ -1021,6 +1031,30 @@ mod tests {
             },
             db,
         )
+    }
+
+    fn choose_with_keys(
+        keys: &[u8],
+        request: impl FnMut(CliCommand) -> Result<String, String>,
+    ) -> Result<String, String> {
+        struct Input<'a>(&'a [u8]);
+        impl crate::cli_transcription_choice::KeyInput for Input<'_> {
+            fn read_byte(
+                &mut self,
+                _timeout: Option<std::time::Duration>,
+            ) -> std::io::Result<Option<u8>> {
+                let Some((byte, rest)) = self.0.split_first() else {
+                    return Ok(None);
+                };
+                let byte = *byte;
+                self.0 = rest;
+                Ok(Some(byte))
+            }
+        }
+        let mut input = Input(keys);
+        super::choose_transcription(request, |choices| {
+            crate::cli_transcription_choice::choose(choices, &mut input, &mut Vec::new())
+        })
     }
 
     #[test]
@@ -1535,36 +1569,32 @@ mod tests {
         );
         let serialized = serde_json::to_string(&snapshot).unwrap();
         let mut requests = Vec::new();
-        let selected = super::choose_transcription(
-            &mut std::io::Cursor::new(b"51\n"),
-            &mut Vec::new(),
-            |command| {
-                requests.push(command.clone());
-                match command {
-                    CliCommand::HistoryTranscriptionList => {
-                        // A new transcript arrives after this displayed list
-                        // was captured. The chosen ID must stay unchanged.
-                        state
-                            .db
-                            .lock()
-                            .unwrap()
-                            .execute_batch(
-                                "INSERT INTO history_entries(id,url,title,created_at,completed_at) VALUES ('newest','https://example.com/newest','Newest',0,100);
+        let selected = choose_with_keys(b"\x1b[B\r", |command| {
+            requests.push(command.clone());
+            match command {
+                CliCommand::HistoryTranscriptionList => {
+                    // A new transcript arrives after this displayed list
+                    // was captured. The chosen ID must stay unchanged.
+                    state
+                        .db
+                        .lock()
+                        .unwrap()
+                        .execute_batch(
+                            "INSERT INTO history_entries(id,url,title,created_at,completed_at) VALUES ('newest','https://example.com/newest','Newest',0,100);
                              INSERT INTO transcriptions(id,history_entry_id,text,type) VALUES ('newest','newest','New transcription','text');
                              PRAGMA query_only = ON;",
-                            )
-                            .unwrap();
-                        Ok(serialized.clone())
-                    }
-                    CliCommand::HistoryTranscriptionById { id } => {
-                        super::transcription_by_id(&state, &id)
-                    }
-                    _ => panic!("Unexpected chooser request"),
+                        )
+                        .unwrap();
+                    Ok(serialized.clone())
                 }
-            },
-        )
+                CliCommand::HistoryTranscriptionById { id } => {
+                    super::transcription_by_id(&state, &id)
+                }
+                _ => panic!("Unexpected chooser request"),
+            }
+        })
         .unwrap();
-        assert_eq!(selected, "Transcription 29");
+        assert_eq!(selected, "Transcription 28");
         assert_eq!(
             super::transcription_choices(&state).unwrap()[0].id,
             "newest"
@@ -1578,7 +1608,7 @@ mod tests {
             vec![
                 CliCommand::HistoryTranscriptionList,
                 CliCommand::HistoryTranscriptionById {
-                    id: "history-029".into()
+                    id: "history-028".into()
                 }
             ]
         );
@@ -1599,30 +1629,22 @@ mod tests {
         .unwrap();
         for input in ["q\n", ""] {
             let mut calls = 0;
-            let result = super::choose_transcription(
-                &mut std::io::Cursor::new(input.as_bytes()),
-                &mut Vec::new(),
-                |command| {
-                    calls += 1;
-                    assert_eq!(command, CliCommand::HistoryTranscriptionList);
-                    Ok(response.clone())
-                },
-            )
+            let result = choose_with_keys(input.as_bytes(), |command| {
+                calls += 1;
+                assert_eq!(command, CliCommand::HistoryTranscriptionList);
+                Ok(response.clone())
+            })
             .unwrap();
             assert!(result.is_empty());
             assert_eq!(calls, 1);
         }
-        let error = super::choose_transcription(
-            &mut std::io::Cursor::new(b"1\n"),
-            &mut Vec::new(),
-            |command| match command {
-                CliCommand::HistoryTranscriptionList => Ok(response.clone()),
-                CliCommand::HistoryTranscriptionById { id } => {
-                    super::transcription_by_id(&state, &id)
-                }
-                _ => panic!("Unexpected chooser request"),
-            },
-        )
+        let error = choose_with_keys(b"\r", |command| match command {
+            CliCommand::HistoryTranscriptionList => Ok(response.clone()),
+            CliCommand::HistoryTranscriptionById { id } => {
+                super::transcription_by_id(&state, &id)
+            }
+            _ => panic!("Unexpected chooser request"),
+        })
         .unwrap_err();
         assert!(error.contains("no longer available"));
     }

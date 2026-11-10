@@ -213,13 +213,23 @@ mod platform {
                 assert_eq!(raw.c_cc[libc::VTIME], 0);
                 Err(io::Error::other("synthetic chooser error"))
             })();
-            assert!(result.is_err());
+            assert_eq!(result.unwrap_err().to_string(), "synthetic chooser error");
             let restored = attributes(&slave);
             assert_eq!(restored.c_iflag, original.c_iflag);
             assert_eq!(restored.c_oflag, original.c_oflag);
             assert_eq!(restored.c_cflag, original.c_cflag);
+            // macOS sets PENDIN when restoring ICANON to reprocess pending input.
+            // Compare every setting except this kernel-managed state bit.
+            #[cfg(target_os = "macos")]
+            assert_eq!(
+                restored.c_lflag & !libc::PENDIN,
+                original.c_lflag & !libc::PENDIN
+            );
+            #[cfg(target_os = "linux")]
             assert_eq!(restored.c_lflag, original.c_lflag);
             assert_eq!(restored.c_cc, original.c_cc);
+            assert_eq!(restored.c_ispeed, original.c_ispeed);
+            assert_eq!(restored.c_ospeed, original.c_ospeed);
         }
 
         #[test]

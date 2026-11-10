@@ -65,7 +65,10 @@ for (const tag of tags) {
     assert(Array.isArray(tag.video_urls), 'Screenshot tags need a video_urls assignment list.');
     assert.equal(new Set(tag.video_urls).size, tag.video_urls.length, 'Screenshot tag assignments must be unique.');
     for (const url of tag.video_urls) {
-        assert(videos.some(video => video.url === url), `Missing tagged screenshot video: ${url}`);
+        assert(
+            videos.some(video => video.url === url),
+            `Missing tagged screenshot video: ${url}`
+        );
     }
 }
 const primaryTag = tags[0];
@@ -256,10 +259,10 @@ try {
     for (const tag of tags) {
         const row = tagsView.locator(`[data-tag-id="${tag.id}"]`);
         assert.equal(await row.locator('.pinefetch-tag-definition-name').textContent(), tag.name);
-        assert.deepEqual(
-            await row.locator('.pinefetch-tag-definition-counts span').allTextContents(),
-            [`${tag.video_urls.length} saved items`, `${tag.video_urls.length} accounts`]
-        );
+        assert.deepEqual(await row.locator('.pinefetch-tag-definition-counts span').allTextContents(), [
+            `${tag.video_urls.length} saved items`,
+            `${tag.video_urls.length} accounts`,
+        ]);
     }
     await capture('tags.webp');
 

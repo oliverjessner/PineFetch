@@ -165,11 +165,11 @@ PineFetch --version
 
 The help header and `PineFetch --version` show the installed PineFetch version. `PineFetch -h` and `PineFetch help` also display help; `PineFetch -V` and `PineFetch version` also display the version. These commands and invalid commands do not launch the desktop app.
 
-| Exit code | Meaning                                                                                               |
-| --------- | ----------------------------------------------------------------------------------------------------- |
-| `0`       | Command completed successfully.                                                                       |
+| Exit code | Meaning                                                                                                  |
+| --------- | -------------------------------------------------------------------------------------------------------- |
+| `0`       | Command completed successfully.                                                                          |
 | `1`       | Execution failed, such as an unavailable app, nonexistent queue/history entry, or missing transcription. |
-| `2`       | Invalid command or arguments, including a count or entry number that is not a positive integer.         |
+| `2`       | Invalid command or arguments, including a count or entry number that is not a positive integer.          |
 
 Successful output goes to stdout; errors go to stderr. The interactive transcription chooser also sends its list and prompt to stderr, keeping stdout available for the transcript alone. Cancellation exits successfully without transcript output. Attempting `--choose` without interactive stdin and stderr returns an error with exit code `1`.
 

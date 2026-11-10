@@ -165,9 +165,7 @@ mod tests {
         );
         let output = String::from_utf8(output).unwrap();
         assert!(output.starts_with(&format_choices(&choices())));
-        assert!(output.ends_with(
-            "Choose a transcription by its history number, or q to cancel: "
-        ));
+        assert!(output.ends_with("Choose a transcription by its history number, or q to cancel: "));
     }
 
     #[test]

@@ -94,18 +94,29 @@ fn default_history_limit() -> u32 {
 pub(crate) enum CliCommand {
     Help,
     Version,
-    QueueAdd { link: String, preset: String },
+    QueueAdd {
+        link: String,
+        preset: String,
+    },
     QueueList,
-    QueueRemove { number: usize },
+    QueueRemove {
+        number: usize,
+    },
     HistoryList {
         #[serde(default = "default_history_limit")]
         limit: u32,
     },
-    HistoryRead { number: u32 },
+    HistoryRead {
+        number: u32,
+    },
     HistoryTranscriptionList,
     HistoryTranscriptionChoose,
-    HistoryTranscriptionById { id: String },
-    HistoryTranscription { number: u32 },
+    HistoryTranscriptionById {
+        id: String,
+    },
+    HistoryTranscription {
+        number: u32,
+    },
     Stats,
 }
 
@@ -172,7 +183,12 @@ fn history_number(raw: &str, label: &str) -> Result<u32, String> {
         .then(|| raw.parse::<u32>().ok())
         .flatten()
         .filter(|number| *number > 0)
-        .ok_or_else(|| format!("History {label} must be a positive integer up to {}", u32::MAX))
+        .ok_or_else(|| {
+            format!(
+                "History {label} must be a positive integer up to {}",
+                u32::MAX
+            )
+        })
 }
 
 fn validate_link(link: &str) -> Result<(), String> {
@@ -304,7 +320,10 @@ fn history_seconds(milliseconds: u64) -> Option<i64> {
         .filter(|value| milliseconds > 0 && *value <= MAX_UNIX_SECONDS)
 }
 
-fn history_dates(conn: &rusqlite::Connection, entry: &HistoryEntry) -> Result<HistoryDates, String> {
+fn history_dates(
+    conn: &rusqlite::Connection,
+    entry: &HistoryEntry,
+) -> Result<HistoryDates, String> {
     let upload_seconds = entry
         .timestamp
         .filter(|value| (1..=MAX_UNIX_SECONDS).contains(value));
@@ -361,7 +380,9 @@ fn list_history(state: &AppState, limit: u32) -> Result<String, String> {
 }
 
 fn history_id(state: &AppState, number: u32) -> Result<String, String> {
-    let offset = number.checked_sub(1).ok_or("History numbering starts at 1")?;
+    let offset = number
+        .checked_sub(1)
+        .ok_or("History numbering starts at 1")?;
     let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
     conn.query_row(
         "SELECT id FROM history_entries ORDER BY COALESCE(completed_at,created_at) DESC,created_at DESC,id DESC LIMIT 1 OFFSET ?1",
@@ -423,7 +444,10 @@ fn transcription_choices(state: &AppState) -> Result<Vec<Choice>, String> {
         .map_err(|e| format!("Transcription list failed: {e}"))?;
     let entries = statement
         .query_map([], |row| {
-            Ok((row.get::<_, u32>(18)?, crate::history::map_history_entry(row)?))
+            Ok((
+                row.get::<_, u32>(18)?,
+                crate::history::map_history_entry(row)?,
+            ))
         })
         .map_err(|e| format!("Transcription list failed: {e}"))?
         .collect::<rusqlite::Result<Vec<_>>>()
@@ -925,7 +949,8 @@ pub(crate) fn run(command: CliCommand, config: &tauri::Config) -> Result<String,
     let path = endpoint_path(config)?;
     match command {
         CliCommand::HistoryTranscriptionList => {
-            let response = send_command(&path, CliCommand::HistoryTranscriptionList, launch_desktop)?;
+            let response =
+                send_command(&path, CliCommand::HistoryTranscriptionList, launch_desktop)?;
             let choices = decode_transcription_choices(&response)?;
             Ok(crate::cli_transcription_choice::format_choices(&choices))
         }
@@ -1540,7 +1565,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(selected, "Transcription 29");
-        assert_eq!(super::transcription_choices(&state).unwrap()[0].id, "newest");
+        assert_eq!(
+            super::transcription_choices(&state).unwrap()[0].id,
+            "newest"
+        );
         assert_eq!(
             super::history_transcription(&state, 1).unwrap(),
             "New transcription"

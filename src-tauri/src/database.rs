@@ -96,8 +96,10 @@ pub(crate) fn restore_schema14_tags_fixture(conn: &Connection) {
 
 #[cfg(test)]
 pub(crate) fn restore_schema15_history_preset_fixture(conn: &Connection) {
-    conn.execute_batch("ALTER TABLE history_entries DROP COLUMN preset_key; PRAGMA user_version=15;")
-        .unwrap();
+    conn.execute_batch(
+        "ALTER TABLE history_entries DROP COLUMN preset_key; PRAGMA user_version=15;",
+    )
+    .unwrap();
 }
 
 #[cfg(test)]

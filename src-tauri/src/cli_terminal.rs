@@ -118,9 +118,8 @@ mod platform {
                 let mut byte = 0_u8;
                 // Read directly, so a buffered stdin reader cannot hide escape-sequence bytes
                 // from the next readiness check.
-                let count = unsafe {
-                    libc::read(self.input_fd, std::ptr::from_mut(&mut byte).cast(), 1)
-                };
+                let count =
+                    unsafe { libc::read(self.input_fd, std::ptr::from_mut(&mut byte).cast(), 1) };
                 if count == 1 {
                     return Ok(Some(byte));
                 }
@@ -139,9 +138,8 @@ mod platform {
 
         fn dimensions(&self) -> (usize, usize) {
             let mut size = MaybeUninit::<libc::winsize>::zeroed();
-            let result = unsafe {
-                libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, size.as_mut_ptr())
-            };
+            let result =
+                unsafe { libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, size.as_mut_ptr()) };
             if result != 0 {
                 return super::DEFAULT_DIMENSIONS;
             }
@@ -151,7 +149,11 @@ mod platform {
             let columns = usize::from(size.ws_col);
             (
                 if rows == 0 { default_rows } else { rows },
-                if columns == 0 { default_columns } else { columns },
+                if columns == 0 {
+                    default_columns
+                } else {
+                    columns
+                },
             )
         }
     }
@@ -366,10 +368,9 @@ mod platform {
             if unsafe { SetConsoleMode(output, output_mode) } == 0 {
                 return Err(io::Error::last_os_error());
             }
-            let input_mode = (original_input
-                | ENABLE_VIRTUAL_TERMINAL_INPUT
-                | ENABLE_EXTENDED_FLAGS)
-                & !DISABLED_INPUT_FLAGS;
+            let input_mode =
+                (original_input | ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_EXTENDED_FLAGS)
+                    & !DISABLED_INPUT_FLAGS;
             if unsafe { SetConsoleMode(input, input_mode) } == 0 {
                 let error = io::Error::last_os_error();
                 unsafe {

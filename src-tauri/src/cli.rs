@@ -1640,9 +1640,7 @@ mod tests {
         }
         let error = choose_with_keys(b"\r", |command| match command {
             CliCommand::HistoryTranscriptionList => Ok(response.clone()),
-            CliCommand::HistoryTranscriptionById { id } => {
-                super::transcription_by_id(&state, &id)
-            }
+            CliCommand::HistoryTranscriptionById { id } => super::transcription_by_id(&state, &id),
             _ => panic!("Unexpected chooser request"),
         })
         .unwrap_err();

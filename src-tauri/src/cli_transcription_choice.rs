@@ -395,7 +395,10 @@ mod tests {
             Some("stable-history-b".into())
         );
         assert_eq!(
-            String::from_utf8(output).unwrap().matches("Choose a transcription").count(),
+            String::from_utf8(output)
+                .unwrap()
+                .matches("Choose a transcription")
+                .count(),
             1
         );
     }
@@ -403,7 +406,10 @@ mod tests {
     #[test]
     fn escape_suffix_reads_are_timed_and_unknown_sequences_are_bounded() {
         let mut input = MockKeyInput::new(b"\x1b");
-        assert_eq!(choose(&choices(), &mut input, &mut Vec::new()).unwrap(), None);
+        assert_eq!(
+            choose(&choices(), &mut input, &mut Vec::new()).unwrap(),
+            None
+        );
         assert_eq!(input.timeouts, vec![None, Some(ESCAPE_TIMEOUT)]);
 
         let mut bytes = b"\x1b[".to_vec();
@@ -415,14 +421,26 @@ mod tests {
             Some("stable-history-b".into())
         );
         assert_eq!(
-            input.timeouts.iter().filter(|timeout| timeout.is_some()).count(),
+            input
+                .timeouts
+                .iter()
+                .filter(|timeout| timeout.is_some())
+                .count(),
             super::MAX_ESCAPE_BYTES + 1
         );
     }
 
     #[test]
     fn cancellation_and_eof_restore_the_cursor_without_selecting() {
-        for keys in [b"q".as_slice(), b"Q", b"\x03", b"\x04", b"\x1b", b"", b"\x1b["] {
+        for keys in [
+            b"q".as_slice(),
+            b"Q",
+            b"\x03",
+            b"\x04",
+            b"\x1b",
+            b"",
+            b"\x1b[",
+        ] {
             let mut output = Vec::new();
             assert_eq!(
                 choose(&choices(), &mut MockKeyInput::new(keys), &mut output).unwrap(),

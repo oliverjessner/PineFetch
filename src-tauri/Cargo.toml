@@ -1,6 +1,6 @@
 [package]
 name = "pinefetch"
-version = "3.0.0"
+version = "3.0.1"
 description = "Local yt-dlp desktop UI"
 authors = ["Oliver Jessner"]
 license = "MIT"

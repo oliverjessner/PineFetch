@@ -1,24 +1,30 @@
 //! Terminal commands and a private local connection to the desktop process.
 //! History is deliberately exposed only through read operations.
+use crate::cli_transcription_choice::Choice;
 use crate::download_rules::request_from_preset;
 use crate::events::emit_queue;
 use crate::events::emit_state;
+use crate::history::get_history_details_from_db;
 use crate::history::get_history_stats_from_db;
+use crate::history::get_history_transcript_from_db;
 use crate::history::list_history_page_from_db;
 use crate::models::DownloadJob;
 use crate::models::DownloadRequest;
 use crate::models::DownloadState;
 use crate::models::DownloadStateEvent;
+use crate::models::HistoryEntry;
 use crate::models::HistoryStats;
 use crate::presets::download_preset_for_key;
 use crate::state::AppState;
 use crate::url_rules::validate_download_url;
 use crate::worker::enqueue_download_request;
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::IsTerminal;
 use std::io::Read;
 use std::io::Write;
 use std::net::Ipv4Addr;
@@ -53,7 +59,11 @@ Usage:
   PineFetch queue add --link <URL> [--preset <PRESET>]
   PineFetch queue list
   PineFetch queue remove <NUMBER>
-  PineFetch history list
+  PineFetch history list [COUNT]
+  PineFetch history read <NUMBER>
+  PineFetch history transcription
+  PineFetch history transcription <NUMBER>
+  PineFetch history transcription --choose
   PineFetch stats
   PineFetch --help
   PineFetch --version
@@ -63,11 +73,21 @@ Presets: best (default), max, mp3, opus, text, 'text with timestamps'
 PineFetch opens automatically when needed. Downloads follow the app's
 saved settings and auto-start mode. Queue numbers are one-based and refer
 to waiting downloads at the time the command runs, excluding active jobs.
-History lists the latest 25 entries and is read-only.
+History lists the latest 25 entries by default and is read-only.
+History numbers start at 1, newest first, and can change as history changes.
+Transcription lists show the latest 25 saved transcripts; --choose selects one.
 "
 );
 const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
+const MAX_RESPONSE_BYTES: u64 = 128 * 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_UNIX_SECONDS: i64 = 253_402_300_799;
+const DEFAULT_HISTORY_LIMIT: u32 = 25;
+
+fn default_history_limit() -> u32 {
+    DEFAULT_HISTORY_LIMIT
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
@@ -77,7 +97,15 @@ pub(crate) enum CliCommand {
     QueueAdd { link: String, preset: String },
     QueueList,
     QueueRemove { number: usize },
-    HistoryList,
+    HistoryList {
+        #[serde(default = "default_history_limit")]
+        limit: u32,
+    },
+    HistoryRead { number: u32 },
+    HistoryTranscriptionList,
+    HistoryTranscriptionChoose,
+    HistoryTranscriptionById { id: String },
+    HistoryTranscription { number: u32 },
     Stats,
 }
 
@@ -88,7 +116,22 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<CliCommand>, String> {
         ["--help" | "-h" | "help"] => Ok(Some(CliCommand::Help)),
         ["--version" | "-V" | "version"] => Ok(Some(CliCommand::Version)),
         ["queue", "list"] => Ok(Some(CliCommand::QueueList)),
-        ["history", "list"] => Ok(Some(CliCommand::HistoryList)),
+        ["history", "list"] => Ok(Some(CliCommand::HistoryList {
+            limit: DEFAULT_HISTORY_LIMIT,
+        })),
+        ["history", "list", count] => Ok(Some(CliCommand::HistoryList {
+            limit: history_number(count, "count")?,
+        })),
+        ["history", "read", number] => Ok(Some(CliCommand::HistoryRead {
+            number: history_number(number, "number")?,
+        })),
+        ["history", "transcription"] => Ok(Some(CliCommand::HistoryTranscriptionList)),
+        ["history", "transcription", "--choose"] => {
+            Ok(Some(CliCommand::HistoryTranscriptionChoose))
+        }
+        ["history", "transcription", number] => Ok(Some(CliCommand::HistoryTranscription {
+            number: history_number(number, "number")?,
+        })),
         ["stats"] => Ok(Some(CliCommand::Stats)),
         ["queue", "remove", number] => {
             let number = number
@@ -121,6 +164,15 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<CliCommand>, String> {
         }
         _ => Err("Unknown command. Run PineFetch --help. History is read-only.".into()),
     }
+}
+
+fn history_number(raw: &str, label: &str) -> Result<u32, String> {
+    raw.bytes()
+        .all(|byte| byte.is_ascii_digit())
+        .then(|| raw.parse::<u32>().ok())
+        .flatten()
+        .filter(|number| *number > 0)
+        .ok_or_else(|| format!("History {label} must be a positive integer up to {}", u32::MAX))
 }
 
 fn validate_link(link: &str) -> Result<(), String> {
@@ -179,6 +231,41 @@ fn job_preset(job: &DownloadJob) -> &str {
     }
 }
 
+fn history_upload_date(value: Option<&str>) -> Option<String> {
+    let raw = value?.trim();
+    let (year, month, day) = if raw.len() == 8 && raw.bytes().all(|b| b.is_ascii_digit()) {
+        (&raw[..4], &raw[4..6], &raw[6..])
+    } else if raw.len() == 10
+        && raw.bytes().enumerate().all(|(i, b)| {
+            if i == 4 || i == 7 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        })
+    {
+        (&raw[..4], &raw[5..7], &raw[8..])
+    } else {
+        return None;
+    };
+    let year: u16 = year.parse().ok()?;
+    let month: u8 = month.parse().ok()?;
+    let day: u8 = day.parse().ok()?;
+    let leap_year =
+        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let days = match month {
+        2 if leap_year => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return None,
+    };
+    if year == 0 || day == 0 || day > days {
+        return None;
+    }
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
 fn list_queue(state: &AppState) -> Result<String, String> {
     let data = state.queue.data.lock().map_err(|_| "Queue lock poisoned")?;
     if data.pending.is_empty() && data.interrupted.is_empty() {
@@ -204,26 +291,167 @@ fn list_queue(state: &AppState) -> Result<String, String> {
     Ok(output)
 }
 
-fn list_history(state: &AppState) -> Result<String, String> {
-    let page = list_history_page_from_db(&state.db, 25, 0)?;
+#[derive(Serialize)]
+struct HistoryDates {
+    upload_date: Option<String>,
+    created_at: Option<String>,
+    completed_at: Option<String>,
+}
+
+fn history_seconds(milliseconds: u64) -> Option<i64> {
+    i64::try_from(milliseconds / 1000)
+        .ok()
+        .filter(|value| milliseconds > 0 && *value <= MAX_UNIX_SECONDS)
+}
+
+fn history_dates(conn: &rusqlite::Connection, entry: &HistoryEntry) -> Result<HistoryDates, String> {
+    let upload_seconds = entry
+        .timestamp
+        .filter(|value| (1..=MAX_UNIX_SECONDS).contains(value));
+    let mut statement = conn
+        .prepare_cached("SELECT strftime('%Y-%m-%d %H:%M:%S', ?1, 'unixepoch', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', ?2, 'unixepoch', 'localtime'), strftime('%Y-%m-%d %H:%M:%S', ?3, 'unixepoch', 'localtime')")
+        .map_err(|e| format!("History date formatting failed: {e}"))?;
+    statement
+        .query_row(
+            rusqlite::params![
+                upload_seconds,
+                history_seconds(entry.created_at),
+                entry.completed_at.and_then(history_seconds)
+            ],
+            |row| {
+                let uploaded: Option<String> = row.get(0)?;
+                Ok(HistoryDates {
+                    upload_date: uploaded
+                        .or_else(|| history_upload_date(entry.upload_date.as_deref())),
+                    created_at: row.get(1)?,
+                    completed_at: row.get(2)?,
+                })
+            },
+        )
+        .map_err(|e| format!("History date formatting failed: {e}"))
+}
+
+fn list_history(state: &AppState, limit: u32) -> Result<String, String> {
+    if limit == 0 {
+        return Err("History count must be greater than zero".into());
+    }
+    let page = list_history_page_from_db(&state.db, limit, 0)?;
     if page.entries.is_empty() {
         return Ok("History is empty.".into());
     }
-    let mut output = String::from("#\tTITLE\tLINK");
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let mut output = String::from("#\tTITLE\tUPLOAD_DATE\tCREATED_AT\tLINK");
     for (index, entry) in page.entries.iter().enumerate() {
         let title = entry
             .title
             .as_deref()
             .or(entry.filename.as_deref())
             .unwrap_or("-");
+        let dates = history_dates(&conn, entry)?;
         output.push_str(&format!(
-            "\n{}\t{}\t{}",
+            "\n{}\t{}\t{}\t{}\t{}",
             index + 1,
             terminal_text(title),
+            dates.upload_date.as_deref().unwrap_or("—"),
+            dates.created_at.as_deref().unwrap_or("—"),
             terminal_text(&entry.url)
         ));
     }
     Ok(output)
+}
+
+fn history_id(state: &AppState, number: u32) -> Result<String, String> {
+    let offset = number.checked_sub(1).ok_or("History numbering starts at 1")?;
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    conn.query_row(
+        "SELECT id FROM history_entries ORDER BY COALESCE(completed_at,created_at) DESC,created_at DESC,id DESC LIMIT 1 OFFSET ?1",
+        [offset],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|e| format!("History read failed: {e}"))?
+    .ok_or_else(|| format!("History entry {number} does not exist"))
+}
+
+fn read_history(state: &AppState, number: u32) -> Result<String, String> {
+    let id = history_id(state, number)?;
+    let details = get_history_details_from_db(&state.db, &id)?
+        .ok_or_else(|| format!("History entry {number} is no longer available"))?;
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let dates = history_dates(&conn, &details.entry)?;
+    let (creator_source, creator_id): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT creator_source,creator_id FROM history_entries WHERE id=?1",
+            [&id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| format!("History read failed: {e}"))?;
+    drop(conn);
+    let tags = crate::tags::batch(&state.db, std::slice::from_ref(&id))?
+        .pop()
+        .map(|entry| entry.tags)
+        .unwrap_or_default();
+    let mut data = serde_json::to_value(details).map_err(|e| e.to_string())?;
+    data["number"] = serde_json::json!(number);
+    data["entry"]["creator_source"] = serde_json::json!(creator_source);
+    data["entry"]["creator_id"] = serde_json::json!(creator_id);
+    data["dates"] = serde_json::to_value(dates).map_err(|e| e.to_string())?;
+    data["tags"] = serde_json::to_value(tags).map_err(|e| e.to_string())?;
+    serde_json::to_string_pretty(&data).map_err(|e| format!("History formatting failed: {e}"))
+}
+
+fn history_transcription(state: &AppState, number: u32) -> Result<String, String> {
+    let id = history_id(state, number)?;
+    get_history_transcript_from_db(&state.db, &id)?
+        .map(|transcript| transcript.text)
+        .ok_or_else(|| format!("No transcription saved for history entry {number}"))
+}
+
+fn transcription_choices(state: &AppState) -> Result<Vec<Choice>, String> {
+    let conn = state.db.lock().map_err(|_| "SQLite lock poisoned")?;
+    let mut statement = conn
+        .prepare(
+            "WITH ranked_history AS (
+                SELECT id,ROW_NUMBER() OVER (ORDER BY COALESCE(completed_at,created_at) DESC,created_at DESC,id DESC) AS history_number
+                FROM history_entries
+             )
+             SELECT history.id,history.url,history.title,history.uploader,history.filename,history.thumbnail,history.upload_date,history.timestamp,history.duration_seconds,history.file_size_bytes,history.sha256,history.medium,history.source,history.platform,history.output_path,history.pinefetch_version,history.created_at,history.completed_at,ranked.history_number
+             FROM ranked_history AS ranked JOIN history_entries AS history ON history.id=ranked.id
+             JOIN transcriptions ON transcriptions.history_entry_id=history.id
+             ORDER BY ranked.history_number LIMIT 25",
+        )
+        .map_err(|e| format!("Transcription list failed: {e}"))?;
+    let entries = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, u32>(18)?, crate::history::map_history_entry(row)?))
+        })
+        .map_err(|e| format!("Transcription list failed: {e}"))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| format!("Transcription list failed: {e}"))?;
+    drop(statement);
+    entries
+        .into_iter()
+        .map(|(number, entry)| {
+            let dates = history_dates(&conn, &entry)?;
+            Ok(Choice {
+                number,
+                title: entry
+                    .title
+                    .or(entry.filename)
+                    .unwrap_or_else(|| entry.url.clone()),
+                id: entry.id,
+                url: entry.url,
+                upload_date: dates.upload_date,
+                created_at: dates.created_at,
+            })
+        })
+        .collect()
+}
+
+fn transcription_by_id(state: &AppState, id: &str) -> Result<String, String> {
+    get_history_transcript_from_db(&state.db, id)?
+        .map(|transcript| transcript.text)
+        .ok_or_else(|| "The selected transcription is no longer available".into())
 }
 
 fn format_size(bytes: u64) -> String {
@@ -309,7 +537,16 @@ fn execute(app: &AppHandle, command: CliCommand) -> Result<String, String> {
                 terminal_text(&job.url)
             ))
         }
-        CliCommand::HistoryList => list_history(&state),
+        CliCommand::HistoryList { limit } => list_history(&state, limit),
+        CliCommand::HistoryRead { number } => read_history(&state, number),
+        CliCommand::HistoryTranscriptionList => {
+            serde_json::to_string(&transcription_choices(&state)?).map_err(|e| e.to_string())
+        }
+        CliCommand::HistoryTranscriptionChoose => {
+            Err("Interactive transcription selection must run in the CLI terminal".into())
+        }
+        CliCommand::HistoryTranscriptionById { id } => transcription_by_id(&state, &id),
+        CliCommand::HistoryTranscription { number } => history_transcription(&state, number),
         CliCommand::Stats => Ok(format_stats(&get_history_stats_from_db(&state.db)?)),
     }
 }
@@ -334,15 +571,29 @@ fn endpoint_path(config: &tauri::Config) -> Result<PathBuf, String> {
 }
 
 fn read_message<T: serde::de::DeserializeOwned>(stream: &mut TcpStream) -> Result<T, String> {
-    let mut reader = BufReader::new(stream.take(MAX_MESSAGE_BYTES + 1));
+    read_message_with_limit(stream, MAX_MESSAGE_BYTES)
+}
+
+fn read_message_with_limit<T: serde::de::DeserializeOwned>(
+    stream: &mut TcpStream,
+    limit: u64,
+) -> Result<T, String> {
+    let mut reader = BufReader::new(stream.take(limit + 1));
     let mut line = String::new();
     reader
         .read_line(&mut line)
         .map_err(|e| format!("Could not read CLI response: {e}"))?;
-    if line.len() as u64 > MAX_MESSAGE_BYTES || !line.ends_with('\n') {
+    if line.len() as u64 > limit || !line.ends_with('\n') {
         return Err("Invalid or oversized CLI message".into());
     }
     serde_json::from_str(&line).map_err(|_| "Invalid CLI message".into())
+}
+
+fn read_response(stream: &mut TcpStream) -> Result<Result<String, String>, String> {
+    stream
+        .set_read_timeout(Some(RESPONSE_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    read_message_with_limit(stream, MAX_RESPONSE_BYTES)
 }
 
 fn write_message<T: Serialize>(stream: &mut TcpStream, message: &T) -> Result<(), String> {
@@ -354,6 +605,58 @@ fn write_message<T: Serialize>(stream: &mut TcpStream, message: &T) -> Result<()
     stream
         .write_all(&bytes)
         .map_err(|e| format!("Could not write CLI message: {e}"))
+}
+
+fn response_bytes_with_limit(
+    response: &Result<String, String>,
+    limit: u64,
+) -> Result<Vec<u8>, String> {
+    struct BoundedBuffer {
+        bytes: Vec<u8>,
+        limit: u64,
+    }
+    impl Write for BoundedBuffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            // Reserve one byte for the newline framing marker.
+            if bytes.len() as u64 >= self.limit.saturating_sub(self.bytes.len() as u64) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "CLI response too large",
+                ));
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut buffer = BoundedBuffer {
+        bytes: Vec::new(),
+        limit,
+    };
+    if serde_json::to_writer(&mut buffer, response).is_err() {
+        // Serialize the error before writing anything, so the client receives
+        // one complete response rather than a truncated JSON document or EOF.
+        buffer.bytes.clear();
+        let error: Result<String, String> =
+            Err(format!("CLI response exceeds the {limit} byte limit"));
+        serde_json::to_writer(&mut buffer, &error).map_err(|e| e.to_string())?;
+    }
+    buffer.bytes.push(b'\n');
+    Ok(buffer.bytes)
+}
+
+fn write_response(stream: &mut TcpStream, response: &Result<String, String>) -> Result<(), String> {
+    let bytes = response_bytes_with_limit(response, MAX_RESPONSE_BYTES)?;
+    stream
+        .set_write_timeout(Some(RESPONSE_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .write_all(&bytes)
+        .map_err(|e| format!("Could not write CLI response: {e}"))
 }
 
 fn configure_stream(stream: &TcpStream) -> Result<(), String> {
@@ -448,7 +751,7 @@ fn start_server(app: &AppHandle) -> Result<CliServer, String> {
                     let response = read_message::<Request>(&mut stream)
                         .and_then(|request| authorize(request, &token))
                         .and_then(|command| execute(&app, command));
-                    let _ = write_message(&mut stream, &response);
+                    let _ = write_response(&mut stream, &response);
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(25))
@@ -599,11 +902,45 @@ fn send_command(
             command,
         },
     )?;
-    read_message::<Result<String, String>>(&mut stream)?
+    read_response(&mut stream)?
+}
+
+fn decode_transcription_choices(response: &str) -> Result<Vec<Choice>, String> {
+    serde_json::from_str(response).map_err(|e| format!("Invalid transcription list response: {e}"))
+}
+
+fn choose_transcription<R: BufRead, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    mut request: impl FnMut(CliCommand) -> Result<String, String>,
+) -> Result<String, String> {
+    let choices = decode_transcription_choices(&request(CliCommand::HistoryTranscriptionList)?)?;
+    match crate::cli_transcription_choice::choose(&choices, input, output)? {
+        Some(id) => request(CliCommand::HistoryTranscriptionById { id }),
+        None => Ok(String::new()),
+    }
 }
 
 pub(crate) fn run(command: CliCommand, config: &tauri::Config) -> Result<String, String> {
-    send_command(&endpoint_path(config)?, command, launch_desktop)
+    let path = endpoint_path(config)?;
+    match command {
+        CliCommand::HistoryTranscriptionList => {
+            let response = send_command(&path, CliCommand::HistoryTranscriptionList, launch_desktop)?;
+            let choices = decode_transcription_choices(&response)?;
+            Ok(crate::cli_transcription_choice::format_choices(&choices))
+        }
+        CliCommand::HistoryTranscriptionChoose => {
+            let stdin = std::io::stdin();
+            let stderr = std::io::stderr();
+            if !stdin.is_terminal() || !stderr.is_terminal() {
+                return Err("--choose requires an interactive terminal for input and prompts. Use history transcription <NUMBER> for non-interactive output.".into());
+            }
+            choose_transcription(&mut stdin.lock(), &mut stderr.lock(), |command| {
+                send_command(&path, command, launch_desktop)
+            })
+        }
+        command => send_command(&path, command, launch_desktop),
+    }
 }
 
 #[cfg(test)]
@@ -754,7 +1091,30 @@ mod tests {
                 vec!["queue", "remove", "1"],
                 CliCommand::QueueRemove { number: 1 },
             ),
-            (vec!["history", "list"], CliCommand::HistoryList),
+            (
+                vec!["history", "list"],
+                CliCommand::HistoryList { limit: 25 },
+            ),
+            (
+                vec!["history", "list", "100"],
+                CliCommand::HistoryList { limit: 100 },
+            ),
+            (
+                vec!["history", "read", "1"],
+                CliCommand::HistoryRead { number: 1 },
+            ),
+            (
+                vec!["history", "transcription"],
+                CliCommand::HistoryTranscriptionList,
+            ),
+            (
+                vec!["history", "transcription", "--choose"],
+                CliCommand::HistoryTranscriptionChoose,
+            ),
+            (
+                vec!["history", "transcription", "1"],
+                CliCommand::HistoryTranscription { number: 1 },
+            ),
             (vec!["stats"], CliCommand::Stats),
         ] {
             assert_eq!(parse(&args(&words)).unwrap(), Some(command));
@@ -790,6 +1150,10 @@ mod tests {
         assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
         assert!(HELP.starts_with(&format!("PineFetch CLI {VERSION}\n")));
         assert!(HELP.contains("PineFetch --version"));
+        assert!(HELP.contains("PineFetch history list [COUNT]"));
+        assert!(HELP.contains("PineFetch history read <NUMBER>"));
+        assert!(HELP.contains("PineFetch history transcription <NUMBER>"));
+        assert!(HELP.contains("PineFetch history transcription --choose"));
     }
 
     #[test]
@@ -798,6 +1162,21 @@ mod tests {
             vec!["history", "delete"],
             vec!["history", "clear"],
             vec!["history", "remove", "1"],
+            vec!["history", "list", "0"],
+            vec!["history", "list", "-1"],
+            vec!["history", "list", "1.5"],
+            vec!["history", "list", "4294967296"],
+            vec!["history", "list", "1", "2"],
+            vec!["history", "read"],
+            vec!["history", "read", "0"],
+            vec!["history", "read", "nope"],
+            vec!["history", "read", "4294967296"],
+            vec!["history", "transcription", "--choose", "1"],
+            vec!["history", "transcription", "--unknown"],
+            vec!["history", "transcription", "0"],
+            vec!["history", "transcription", "-1"],
+            vec!["history", "transcription", "1.5"],
+            vec!["history", "transcription", "4294967296"],
             vec!["queue", "remove", "0"],
             vec!["queue", "remove", "-1"],
             vec!["queue", "remove", "1.5"],
@@ -830,6 +1209,10 @@ mod tests {
 
     #[test]
     fn protocol_cannot_express_history_mutations_and_requires_authentication() {
+        assert_eq!(
+            serde_json::from_value::<CliCommand>(json!({"command":"history_list"})).unwrap(),
+            CliCommand::HistoryList { limit: 25 }
+        );
         for command in [
             "history_delete",
             "history_clear",
@@ -842,7 +1225,7 @@ mod tests {
         assert!(authorize(
             Request {
                 token: "wrong".into(),
-                command: CliCommand::HistoryList
+                command: CliCommand::HistoryList { limit: 25 }
             },
             "secret"
         )
@@ -851,12 +1234,12 @@ mod tests {
             authorize(
                 Request {
                     token: "secret".into(),
-                    command: CliCommand::HistoryList
+                    command: CliCommand::HistoryList { limit: 25 }
                 },
                 "secret"
             )
             .unwrap(),
-            CliCommand::HistoryList
+            CliCommand::HistoryList { limit: 25 }
         );
     }
 
@@ -937,26 +1320,360 @@ mod tests {
         {
             let db = state.db.lock().unwrap();
             for index in 0..30 {
-                db.execute("INSERT INTO history_entries (id,url,title,created_at,completed_at,duration_seconds,file_size_bytes) VALUES (?1,?2,?3,?4,?4,60,1024)",
+                db.execute("INSERT INTO history_entries (id,url,title,created_at,completed_at,duration_seconds,file_size_bytes) VALUES (?1,?2,?3,0,?4,60,1024)",
                     params![format!("id-{index:02}"), format!("https://example.com/{index}"), format!("Video {index}"), index]).unwrap();
             }
             db.execute_batch("PRAGMA query_only = ON").unwrap();
         }
-        let output = list_history(&state).unwrap();
+        let output = list_history(&state, 25).unwrap();
         assert_eq!(output.lines().count(), 26);
         assert_eq!(
+            output.lines().next().unwrap(),
+            "#\tTITLE\tUPLOAD_DATE\tCREATED_AT\tLINK"
+        );
+        assert_eq!(
             output.lines().nth(1).unwrap(),
-            "1\tVideo 29\thttps://example.com/29"
+            "1\tVideo 29\t—\t—\thttps://example.com/29"
         );
         assert_eq!(
             output.lines().last().unwrap(),
-            "25\tVideo 5\thttps://example.com/5"
+            "25\tVideo 5\t—\t—\thttps://example.com/5"
         );
         assert_eq!(
             format_stats(&get_history_stats_from_db(&state.db).unwrap()),
             "Downloaded videos: 30\nTotal data: 30.0 KB\nTotal runtime: 30m 00s\nDownloads by platform:\nexample: 30"
         );
         assert_eq!(count_history_entries_in_db(&state.db).unwrap(), 30);
+    }
+
+    #[test]
+    fn history_lists_requested_counts_and_reads_entries_beyond_the_default_page() {
+        let state = state();
+        {
+            let db = state.db.lock().unwrap();
+            for index in 0..120 {
+                db.execute(
+                    "INSERT INTO history_entries(id,url,title,created_at,completed_at) VALUES (?1,?2,?3,0,?4)",
+                    params![format!("id-{index:03}"), format!("https://example.com/{index}"), format!("Video {index}"), index],
+                )
+                .unwrap();
+            }
+            db.execute_batch("PRAGMA query_only = ON").unwrap();
+        }
+        assert_eq!(list_history(&state, 25).unwrap().lines().count(), 26);
+        let output = list_history(&state, 100).unwrap();
+        assert_eq!(output.lines().count(), 101);
+        assert_eq!(
+            output.lines().nth(1).unwrap(),
+            "1\tVideo 119\t—\t—\thttps://example.com/119"
+        );
+        assert_eq!(
+            output.lines().last().unwrap(),
+            "100\tVideo 20\t—\t—\thttps://example.com/20"
+        );
+        assert_eq!(list_history(&state, 200).unwrap().lines().count(), 121);
+        let details: serde_json::Value =
+            serde_json::from_str(&super::read_history(&state, 101).unwrap()).unwrap();
+        assert_eq!(details["number"], 101);
+        assert_eq!(details["entry"]["id"], "id-019");
+        assert_eq!(details["entry"]["title"], "Video 19");
+        assert!(super::history_id(&state, 0).is_err());
+        assert!(super::read_history(&state, 121).is_err());
+        assert!(super::history_transcription(&state, 121).is_err());
+        assert!(list_history(&state, 0).is_err());
+    }
+
+    #[test]
+    fn history_reads_share_list_order_and_preserve_metadata_and_saved_transcription() {
+        let state = state();
+        let text = "Grüße 🌲\r\nSecond line\twith tabs\n";
+        {
+            let db = state.db.lock().unwrap();
+            db.execute_batch(
+                "INSERT INTO history_entries(id,url,title,upload_date,created_at,completed_at) VALUES
+                    ('id-a','https://example.com/id-a','A','20261110',2,10),
+                    ('id-b','https://example.com/id-b','B','20261110',2,10),
+                    ('created-later','https://example.com/created-later','Created later',NULL,3,10),
+                    ('null-completion','https://example.com/null-completion','Null completion',NULL,11,NULL);
+                 UPDATE history_entries SET uploader='Creator',filename='transcript.txt',output_path='/synthetic/cli-missing.txt',medium='transcript',source='youtube',platform='youtube',duration_seconds=123,file_size_bytes=456,sha256='abc',pinefetch_version='test',creator_source='youtube',creator_id='channel:123' WHERE id='id-b';
+                 INSERT INTO captions(history_entry_id,media_path,caption_path,text,created_at) VALUES('id-b','/synthetic/media.mp4',NULL,'Saved caption',1);
+                 INSERT INTO history_subtitles(history_entry_id,path,language,format,text) VALUES('id-b','/synthetic/subtitles.en.vtt','en','vtt','Saved subtitles');",
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO transcriptions(id,history_entry_id,text,type,language) VALUES ('transcript','id-b',?1,'text','de')",
+                [text],
+            )
+            .unwrap();
+        }
+        let tag = crate::tags::create(
+            &state.db,
+            crate::tags::TagInput {
+                name: "Research".into(),
+                description: "Saved tag".into(),
+                color: "#123456".into(),
+            },
+        )
+        .unwrap();
+        crate::tags::assign(&state.db, "id-b", &tag.id, true).unwrap();
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute_batch("PRAGMA query_only = ON")
+            .unwrap();
+
+        let list = list_history(&state, 100).unwrap();
+        for (index, id) in ["null-completion", "created-later", "id-b", "id-a"]
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(super::history_id(&state, index as u32 + 1).unwrap(), *id);
+            assert!(list
+                .lines()
+                .nth(index + 1)
+                .unwrap()
+                .ends_with(&format!("/{id}")));
+        }
+        let details: serde_json::Value =
+            serde_json::from_str(&super::read_history(&state, 3).unwrap()).unwrap();
+        assert_eq!(details["number"], 3);
+        assert_eq!(details["entry"]["id"], "id-b");
+        assert_eq!(details["entry"]["creator_source"], "youtube");
+        assert_eq!(details["entry"]["creator_id"], "channel:123");
+        assert_eq!(details["entry"]["created_at"], 2);
+        assert_eq!(details["entry"]["duration_seconds"], 123);
+        assert_eq!(details["dates"]["upload_date"], "2026-11-10");
+        assert_eq!(details["file_extension"], "txt");
+        assert_eq!(details["output_file_available"], false);
+        assert_eq!(details["transcript"]["language"], "de");
+        assert_eq!(details["captions"].as_array().unwrap().len(), 1);
+        assert_eq!(details["subtitles"].as_array().unwrap().len(), 1);
+        assert_eq!(details["tags"][0]["name"], "Research");
+        assert_eq!(super::history_transcription(&state, 3).unwrap(), text);
+        assert!(super::history_transcription(&state, 1)
+            .unwrap_err()
+            .contains("No transcription saved"));
+    }
+
+    #[test]
+    fn history_transcription_distinguishes_empty_saved_text_from_missing_transcription() {
+        let state = state();
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO history_entries(id,url,created_at) VALUES ('empty','https://example.com/empty',1);
+             INSERT INTO transcriptions(id,history_entry_id,text,type) VALUES ('empty-transcript','empty','','text');
+             PRAGMA query_only = ON;",
+            )
+            .unwrap();
+        assert_eq!(super::history_transcription(&state, 1).unwrap(), "");
+    }
+
+    #[test]
+    fn transcription_choices_filter_before_the_limit_and_keep_selected_ids_stable() {
+        let state = state();
+        {
+            let db = state.db.lock().unwrap();
+            for index in 0..80 {
+                let id = format!("history-{index:03}");
+                db.execute(
+                    "INSERT INTO history_entries(id,url,title,created_at,completed_at) VALUES (?1,?2,?3,0,?4)",
+                    params![
+                        id,
+                        format!("https://example.com/{index}"),
+                        format!("Entry {index}"),
+                        index
+                    ],
+                )
+                .unwrap();
+                if index < 30 {
+                    db.execute(
+                        "INSERT INTO transcriptions(id,history_entry_id,text,type) VALUES (?1,?1,?2,'text')",
+                        params![id, format!("Transcription {index}")],
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        let snapshot = super::transcription_choices(&state).unwrap();
+        assert_eq!(snapshot.len(), 25);
+        assert_eq!(snapshot[0].id, "history-029");
+        assert_eq!(snapshot[24].id, "history-005");
+        assert_eq!(snapshot[0].number, 51);
+        assert_eq!(snapshot[24].number, 75);
+        assert_eq!(
+            super::history_transcription(&state, snapshot[0].number).unwrap(),
+            "Transcription 29"
+        );
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        let mut requests = Vec::new();
+        let selected = super::choose_transcription(
+            &mut std::io::Cursor::new(b"51\n"),
+            &mut Vec::new(),
+            |command| {
+                requests.push(command.clone());
+                match command {
+                    CliCommand::HistoryTranscriptionList => {
+                        // A new transcript arrives after this displayed list
+                        // was captured. The chosen ID must stay unchanged.
+                        state
+                            .db
+                            .lock()
+                            .unwrap()
+                            .execute_batch(
+                                "INSERT INTO history_entries(id,url,title,created_at,completed_at) VALUES ('newest','https://example.com/newest','Newest',0,100);
+                             INSERT INTO transcriptions(id,history_entry_id,text,type) VALUES ('newest','newest','New transcription','text');
+                             PRAGMA query_only = ON;",
+                            )
+                            .unwrap();
+                        Ok(serialized.clone())
+                    }
+                    CliCommand::HistoryTranscriptionById { id } => {
+                        super::transcription_by_id(&state, &id)
+                    }
+                    _ => panic!("Unexpected chooser request"),
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(selected, "Transcription 29");
+        assert_eq!(super::transcription_choices(&state).unwrap()[0].id, "newest");
+        assert_eq!(
+            super::history_transcription(&state, 1).unwrap(),
+            "New transcription"
+        );
+        assert_eq!(
+            requests,
+            vec![
+                CliCommand::HistoryTranscriptionList,
+                CliCommand::HistoryTranscriptionById {
+                    id: "history-029".into()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn transcription_chooser_cancels_without_fetching_text_and_reports_removed_selections() {
+        let state = state();
+        assert!(super::transcription_choices(&state).unwrap().is_empty());
+        let response = serde_json::to_string(&vec![crate::cli_transcription_choice::Choice {
+            number: 1,
+            id: "removed".into(),
+            title: "Removed transcript".into(),
+            url: "https://example.com/removed".into(),
+            upload_date: None,
+            created_at: None,
+        }])
+        .unwrap();
+        for input in ["q\n", ""] {
+            let mut calls = 0;
+            let result = super::choose_transcription(
+                &mut std::io::Cursor::new(input.as_bytes()),
+                &mut Vec::new(),
+                |command| {
+                    calls += 1;
+                    assert_eq!(command, CliCommand::HistoryTranscriptionList);
+                    Ok(response.clone())
+                },
+            )
+            .unwrap();
+            assert!(result.is_empty());
+            assert_eq!(calls, 1);
+        }
+        let error = super::choose_transcription(
+            &mut std::io::Cursor::new(b"1\n"),
+            &mut Vec::new(),
+            |command| match command {
+                CliCommand::HistoryTranscriptionList => Ok(response.clone()),
+                CliCommand::HistoryTranscriptionById { id } => {
+                    super::transcription_by_id(&state, &id)
+                }
+                _ => panic!("Unexpected chooser request"),
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("no longer available"));
+    }
+
+    #[test]
+    fn history_upload_dates_validate_calendar_dates_without_inventing_a_time() {
+        for (raw, expected) in [
+            ("20261110", "2026-11-10"),
+            (" 20240229 ", "2024-02-29"),
+            ("20000229", "2000-02-29"),
+            ("2024-02-29", "2024-02-29"),
+        ] {
+            assert_eq!(
+                super::history_upload_date(Some(raw)).as_deref(),
+                Some(expected)
+            );
+        }
+        assert!(super::history_upload_date(None).is_none());
+        for raw in [
+            "",
+            "20260229",
+            "19000229",
+            "21000229",
+            "20261131",
+            "20261301",
+            "20260001",
+            "20260100",
+            "00000101",
+            "2026-02-30",
+            "2026--0229",
+            "🌲202611",
+            "20261110\tbad",
+        ] {
+            assert!(super::history_upload_date(Some(raw)).is_none(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn history_lists_local_dates_with_timestamp_precedence_and_missing_value_fallbacks() {
+        let state = state();
+        let db = state.db.lock().unwrap();
+        // Convert a fixed local wall time to epoch seconds without changing TZ
+        // globally, so this test is safe alongside parallel database tests.
+        let seconds: i64 = db
+            .query_row(
+                "SELECT CAST(strftime('%s', '2026-11-10 12:34:56', 'utc') AS INTEGER)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        db.execute(
+            "INSERT INTO history_entries(id,url,title,upload_date,timestamp,created_at,completed_at) VALUES ('precise','https://example.com/precise',?1,'19990101',?2,?3,?4)",
+            params![
+                "Title\twith\ncontrols",
+                seconds,
+                seconds * 1000 + 987,
+                seconds * 1000 + 7000
+            ],
+        )
+        .unwrap();
+        db.execute_batch(
+            "INSERT INTO history_entries(id,url,title,filename,upload_date,timestamp,created_at,completed_at) VALUES
+                ('date-only','https://example.com/date-only','Date only',NULL,'20240229',9223372036854775807,0,2),
+                ('invalid','https://example.com/invalid','Invalid dates',NULL,'20260230',9223372036854775807,9223372036854775807,1),
+                ('missing','https://example.com/missing',NULL,'Fallback filename',NULL,NULL,0,0);",
+        )
+        .unwrap();
+        db.execute_batch("PRAGMA query_only = ON").unwrap();
+        drop(db);
+        assert_eq!(
+            list_history(&state, 25).unwrap(),
+            concat!(
+                "#\tTITLE\tUPLOAD_DATE\tCREATED_AT\tLINK",
+                "\n1\tTitle with controls\t2026-11-10 12:34:56\t2026-11-10 12:34:56\thttps://example.com/precise",
+                "\n2\tDate only\t2024-02-29\t—\thttps://example.com/date-only",
+                "\n3\tInvalid dates\t—\t—\thttps://example.com/invalid",
+                "\n4\tFallback filename\t—\t—\thttps://example.com/missing"
+            )
+        );
     }
 
     #[test]
@@ -983,7 +1700,7 @@ mod tests {
     fn empty_results_and_stats_match_the_history_panel() {
         let state = state();
         assert_eq!(list_queue(&state).unwrap(), "No waiting downloads.");
-        assert_eq!(list_history(&state).unwrap(), "History is empty.");
+        assert_eq!(list_history(&state, 25).unwrap(), "History is empty.");
         assert_eq!(
             format_stats(&get_history_stats_from_db(&state.db).unwrap()),
             "Downloaded videos: 0\nTotal data: 0 B\nTotal runtime: 0m 00s"
@@ -998,6 +1715,51 @@ mod tests {
             "Downloaded videos: 2\nTotal data: 1.00 MB\nTotal runtime: 1h 01m"
         );
         assert_eq!(terminal_text("title\n\x1b[31m\tbad"), "title  [31m bad");
+    }
+
+    #[test]
+    fn integration_cli_response_preserves_large_unicode_transcripts_over_the_socket() {
+        let path = std::env::temp_dir().join(format!("pinefetch-cli-{}.json", Uuid::new_v4()));
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let endpoint = Endpoint {
+            port: listener.local_addr().unwrap().port(),
+            token: "large-response-token".into(),
+        };
+        fs::write(&path, serde_json::to_vec(&endpoint).unwrap()).unwrap();
+        let transcript = "Grüße 🌲\n[00:00:01] Zeile\t\r\n".repeat(40_000);
+        assert!(transcript.len() as u64 > super::MAX_MESSAGE_BYTES);
+        let expected = transcript.clone();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            configure_stream(&stream).unwrap();
+            let request: Request = read_message(&mut stream).unwrap();
+            assert_eq!(
+                authorize(request, "large-response-token").unwrap(),
+                CliCommand::Stats
+            );
+            super::write_response(&mut stream, &Ok(transcript)).unwrap();
+            assert_eq!(
+                stream.write_timeout().unwrap(),
+                Some(super::RESPONSE_TIMEOUT)
+            );
+        });
+        let output = send_command(&path, CliCommand::Stats, || panic!("must not launch"));
+        server.join().unwrap();
+        fs::remove_file(path).unwrap();
+        assert_eq!(output.unwrap(), expected);
+    }
+
+    #[test]
+    fn oversized_serialized_cli_response_returns_a_complete_error() {
+        let response = Ok("\0".repeat(100));
+        let bytes = super::response_bytes_with_limit(&response, 128).unwrap();
+        assert!(bytes.len() <= 128);
+        assert_eq!(bytes.last(), Some(&b'\n'));
+        let decoded: Result<String, String> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            decoded.unwrap_err(),
+            "CLI response exceeds the 128 byte limit"
+        );
     }
 
     fn mock_endpoint(

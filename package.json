@@ -1,6 +1,6 @@
 {
     "name": "pinefetch",
-    "version": "3.0.0",
+    "version": "3.0.1",
     "scripts": {
         "check": "npm run check:versions && npm run lint && npm run format:check && npm test",
         "check:versions": "node scripts/check-versions.mjs",
@@ -51,9 +51,9 @@
     "devDependencies": {
         "@eslint/js": "10.0.1",
         "@tauri-apps/cli": "^2.12.4",
-        "eslint": "10.13.0",
-        "globals": "17.13.0",
-        "playwright": "1.64.1",
+        "eslint": "10.14.0",
+        "globals": "17.14.0",
+        "playwright": "1.65.0",
         "prettier": "3.9.10",
         "sharp": "0.35.5"
     },
@@ -79,7 +79,7 @@
     "homepage": "https://oliverjessner.at/pinefetch",
     "dependencies": {
         "@puppeteer/browsers": "3.2.6",
-        "fetchary": "2.0.7",
+        "fetchary": "2.1.1",
         "oj-designsystem": "0.3.0",
         "puppeteer-core": "25.16.0"
     }

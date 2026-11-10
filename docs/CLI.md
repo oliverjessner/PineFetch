@@ -85,13 +85,61 @@ Numbers refer to the queue at the moment the command runs. They can change as do
 
 ```bash
 PineFetch history list
+PineFetch history list 100
 ```
 
-Shows the latest **25 successful downloads**, newest first, with their title and source link. If a title is unavailable, the filename is used when available.
+Shows successful downloads, newest first, with their title, upload date, history creation time and source link. Without a count, it shows the latest **25** entries. Pass a positive integer, such as `100`, to show that many entries, or all available entries if fewer exist:
 
-**CLI history is read-only. There are no history delete, remove, or clear commands.** Listing history does not change existing entries or downloaded files.
+```text
+#   TITLE           UPLOAD_DATE           CREATED_AT            LINK
+1   Example video   2026-11-09 18:00:00   2026-11-10 12:34:56   https://example.com/video
+2   Example audio   2026-11-08            2026-11-10 12:30:00   https://example.com/audio
+```
+
+`UPLOAD_DATE` uses the saved upload timestamp when available. If the source supplied only a date, it shows `YYYY-MM-DD` without adding a time. `CREATED_AT` shows when the history entry was created. Full timestamps use `YYYY-MM-DD HH:MM:SS` in the app computer's local time zone. Missing or invalid values show `—`. If a title is unavailable, the filename is used when available.
 
 An empty history prints `History is empty.`
+
+### Read an entry
+
+```bash
+PineFetch history read 1
+```
+
+Prints the first history entry's saved metadata as formatted JSON, including its ID, title, uploader, source link, creator identity, file details, duration, size and checksum when recorded. The output also includes assigned tags, output-file availability and summaries of related saved transcripts, captions and creator subtitles. Original stored date values remain in `entry`; the additional `dates` object contains readable upload, creation and completion dates in local time.
+
+### Find and choose a transcription
+
+```bash
+PineFetch history transcription
+PineFetch history transcription --choose
+```
+
+Without an argument, lists the latest **25 entries with a saved transcription**, newest first, using the same title, date and link columns as `history list`. Entries without a saved transcription are excluded before the limit is applied. The displayed numbers are their global history positions, so gaps are expected when other entries have no transcription.
+
+Add `--choose` to select a displayed history number and print its complete saved transcript. The selection stays tied to the displayed entry even if another download completes while you choose. Enter `q` or end input to cancel without printing a transcript.
+
+The chooser requires interactive standard input and standard error. Its list and prompt go to stderr; only the exact transcript text goes to stdout, so you can save it directly:
+
+```bash
+PineFetch history transcription --choose > transcript.txt
+```
+
+Piped input is not supported by `--choose`. Use the numbered command below for scripts.
+
+### Read a transcription by history number
+
+```bash
+PineFetch history transcription 1
+```
+
+Prints the saved transcript text for the first history entry without a heading or added newline. Timestamped transcripts retain their saved timestamps. The text comes from the local database and remains available even if the exported transcript file is missing.
+
+The direct `transcription <NUMBER>` command uses the same global history numbers as both lists and works without an interactive terminal.
+
+Global history numbers start at `1` and use the same newest-first order across history commands. They are resolved when each command runs and can shift as downloads complete or entries are deleted in the app. The interactive chooser preserves the entries shown in its own list while you select. Use `history list 100` to view positions beyond the default 25. A nonexistent entry or an entry without a saved transcription returns an error with exit code `1`. Counts and entry numbers must be positive integers; invalid arguments return exit code `2`.
+
+**CLI history is read-only. There are no history delete, remove, or clear commands.** These commands do not change existing entries or downloaded files.
 
 ## View statistics
 
@@ -106,7 +154,7 @@ Shows the same totals as the right side of the app's History view:
 - **Total runtime:** the combined recorded media duration.
 - **Downloads by platform:** completed History entries per platform, for example `YouTube: 3` and `TikTok: 5`.
 
-Statistics cover the entire history, not just the latest 25 entries. Missing file-size or duration metadata does not contribute to the corresponding total.
+Statistics cover the entire history, regardless of the count used for `history list`. Missing file-size or duration metadata does not contribute to the corresponding total.
 
 ## Help and exit codes
 
@@ -117,13 +165,13 @@ PineFetch --version
 
 The help header and `PineFetch --version` show the installed PineFetch version. `PineFetch -h` and `PineFetch help` also display help; `PineFetch -V` and `PineFetch version` also display the version. These commands and invalid commands do not launch the desktop app.
 
-| Exit code | Meaning                                                                   |
-| --------- | ------------------------------------------------------------------------- |
-| `0`       | Command completed successfully.                                           |
-| `1`       | Execution failed, such as an unavailable app or a nonexistent queue item. |
-| `2`       | Invalid command or arguments.                                             |
+| Exit code | Meaning                                                                                               |
+| --------- | ----------------------------------------------------------------------------------------------------- |
+| `0`       | Command completed successfully.                                                                       |
+| `1`       | Execution failed, such as an unavailable app, nonexistent queue/history entry, or missing transcription. |
+| `2`       | Invalid command or arguments, including a count or entry number that is not a positive integer.         |
 
-Successful output goes to stdout; errors go to stderr.
+Successful output goes to stdout; errors go to stderr. The interactive transcription chooser also sends its list and prompt to stderr, keeping stdout available for the transcript alone. Cancellation exits successfully without transcript output. Attempting `--choose` without interactive stdin and stderr returns an error with exit code `1`.
 
 ## Connection and troubleshooting
 

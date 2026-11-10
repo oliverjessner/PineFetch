@@ -17,7 +17,11 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 15;
+pub(super) const SCHEMA_VERSION: i64 = 16;
+
+// Retain schema 16 compatibility for profiles that ran the history preset build.
+// History no longer records or reads this optional column.
+const HISTORY_PRESET_SQL: &str = "ALTER TABLE history_entries ADD COLUMN preset_key TEXT;";
 
 const QUEUE_SQL: &str = r#"
 CREATE TABLE queue_state (
@@ -85,7 +89,14 @@ pub(crate) fn restore_schema11_queue_fixture(conn: &Connection) {
 
 #[cfg(test)]
 pub(crate) fn restore_schema14_tags_fixture(conn: &Connection) {
+    restore_schema15_history_preset_fixture(conn);
     conn.execute_batch("DROP TABLE history_entry_tags; DROP TABLE tags; PRAGMA user_version=14;")
+        .unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn restore_schema15_history_preset_fixture(conn: &Connection) {
+    conn.execute_batch("ALTER TABLE history_entries DROP COLUMN preset_key; PRAGMA user_version=15;")
         .unwrap();
 }
 
@@ -309,6 +320,7 @@ pub(super) enum MigrationPoint {
     HistoryIndexes,
     CreatorIdentities,
     Tags,
+    HistoryPreset,
 }
 
 pub(super) fn initialize_with_hook(
@@ -476,6 +488,13 @@ pub(super) fn initialize_with_hook(
         tx.pragma_update(None, "user_version", 15)
             .map_err(|e| e.to_string())?;
         hook(MigrationPoint::Tags)?;
+    }
+    if version < 16 {
+        tx.execute_batch(HISTORY_PRESET_SQL)
+            .map_err(|e| format!("SQLite migration 16 failed: {e}"))?;
+        tx.pragma_update(None, "user_version", 16)
+            .map_err(|e| e.to_string())?;
+        hook(MigrationPoint::HistoryPreset)?;
     }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
@@ -741,6 +760,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
     if version >= 15 {
         reference
             .execute_batch(crate::tags::SCHEMA_SQL)
+            .map_err(|e| e.to_string())?;
+    }
+    if version >= 16 {
+        reference
+            .execute_batch(HISTORY_PRESET_SQL)
             .map_err(|e| e.to_string())?;
     }
     reference
@@ -1455,4 +1479,81 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn last_snapshot_work() -> SnapshotWork {
     SNAPSHOT_WORK.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+mod history_preset_migration_tests {
+    use super::*;
+
+    #[test]
+    fn history_preset_migration_rolls_back_preserves_rows_and_leaves_legacy_presets_unknown() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize(&conn).unwrap();
+        restore_schema15_history_preset_fixture(&conn);
+        conn.execute_batch(
+            "UPDATE app_config SET selected_preset_key='text';
+             INSERT INTO history_entries(id,url,title,filename,medium,created_at) VALUES
+                ('video','https://example.com/video','Original video','video_best.mp4','video',1),
+                ('audio','https://example.com/audio','Original audio','audio.mp3','audio',2),
+                ('text','https://example.com/text','Original transcript','text_timestamps.txt','transcript',3);",
+        )
+        .unwrap();
+
+        let error = initialize_with_hook(&conn, |point| {
+            if point == MigrationPoint::HistoryPreset {
+                Err("synthetic history preset migration failure".into())
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+        assert!(error.contains("synthetic history preset migration failure"));
+        assert_eq!(check_version(&conn).unwrap(), 15);
+        assert!(!columns(&conn, "history_entries")
+            .unwrap()
+            .iter()
+            .any(|column| column.name == "preset_key"));
+
+        initialize(&conn).unwrap();
+        assert_eq!(check_version(&conn).unwrap(), SCHEMA_VERSION);
+        let unknown: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM history_entries WHERE preset_key IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unknown, 3);
+        let preserved: (String, String, i64, String) = conn
+            .query_row(
+                "SELECT title,filename,created_at,(SELECT selected_preset_key FROM app_config) FROM history_entries WHERE id='video'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            preserved,
+            (
+                "Original video".into(),
+                "video_best.mp4".into(),
+                1,
+                "text".into()
+            )
+        );
+
+        conn.execute(
+            "INSERT INTO history_entries(id,url,created_at,preset_key) VALUES ('new','https://example.com/new',4,'1080')",
+            [],
+        )
+        .unwrap();
+        initialize(&conn).unwrap();
+        let stored: String = conn
+            .query_row(
+                "SELECT preset_key FROM history_entries WHERE id='new'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "1080");
+    }
 }

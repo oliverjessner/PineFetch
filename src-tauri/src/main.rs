@@ -11,6 +11,7 @@ mod application_failure_tests;
 mod architecture_tests;
 mod browser_import;
 mod cli;
+mod cli_transcription_choice;
 mod commands;
 mod completion;
 mod completion_store;
@@ -109,7 +110,13 @@ fn main() {
     };
     let context = tauri::generate_context!();
     if let Some(command) = command {
+        let raw_transcription = matches!(
+            &command,
+            cli::CliCommand::HistoryTranscription { .. }
+                | cli::CliCommand::HistoryTranscriptionChoose
+        );
         match cli::run(command, context.config()) {
+            Ok(output) if raw_transcription => print!("{output}"),
             Ok(output) => println!("{output}"),
             Err(err) => {
                 eprintln!("PineFetch: {err}");

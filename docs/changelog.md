@@ -1,3 +1,9 @@
+# 3.0.1
+
+- Added readable upload dates and history creation times to CLI history.
+- Added an optional history list count, JSON metadata reads by history number, and saved transcription output through the read-only CLI.
+- Added a list of the latest 25 saved transcriptions using global history numbers and an interactive chooser that keeps selections stable while downloads complete and prints the complete transcript.
+
 # 3.0.0
 
 - Added local tags with Unicode-safe unique names, descriptions, palette and HEX colors, and multi-tag assignment for all saved media.

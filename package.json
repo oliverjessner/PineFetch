@@ -52,7 +52,7 @@
         "@eslint/js": "10.0.1",
         "@tauri-apps/cli": "^2.12.4",
         "eslint": "10.14.0",
-        "globals": "17.13.0",
+        "globals": "17.14.0",
         "playwright": "1.64.1",
         "prettier": "3.9.10",
         "sharp": "0.35.5"

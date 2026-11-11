@@ -18,6 +18,7 @@ pub(crate) struct AppState {
     pub(crate) ocr: Arc<crate::ocr::OcrState>,
     pub(crate) ocr_preview: crate::ocr_preview::OcrPreviewState,
     pub(crate) history_media: crate::history_media::HistoryMediaState,
+    pub(crate) history_transcription: Arc<crate::history_transcription::HistoryTranscriptionState>,
     pub(crate) video_ai: Arc<crate::video_ai::VideoAiState>,
     pub(crate) accounts: crate::accounts::AccountState,
     pub(crate) social_insights: crate::social_insights::SocialInsightsState,
@@ -43,6 +44,9 @@ impl AppState {
             ocr: Arc::new(crate::ocr::OcrState::default()),
             ocr_preview: crate::ocr_preview::OcrPreviewState::default(),
             history_media: crate::history_media::HistoryMediaState::default(),
+            history_transcription: Arc::new(
+                crate::history_transcription::HistoryTranscriptionState::default(),
+            ),
             video_ai: Arc::new(crate::video_ai::VideoAiState::default()),
             accounts: crate::accounts::AccountState::default(),
             social_insights: crate::social_insights::SocialInsightsState::default(),

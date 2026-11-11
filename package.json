@@ -17,6 +17,7 @@
         "test:js": "node --test --test-timeout=30000 \"test/*.test.mjs\"",
         "test:ui": "node test/design-system-ui.mjs",
         "test:ai-ui": "node test/history-ai-ui.mjs",
+        "test:transcription-ui": "node test/history-transcription-ui.mjs",
         "test:creator-subtitles": "node test/creator-subtitles.integration.mjs",
         "test:rust": "node scripts/run-rust-tests.mjs all",
         "build:check": "npm run sync:design-system && npm run prepare:social-runtime && cargo build --manifest-path src-tauri/Cargo.toml --locked --release --features custom-protocol",

@@ -7,6 +7,7 @@ import { createHistorySubtitlesView } from './history-subtitles-view.js';
 import { copyAllText, createTextReader } from './history-text-view.js';
 import { createHistoryMediaView } from './history-media-view.js';
 import { createHistoryAiView } from './history-ai-view.js';
+import { transcriptionActive, transcriptionErrorMessage } from './history-transcription-jobs.js';
 
 export const createHistoryDetailsView = ({
     els,
@@ -18,6 +19,7 @@ export const createHistoryDetailsView = ({
     showSavedVideosByCreator,
     openAccount,
     jobs,
+    transcriptionJobs,
     navigateToDetails,
     navigateToHistory,
     tags,
@@ -69,7 +71,103 @@ export const createHistoryDetailsView = ({
     const socialView = createHistorySocialInsightsView({ els, api, appendLog });
     subtitlesView = createHistorySubtitlesView({ els, api, appendLog, media: subtitleMedia });
     const keywordsView = createHistoryKeywordsView({ els, api, appendLog });
-    const aiView = createHistoryAiView({ root: els.historyAiPanel, api, appendLog });
+    const aiView = createHistoryAiView({
+        root: els.historyAiPanel,
+        api,
+        appendLog,
+        onTranscribe: id => {
+            if (id !== state.entryId) return;
+            const requestId = state.detailsRequestId;
+            els.historyTranscriptTab.click();
+            els.historyTranscriptTab.focus({ preventScroll: true });
+            void transcriptionJobs.load(id).then(() => {
+                if (
+                    id === state.entryId &&
+                    requestId === state.detailsRequestId &&
+                    document.activeElement === els.historyTranscriptTab &&
+                    !els.historyTranscribeBtn.disabled
+                )
+                    els.historyTranscribeBtn.focus({ preventScroll: true });
+            });
+        },
+    });
+    let transcriptRefresh = null;
+
+    const renderTranscription = () => {
+        const record = transcriptionJobs.get(state.entryId);
+        const progress = record?.progress;
+        const active = transcriptionActive(progress);
+        const saved = Boolean(state.details?.transcript);
+        const controls = els.historyTranscriptionControls;
+        controls.hidden = !state.details || saved;
+        const button = els.historyTranscribeBtn;
+        button.hidden = active;
+        button.disabled = !api.available || !record?.can_transcribe || record.loading || active;
+        button.setAttribute('aria-busy', String(active));
+        const retry = Boolean(record?.error || ['failed', 'cancelled'].includes(progress?.status));
+        button.querySelector('[data-transcription-label]').textContent = retry
+            ? 'Retry Transcription'
+            : 'Transcribe Video';
+        const cancel = els.historyTranscriptionCancelBtn;
+        const restoreCancelFocus = document.activeElement === cancel && !active;
+        cancel.hidden = !active;
+        cancel.disabled = !progress?.attempt_id || record?.cancelling;
+        cancel.textContent = record?.cancelling ? 'Cancelling…' : 'Cancel';
+        els.historyTranscriptionRefreshBtn.hidden = active;
+        els.historyTranscriptionRefreshBtn.disabled = Boolean(record?.loading) || !api.available;
+        els.historyTranscriptionRefreshBtn.setAttribute('aria-busy', String(Boolean(record?.loading)));
+        const status = els.historyTranscriptionStatus;
+        const failed = progress?.status === 'failed';
+        status.classList.toggle('oj-status-error', Boolean(record?.error || failed));
+        status.textContent = record?.error
+            ? record.error
+            : active
+              ? record?.cancelling
+                  ? 'Cancelling transcription…'
+                  : progress.phase === 'saving'
+                    ? 'Saving transcript…'
+                    : progress.phase === 'transcribing'
+                      ? `Transcribing locally${progress.model ? ` · Whisper ${progress.model}` : ''}…`
+                      : 'Preparing local transcription…'
+              : record?.loading
+                ? 'Checking saved video…'
+                : failed
+                  ? transcriptionErrorMessage(progress.message)
+                  : progress?.status === 'cancelled'
+                    ? 'Transcription cancelled. You can try again.'
+                    : record?.transcript_available
+                      ? 'Loading saved transcript…'
+                      : record && !record.can_transcribe
+                        ? transcriptionErrorMessage(record.unavailable_reason)
+                        : 'Transcribe the saved video locally with Whisper.';
+        if (restoreCancelFocus && !button.disabled && els.historyTranscriptTab.getAttribute('aria-selected') === 'true')
+            button.focus({ preventScroll: true });
+    };
+
+    const refreshSavedTranscript = async id => {
+        const requestId = state.detailsRequestId;
+        if (id !== state.entryId || (transcriptRefresh?.id === id && transcriptRefresh.requestId === requestId)) return;
+        const refresh = { id, requestId };
+        transcriptRefresh = refresh;
+        try {
+            const details = await api.getHistoryDetails({ id });
+            if (id !== state.entryId || requestId !== state.detailsRequestId || !details) return;
+            state.details = details;
+            state.transcript = undefined;
+            renderOverview(details);
+            renderTranscription();
+            if (els.historyTranscriptTab.getAttribute('aria-selected') === 'true') await loadTranscript();
+            if (id !== state.entryId || requestId !== state.detailsRequestId) return;
+            void aiView.refreshTranscript();
+            if (els.historyKeywordsTab.getAttribute('aria-selected') === 'true') void keywordsView.load();
+        } catch (error) {
+            appendLog(`[transcription refresh] ${error}`, true);
+            if (id === state.entryId && requestId === state.detailsRequestId)
+                els.historyTranscriptStatus.textContent = 'Transcript saved. Reopen this video to load it.';
+        } finally {
+            if (transcriptRefresh === refresh) transcriptRefresh = null;
+        }
+    };
 
     const formatDateTime = timestamp => {
         const date = new Date(Number(timestamp));
@@ -194,7 +292,7 @@ export const createHistoryDetailsView = ({
         els.historyTranscriptNotice.hidden = true;
         transcriptReader.set(content?.text);
         if (!content) {
-            els.historyTranscriptStatus.textContent = 'No transcript is saved for this video.';
+            if (state.details?.transcript) els.historyTranscriptStatus.textContent = 'Loading transcript…';
             return;
         }
 
@@ -327,6 +425,7 @@ export const createHistoryDetailsView = ({
         state.details = null;
         state.transcript = undefined;
         state.captions.clear();
+        renderTranscription();
         subtitlesView.reset();
         transcriptReader.reset();
         transcriptMedia.setEntry(null);
@@ -398,6 +497,8 @@ export const createHistoryDetailsView = ({
             renderTranscript(null);
             renderCaption(null);
             renderOverview(details);
+            renderTranscription();
+            if (!details.transcript) void transcriptionJobs.load(entryId);
             void tags.showDetails(entryId);
             renderCaptionOptions(details.captions || []);
             subtitlesView.reset(entryId, details.subtitles || []);
@@ -420,6 +521,31 @@ export const createHistoryDetailsView = ({
         socialView.bindEvents();
         keywordsView.bindEvents();
         aiView.bindEvents();
+        const unsubscribeTranscription = transcriptionJobs.subscribe((id, record) => {
+            if (!state.entryId || !state.details) return;
+            if (id !== state.entryId) {
+                const current = transcriptionJobs.get(state.entryId);
+                if (
+                    record?.progress &&
+                    !transcriptionActive(record.progress) &&
+                    /another.*transcri/i.test(current?.unavailable_reason || current?.error || '')
+                )
+                    void transcriptionJobs.load(state.entryId);
+                return;
+            }
+            renderTranscription();
+            if (record?.transcript_available && !state.details.transcript) void refreshSavedTranscript(id);
+        });
+        window.addEventListener('pagehide', unsubscribeTranscription, { once: true });
+        els.historyTranscribeBtn.addEventListener('click', () => {
+            if (state.entryId && !els.historyTranscribeBtn.disabled) void transcriptionJobs.start(state.entryId);
+        });
+        els.historyTranscriptionCancelBtn.addEventListener('click', () => {
+            if (state.entryId) void transcriptionJobs.cancel(state.entryId);
+        });
+        els.historyTranscriptionRefreshBtn.addEventListener('click', () => {
+            if (state.entryId) void transcriptionJobs.load(state.entryId);
+        });
         subtitlesView.bindEvents();
         const cleanupTabs = initTabs(els.historyDetailsContent);
         window.addEventListener('pagehide', cleanupTabs, { once: true });
@@ -563,6 +689,8 @@ export const createHistoryDetailsView = ({
             if (event.detail.tab === els.historyTranscriptTab) {
                 void loadTranscript();
                 void transcriptMedia.activate();
+                renderTranscription();
+                if (!state.details?.transcript && state.entryId) void transcriptionJobs.load(state.entryId);
             } else transcriptReader.deactivate();
             if (event.detail.tab === els.historySubtitlesTab) {
                 void subtitlesView.load();

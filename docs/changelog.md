@@ -2,6 +2,7 @@
 
 - Added optional Codex video summaries and independently saved transcript chat in Video Details.
 - Added Codex CLI installation, compatibility and authentication diagnostics in Settings.
+- Added local transcription of previously downloaded videos from History, with cancellation, retry and automatic AI chat availability after saving.
 - Overhauling some UI layouts
 
 # 3.0.2

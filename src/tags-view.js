@@ -5,9 +5,33 @@ import { formatHistorySource, formatLocalDateTime } from './formatters.js';
 
 export const createTagsView = ({ root, api, tags, createItem, openVideo, openAccount, appendLog }) => {
     root.innerHTML = `<nav class="oj-breadcrumb" aria-label="Tag breadcrumb" data-tags-breadcrumb hidden><ol><li><button type="button" class="oj-button oj-button-ghost oj-button-compact" data-tags-overview>Tags</button></li><li aria-current="page" data-tags-crumb></li></ol></nav>
-    <div class="oj-cluster"><h2 id="tagsTitle" class="oj-heading-2 oj-grow" tabindex="-1">Tags</h2><button type="button" class="oj-button oj-button-primary" data-tags-create>Create Tag</button><button type="button" class="oj-button oj-button-secondary" data-tags-edit hidden>Edit Tag</button><button type="button" class="oj-button oj-button-danger" data-tags-delete hidden>Delete Tag</button></div>
-    <div data-tags-description class="oj-text"></div><p data-tags-count class="oj-helper"></p><label class="oj-field" data-tags-search> <span data-tags-search-label>Search Tags</span><input id="tagsQuery" class="oj-input" type="search" autocomplete="off" placeholder="Search tags..."></label>
-    <div class="oj-cluster" data-tags-feedback hidden><p data-tags-status class="oj-status" role="status"></p><button type="button" class="oj-button oj-button-secondary oj-button-compact" data-tags-retry hidden>Retry</button></div><div class="pinefetch-tags-scroll" data-tags-scroll><div class="oj-stack" data-tags-definitions></div><div class="oj-tabs" data-oj-tabs data-tags-tabs hidden><div class="oj-tab-list" role="tablist" aria-label="Tagged archive"><button type="button" class="oj-tab" id="tagContentTab" role="tab" aria-controls="tagContentPanel" aria-selected="true">Content</button><button type="button" class="oj-tab" id="tagAccountsTab" role="tab" aria-controls="tagAccountsPanel">Accounts</button></div><section id="tagContentPanel" role="tabpanel" aria-labelledby="tagContentTab" class="oj-tab-panel"><div class="oj-stack" data-tags-content></div></section><section id="tagAccountsPanel" role="tabpanel" aria-labelledby="tagAccountsTab" class="oj-tab-panel" hidden><p class="oj-helper">Accounts are derived from tagged content. Verified creator IDs are grouped; unverified downloads remain separate.</p><div class="oj-stack" data-tags-accounts></div></section></div><section class="oj-empty-state" data-tags-empty-state hidden><h3 class="oj-heading-3">No tags yet</h3><p class="oj-helper">Create your first tag to organize saved content.</p><button type="button" class="oj-button oj-button-primary" data-tags-empty-create>Create Tag</button></section><section class="oj-empty-state" data-tags-no-matches hidden><h3 class="oj-heading-3">No matching tags</h3><p class="oj-helper">Try another search term.</p><button type="button" class="oj-button oj-button-secondary" data-tags-clear-search>Clear search</button></section><p class="oj-helper" data-tags-empty></p><button type="button" class="oj-button oj-button-ghost" data-tags-more hidden>Load more</button></div>`;
+    <header class="pinefetch-tags-header">
+        <div class="pinefetch-tags-heading">
+            <h2 id="tagsTitle" class="oj-heading-2" tabindex="-1">Tags</h2>
+            <p data-tags-description class="oj-helper" hidden><i class="fa-regular fa-note-sticky" data-tags-note-icon aria-hidden="true" hidden></i><span data-tags-description-text></span></p>
+        </div>
+        <div class="oj-cluster pinefetch-tags-actions"><button type="button" class="oj-button oj-button-primary" data-tags-create>Create Tag</button><button type="button" class="oj-button oj-button-secondary" data-tags-edit hidden>Edit Tag</button><button type="button" class="oj-button oj-button-danger" data-tags-delete hidden>Delete Tag</button></div>
+    </header>
+    <div data-tags-search-home><label class="oj-field" data-tags-search for="tagsQuery"><span class="oj-sr-only" data-tags-search-label>Search tags</span><span class="oj-input-group pinefetch-tags-search-input"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><input id="tagsQuery" class="oj-input" type="search" autocomplete="off" placeholder="Search tags..."></span></label></div>
+    <div class="oj-cluster" data-tags-feedback hidden><p data-tags-status class="oj-status" role="status"></p><button type="button" class="oj-button oj-button-secondary oj-button-compact" data-tags-retry hidden>Retry</button></div>
+    <div class="oj-tabs pinefetch-tags-workspace" data-oj-tabs data-tags-tabs>
+        <div class="pinefetch-tags-toolbar" data-tags-toolbar hidden>
+            <div class="oj-tab-list" role="tablist" aria-label="Tagged archive">
+                <button type="button" class="oj-tab" id="tagContentTab" role="tab" aria-controls="tagContentPanel" aria-selected="true">Content</button>
+                <button type="button" class="oj-tab" id="tagAccountsTab" role="tab" aria-controls="tagAccountsPanel">Accounts</button>
+            </div>
+        </div>
+        <div class="pinefetch-tags-scroll" data-tags-scroll>
+            <div class="oj-stack" data-tags-definitions></div>
+            <div data-tags-panels hidden>
+                <section id="tagContentPanel" role="tabpanel" aria-labelledby="tagContentTab" class="oj-tab-panel"><div class="oj-stack" data-tags-content></div></section>
+                <section id="tagAccountsPanel" role="tabpanel" aria-labelledby="tagAccountsTab" class="oj-tab-panel" hidden><p class="oj-helper">Accounts are derived from tagged content. Verified creator IDs are grouped; unverified downloads remain separate.</p><div class="oj-stack" data-tags-accounts></div></section>
+            </div>
+            <section class="oj-empty-state" data-tags-empty-state hidden><h3 class="oj-heading-3">No tags yet</h3><p class="oj-helper">Create your first tag to organize saved content.</p><button type="button" class="oj-button oj-button-primary" data-tags-empty-create>Create Tag</button></section>
+            <section class="oj-empty-state" data-tags-no-matches hidden><h3 class="oj-heading-3">No matching tags</h3><p class="oj-helper">Try another search term.</p><button type="button" class="oj-button oj-button-secondary" data-tags-clear-search>Clear search</button></section>
+            <p class="oj-helper" data-tags-empty></p><button type="button" class="oj-button oj-button-ghost" data-tags-more hidden>Load more</button>
+        </div>
+    </div>`;
     const el = name => root.querySelector(`[data-tags-${name}]`);
     initTabs(el('tabs'));
     const state = {
@@ -45,20 +69,29 @@ export const createTagsView = ({ root, api, tags, createItem, openVideo, openAcc
         el('create').hidden = Boolean(state.id) || (state.overviewLoaded && !state.definitions.length);
         el('edit').hidden = !state.id;
         el('delete').hidden = !state.id;
-        el('tabs').hidden = !state.id;
+        el('toolbar').hidden = !state.id;
+        el('panels').hidden = !state.id;
         el('definitions').hidden = Boolean(state.id);
         el('breadcrumb').hidden = !state.id;
-        el('count').hidden = !state.id;
+        el('search-home').hidden = Boolean(state.id) || !state.definitions.length;
+        const searchParent = state.id ? el('toolbar') : el('search-home');
+        if (el('search').parentElement !== searchParent) searchParent.append(el('search'));
+        el('description').classList.toggle('pinefetch-tag-notes', Boolean(state.id));
+        el('note-icon').hidden = !state.id;
         el('no-matches').hidden =
             Boolean(state.id) || !state.definitions.length || Boolean(el('definitions').childElementCount);
-        root.querySelector('input').placeholder = !state.id ? 'Search tags...' : 'Search…';
+        root.querySelector('input').placeholder = !state.id
+            ? 'Search tags...'
+            : state.tab === 'content'
+              ? 'Search content...'
+              : 'Search accounts...';
         el('search').hidden = !state.id && !state.definitions.length;
         el('empty-state').hidden = Boolean(state.id) || !state.overviewLoaded || Boolean(state.definitions.length);
         el('search-label').textContent = !state.id
-            ? 'Search Tags'
+            ? 'Search tags'
             : state.tab === 'content'
-              ? 'Search tagged content'
-              : 'Search tagged accounts';
+              ? 'Search content'
+              : 'Search accounts';
         for (const button of [
             el('create'),
             el('empty-create'),
@@ -169,10 +202,9 @@ export const createTagsView = ({ root, api, tags, createItem, openVideo, openAcc
         state.tag = tag;
         el('crumb').textContent = tag.name;
         root.querySelector('h2').replaceChildren(createTagChip(tag));
-        el('description').textContent = tag.description;
+        el('description-text').textContent = tag.description;
+        el('description-text').title = tag.description;
         el('description').hidden = !tag.description;
-        el('count').textContent =
-            `${tag.content_count.toLocaleString()} saved items · ${tag.account_count.toLocaleString()} accounts`;
         root.querySelector('#tagContentTab').textContent = `Content (${tag.content_count.toLocaleString()})`;
         root.querySelector('#tagAccountsTab').textContent = `Accounts (${tag.account_count.toLocaleString()})`;
     };
@@ -326,9 +358,9 @@ export const createTagsView = ({ root, api, tags, createItem, openVideo, openAcc
         state.query = '';
         state.accountQuery = '';
         root.querySelector('h2').textContent = 'Tags';
-        el('description').textContent = 'Organize and explore your saved content.';
-        el('description').hidden = false;
-        el('count').textContent = '';
+        el('description-text').textContent = '';
+        el('description-text').removeAttribute('title');
+        el('description').hidden = true;
         root.querySelector('input').value = state.overviewQuery;
         controls();
         void load(false, state.overviewScroll);
@@ -342,9 +374,9 @@ export const createTagsView = ({ root, api, tags, createItem, openVideo, openAcc
         state.tag = null;
         el('crumb').textContent = 'Tag';
         root.querySelector('h2').textContent = 'Loading tag…';
-        el('description').textContent = '';
+        el('description-text').textContent = '';
+        el('description-text').removeAttribute('title');
         el('description').hidden = true;
-        el('count').textContent = '';
         state.id = id;
         state.tab = 'content';
         state.query = '';

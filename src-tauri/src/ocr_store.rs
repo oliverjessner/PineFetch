@@ -9,23 +9,37 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::BTreeMap;
 
 pub(crate) fn saved_path(db: &Database, id: &str) -> Result<String, String> {
-    let stored: Option<(Option<String>, bool, Option<String>, bool)> = {
+    let stored = {
         let conn = db.lock().map_err(|_| "SQLite lock poisoned")?;
-        conn.query_row(
-            "SELECT history.output_path,
+        saved_path_metadata(&conn, id)?
+    };
+    resolve_saved_path(stored)
+}
+
+pub(crate) fn saved_path_in_conn(conn: &Connection, id: &str) -> Result<String, String> {
+    resolve_saved_path(saved_path_metadata(conn, id)?)
+}
+
+type SavedPathMetadata = (Option<String>, bool, Option<String>, bool);
+
+fn saved_path_metadata(conn: &Connection, id: &str) -> Result<SavedPathMetadata, String> {
+    conn.query_row(
+        "SELECT history.output_path,
              COALESCE(history.medium='transcript',0) OR transcription.history_entry_id IS NOT NULL,
              transcription.media_path, COALESCE(transcription.media_path_known,0)
              FROM history_entries AS history
              LEFT JOIN transcriptions AS transcription ON transcription.history_entry_id=history.id
              WHERE history.id=?1",
-            [id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?
-    };
-    let (path, is_transcript, media_path, media_path_known) =
-        stored.ok_or("This history entry no longer exists.")?;
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )
+    .optional()
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "This history entry no longer exists.".into())
+}
+
+fn resolve_saved_path(stored: SavedPathMetadata) -> Result<String, String> {
+    let (path, is_transcript, media_path, media_path_known) = stored;
     if media_path_known {
         // An explicit missing/unavailable source must never select a nearby file.
         let media_path = media_path.ok_or(crate::ocr_source::NO_VIDEO)?;

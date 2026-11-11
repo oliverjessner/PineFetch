@@ -926,10 +926,18 @@ try {
                 /[^"\s]/
             );
             await page.locator('#brandHistoryBtn').focus();
-            await page.locator('.oj-tooltip').waitFor();
-            assert(await page.locator('#brandHistoryBtn').getAttribute('aria-describedby'));
+            const historyTooltip = page.getByRole('tooltip', {
+                name: 'Open history',
+                exact: true,
+                includeHidden: true,
+            });
+            await historyTooltip.waitFor();
+            assert.equal(
+                await page.locator('#brandHistoryBtn').getAttribute('aria-describedby'),
+                await historyTooltip.getAttribute('id')
+            );
             await page.keyboard.press('Escape');
-            await page.locator('.oj-tooltip').waitFor({ state: 'hidden' });
+            await historyTooltip.waitFor({ state: 'hidden' });
 
             // Saved format restoration and the library's radio-menu keyboard contract.
             assert.equal(await presetTrigger.isDisabled(), false);
@@ -2119,10 +2127,8 @@ try {
             assert.equal(await page.locator('#historyTranscriptTab').isDisabled(), false);
             assert(await page.locator('#historyTranscriptTab').isVisible());
             await page.locator('#historyTranscriptTab').click();
-            assert.equal(
-                await page.locator('#historyTranscriptStatus').textContent(),
-                'No transcript is saved for this video.'
-            );
+            assert(await page.locator('#historyTranscriptionControls').isVisible());
+            assert.equal(await page.locator('#historyTranscriptCopyBtn').isDisabled(), true);
             await page.locator('#historyOverviewTab').click();
             assert.match(await page.locator('#historyCaptionStatus').textContent(), /No saved .* is available/);
             await page.locator('#historyTranscriptTab').click();

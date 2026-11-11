@@ -6,7 +6,6 @@ export const createAppState = () =>
         queueAutoStartEnabled: true,
         queueWorkerRunning: false,
         queuePaused: false,
-        queueCollapsed: false,
         suppressedJobIds: new Set(),
         pendingClearAfterTerminal: new Set(),
         selectedId: null,

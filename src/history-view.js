@@ -7,6 +7,7 @@ import { formatHistorySource, formatLocalDateTime, formatUploadDate } from './fo
 import { createHistoryAccountView } from './history-account-view.js';
 import { createHistoryDetailsView } from './history-details-view.js';
 import { createHistoryOcrJobs, ocrActive } from './history-ocr-jobs.js';
+import { createHistoryTranscriptionJobs } from './history-transcription-jobs.js';
 import { createPlatformIcon } from './platform-icons.js';
 
 export const createHistoryView = ({
@@ -51,6 +52,7 @@ export const createHistoryView = ({
     let historySearchTimer = null;
     let historySources = [];
     const jobs = createHistoryOcrJobs({ api, appendLog });
+    const transcriptionJobs = createHistoryTranscriptionJobs({ api, appendLog });
     const searchFieldChoice = createDropdownChoice({
         menu: els.historySearchFieldMenu,
         value: els.historySearchFieldValue,
@@ -184,6 +186,7 @@ export const createHistoryView = ({
         detectPlatform,
         showSavedVideosByCreator: creator => showSavedVideosByCreator(creator),
         jobs,
+        transcriptionJobs,
         tags,
         openAccount: id => {
             historyDetailsView.leave();
@@ -784,6 +787,7 @@ export const createHistoryView = ({
             void renderHistory({ force: true });
         });
         jobs.bindEvents();
+        transcriptionJobs.bindEvents();
         const unsubscribeJobs = jobs.subscribe((id, record) => {
             for (const indicator of els.historyList.querySelectorAll('[data-ocr-history-id]')) {
                 if (indicator.dataset.ocrHistoryId === id) renderOcrIndicator(indicator, record);
@@ -794,6 +798,7 @@ export const createHistoryView = ({
             () => {
                 unsubscribeJobs();
                 jobs.dispose();
+                transcriptionJobs.dispose();
             },
             { once: true }
         );

@@ -86,6 +86,8 @@ to reuse the saved options. Completed downloads are not automatically repeated.
 
 Open a History item to inspect its source, creator, file details, transcript and available captions. Search or copy saved text, open the downloaded file or return to the original page.
 
+If a saved video has no transcript yet, open **Transcript → Transcribe Video** to transcribe the local file with the Whisper model selected in Settings. You can cancel or retry the background task. The transcript stays with the existing History entry and becomes available to **Ask this Video** without generating a summary.
+
 ![PineFetch History details with source metadata, saved file information and text tabs](src/images/mockups/more_data.webp)
 
 ## Find text inside video frames

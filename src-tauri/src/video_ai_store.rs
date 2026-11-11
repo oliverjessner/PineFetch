@@ -288,7 +288,7 @@ fn read_summary(conn: &Connection, id: &str, hash: &str) -> Result<Option<Summar
                 key_takeaways: serde_json::from_str(&takeaways)
                     .map_err(|_| "Saved key takeaways are invalid; data preserved.")?,
             };
-            validate_summary(&content)?;
+            validate_saved_summary(&content)?;
             Ok(Summary {
                 transcript_hash: hash.to_owned(),
                 generation_id,
@@ -347,6 +347,16 @@ fn chat_revision(conn: &Connection, id: &str, hash: &str) -> Result<i64, String>
 }
 
 pub(crate) fn validate_summary(content: &SummaryContent) -> Result<(), String> {
+    validate_saved_summary(content)?;
+    if !(3..=8).contains(&content.key_takeaways.len()) {
+        return Err("New Key Takeaways must contain between 3 and 8 items.".into());
+    }
+    Ok(())
+}
+
+// Existing summaries used wider item limits. Continue reading them unchanged;
+// the stricter generation contract applies only to newly saved results.
+fn validate_saved_summary(content: &SummaryContent) -> Result<(), String> {
     validate_text(&content.quick_summary, 32768, "Quick Summary")?;
     if content.key_takeaways.is_empty() || content.key_takeaways.len() > 20 {
         return Err("Key Takeaways must contain between 1 and 20 items.".into());
@@ -399,7 +409,7 @@ mod tests {
         database::initialize(conn).unwrap();
         conn.execute_batch(
             "INSERT INTO history_entries(id,url,created_at) VALUES('one','https://example.com/one',1),('two','https://example.com/two',2),('empty','https://example.com/empty',3);
-             INSERT INTO transcriptions(id,history_entry_id,text,\"type\") VALUES('t1','one','The first transcript states that the launch is on Tuesday.','text'),('t2','two','The second transcript is about a different project.','text');",
+             INSERT INTO transcriptions(id,history_entry_id,text,\"type\") VALUES('t1','one','The first transcript states that the launch is on Tuesday. Engineers will inspect the capsule. Weather may delay the launch.','text'),('t2','two','The second transcript is about a different project.','text');",
         ).unwrap();
     }
 
@@ -421,7 +431,11 @@ mod tests {
     fn summary(text: &str) -> SummaryContent {
         SummaryContent {
             quick_summary: text.into(),
-            key_takeaways: vec!["The launch is on Tuesday.".into()],
+            key_takeaways: vec![
+                "The launch is on Tuesday.".into(),
+                "Engineers will inspect the capsule.".into(),
+                "Weather may delay the launch.".into(),
+            ],
         }
     }
 
@@ -630,6 +644,52 @@ mod tests {
     }
 
     #[test]
+    fn new_summary_writes_enforce_item_limits_and_keep_all_eight_items() {
+        let db = db();
+        let source = transcript(&db, "one").unwrap();
+        let mut content = summary("A valid summary.");
+        content.key_takeaways = (1..=8)
+            .map(|index| format!("Distinct transcript insight {index}."))
+            .collect();
+        let original = save_summary(&db, &source, &content, &metadata()).unwrap();
+        assert_eq!(original.key_takeaways, content.key_takeaways);
+        for count in [0, 1, 2, 9, 12, 20] {
+            content.key_takeaways = (1..=count)
+                .map(|index| format!("Replacement insight {index}."))
+                .collect();
+            assert!(save_summary(&db, &source, &content, &metadata()).is_err());
+            assert_eq!(snapshot(&db, "one").unwrap().summary.unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn legacy_cached_summaries_remain_readable_without_changing_history_or_chat() {
+        let db = db();
+        let source = transcript(&db, "one").unwrap();
+        let mut original =
+            save_summary(&db, &source, &summary("Cached summary."), &metadata()).unwrap();
+        let messages = append_exchange(&db, &source, "When?", "Tuesday.", &metadata()).unwrap();
+        // The old decoder accepted 1–20 items, including generated 1–12 lists.
+        for count in [1, 2, 9, 12, 20] {
+            let takeaways = (1..=count)
+                .map(|index| format!("Legacy cached insight {index}."))
+                .collect::<Vec<_>>();
+            db.lock()
+                .unwrap()
+                .execute(
+                    "UPDATE history_ai_summaries SET key_takeaways_json=?1",
+                    [serde_json::to_string(&takeaways).unwrap()],
+                )
+                .unwrap();
+            original.key_takeaways = takeaways;
+            let saved = snapshot(&db, "one").unwrap();
+            assert_eq!(saved.summary.unwrap(), original);
+            assert!(saved.summary_error.is_none());
+            assert_eq!(saved.messages, messages);
+        }
+    }
+
+    #[test]
     fn unreadable_chat_does_not_disable_summary_generation() {
         let db = db();
         let source = transcript(&db, "one").unwrap();
@@ -773,7 +833,7 @@ mod tests {
                     |r| r.get::<_, String>(0)
                 )
                 .unwrap(),
-            "The first transcript states that the launch is on Tuesday."
+            "The first transcript states that the launch is on Tuesday. Engineers will inspect the capsule. Weather may delay the launch."
         );
         database::initialize(&conn).unwrap();
         assert_eq!(

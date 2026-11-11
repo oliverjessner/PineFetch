@@ -37,6 +37,7 @@ mod history_archive_tests;
 mod history_media;
 mod history_query;
 mod history_rules;
+mod history_transcription;
 #[cfg(test)]
 mod http_failure_tests;
 #[cfg(test)]
@@ -237,6 +238,9 @@ fn main() {
             commands::get_history_social_insights,
             commands::load_history_social_insights,
             commands::get_history_transcript,
+            commands::get_history_transcription_status,
+            commands::start_history_transcription,
+            commands::cancel_history_transcription,
             commands::get_codex_diagnostics,
             commands::get_video_ai,
             commands::analyze_video,
@@ -275,6 +279,7 @@ fn main() {
             let state = app_handle.state::<AppState>();
             stop_active_download_on_exit(state.inner());
             state.video_ai.stop();
+            state.history_transcription.stop();
             state.ocr.stop();
             stop_link_dump_server(state.inner());
             if let Some(server) = app_handle.try_state::<cli::CliServer>() {

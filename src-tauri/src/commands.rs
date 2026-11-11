@@ -473,6 +473,96 @@ pub(crate) fn get_history_transcript(
 }
 
 #[tauri::command]
+pub(crate) async fn get_history_transcription_status(
+    app: AppHandle,
+    id: String,
+) -> Result<crate::history_transcription::TranscriptionStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        crate::history_transcription::status(&state.db, &state.history_transcription, &id)
+    })
+    .await
+    .map_err(|_| "Transcription status could not be loaded.".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn start_history_transcription(
+    app: AppHandle,
+    id: String,
+) -> Result<crate::history_transcription::TranscriptionProgress, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Emitter;
+        let state = app.state::<AppState>();
+        if state
+            .processes
+            .shutting_down
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err("Application is shutting down.".into());
+        }
+        crate::runtime::ensure_whisper_platform()?;
+        let (configured, model) = {
+            let config = state.config.lock().map_err(|_| "Config lock poisoned")?;
+            (
+                config.yt_dlp_path.clone(),
+                config.faster_whisper_model.clone(),
+            )
+        };
+        let python = crate::runtime::resolve_python_executable(&app)
+            .ok_or("No Python runtime is available. Check the Whisper runtime in Settings.")?;
+        let directory =
+            crate::runtime::resolve_ffmpeg_location(&app, configured.as_deref().unwrap_or(""))
+                .ok_or("FFmpeg is unavailable. Check the local media tools in Settings.")?;
+        let tools = crate::history_transcription::TranscriptionTools {
+            python: std::path::PathBuf::from(python),
+            ffmpeg: std::path::Path::new(&directory).join(crate::runtime::ffmpeg_tool_name()),
+        };
+        let event_app = app.clone();
+        let log_app = app.clone();
+        let log_id = id.clone();
+        crate::history_transcription::start(
+            state.db.clone(),
+            state.history_transcription.clone(),
+            id,
+            tools,
+            model,
+            move |progress| {
+                let completed = progress.status == "completed";
+                let _ = event_app.emit("history:transcription", progress);
+                if completed {
+                    let _ = event_app.emit(crate::events::HISTORY_CHANGED, ());
+                }
+            },
+            move |line, is_error| {
+                crate::events::emit_log(
+                    &log_app,
+                    crate::models::LogEvent {
+                        id: log_id.clone(),
+                        line,
+                        is_error,
+                    },
+                );
+            },
+        )
+    })
+    .await
+    .map_err(|_| "Local transcription could not start. Try again.".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) fn cancel_history_transcription(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+    attempt_id: String,
+) -> Result<crate::history_transcription::TranscriptionProgress, String> {
+    use tauri::Emitter;
+    let progress = state.history_transcription.cancel(&id, &attempt_id)?;
+    let _ = app.emit("history:transcription", &progress);
+    Ok(progress)
+}
+
+#[tauri::command]
 pub(crate) fn get_history_subtitle(
     state: State<AppState>,
     id: String,

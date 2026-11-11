@@ -93,7 +93,6 @@ const els = Object.seal({
     infoThumb: document.getElementById('infoThumb'),
     queueList: document.getElementById('queueList'),
     queueBadge: document.getElementById('queueBadge'),
-    queueCollapseBtn: document.getElementById('queueCollapseBtn'),
     queueAutoStartBtn: document.getElementById('queueAutoStartBtn'),
     startQueueBtn: document.getElementById('startQueueBtn'),
     pauseQueueBtn: document.getElementById('pauseQueueBtn'),
@@ -271,6 +270,11 @@ const els = Object.seal({
     historyTranscriptCopyBtn: document.getElementById('historyTranscriptCopyBtn'),
     historyTranscriptNotice: document.getElementById('historyTranscriptNotice'),
     historyTranscriptStatus: document.getElementById('historyTranscriptStatus'),
+    historyTranscriptionControls: document.getElementById('historyTranscriptionControls'),
+    historyTranscriptionStatus: document.getElementById('historyTranscriptionStatus'),
+    historyTranscribeBtn: document.getElementById('historyTranscribeBtn'),
+    historyTranscriptionCancelBtn: document.getElementById('historyTranscriptionCancelBtn'),
+    historyTranscriptionRefreshBtn: document.getElementById('historyTranscriptionRefreshBtn'),
     historyTranscriptText: document.getElementById('historyTranscriptText'),
     historyTranscriptSearchInput: document.getElementById('historyTranscriptSearchInput'),
     historyTranscriptResultCount: document.getElementById('historyTranscriptResultCount'),
@@ -519,9 +523,7 @@ const setActiveView = (view, route = {}) => {
     els.downloadView.hidden = !isDownload;
     els.historyResultCount.hidden = true;
     els.settingsView.hidden = !isSettings;
-    els.queueProgressView.hidden = !isDownload || state.queueCollapsed;
-    els.queueCollapseBtn.hidden = !isDownload;
-    split.classList.toggle('pinefetch-queue-collapsed', isDownload && state.queueCollapsed);
+    els.queueProgressView.hidden = !isDownload;
     els.historySummaryView.hidden = !isHistory;
     els.downloadView.classList.toggle('pinefetch-is-active', isDownload);
     els.historyView.classList.toggle('pinefetch-is-active', isHistory);
@@ -737,15 +739,6 @@ const renderQueueControls = () => {
     }
 
     setQueueModeHint('Manual mode is active. New items stay queued until you click Download.');
-};
-
-const toggleQueueCollapsed = () => {
-    state.queueCollapsed = !state.queueCollapsed;
-    els.queueCollapseBtn.textContent = state.queueCollapsed ? 'Show queue' : 'Hide queue';
-    els.queueCollapseBtn.setAttribute('aria-expanded', String(!state.queueCollapsed));
-    els.queueProgressView.hidden = state.queueCollapsed;
-    document.querySelector('.pinefetch-split')?.classList.toggle('pinefetch-queue-collapsed', state.queueCollapsed);
-    if (!state.queueCollapsed) scheduleQueueRender();
 };
 
 const getQueueMetaItems = job => {
@@ -1671,7 +1664,6 @@ const bindEvents = () => {
     els.queueAutoStartBtn.addEventListener('click', () => {
         void toggleQueueAutoStart();
     });
-    els.queueCollapseBtn.addEventListener('click', toggleQueueCollapsed);
     els.startQueueBtn.addEventListener('click', () => {
         void startQueueProcessing();
     });

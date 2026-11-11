@@ -260,18 +260,21 @@ try {
             assert.equal(await ytDlpAdvanced.evaluate(node => node.open), false);
             assert.equal(await page.locator('#ytDlpPath').isHidden(), true);
             await page.waitForFunction(
-                () => globalThis.document.getElementById('ytDlpInstalledVersion').textContent === 'Installed · v2026.09.19'
+                () =>
+                    globalThis.document.getElementById('ytDlpInstalledVersion').textContent ===
+                    'Installed · v2026.09.19'
             );
             assert.equal(await page.locator('#ytDlpLatestVersion').textContent(), 'Update available: v2026.10.29');
             assert.equal(await ytDlpCheck.getAttribute('data-oj-tooltip'), 'Check Again');
             const previousChecks = await page.evaluate(
-                () => globalThis.__settingsUi.calls.filter(call => call.command === 'get_yt_dlp_installed_version').length
+                () =>
+                    globalThis.__settingsUi.calls.filter(call => call.command === 'get_yt_dlp_installed_version').length
             );
             await ytDlpCheck.click();
             await page.waitForFunction(
                 count =>
-                    globalThis.__settingsUi.calls.filter(call => call.command === 'get_yt_dlp_installed_version').length >
-                        count &&
+                    globalThis.__settingsUi.calls.filter(call => call.command === 'get_yt_dlp_installed_version')
+                        .length > count &&
                     globalThis.document.querySelector('[data-ytdlp-diagnostics]').getAttribute('aria-busy') === 'false',
                 previousChecks
             );

@@ -1,5 +1,6 @@
 import { createDropdownChoice } from './dropdown-choice.js';
 import { createBrowserAuthentication } from './browser-authentication.js';
+import { createCodexDiagnostics } from './codex-diagnostics.js';
 
 export const createSettingsView = ({
     els,
@@ -12,6 +13,10 @@ export const createSettingsView = ({
     onCategoryChange = () => {},
 }) => {
     const browserAuthentication = createBrowserAuthentication({ els, api });
+    const codexDiagnostics = createCodexDiagnostics({
+        root: els.settingsView.querySelector('[data-codex-diagnostics]'),
+        api,
+    });
     const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
     const defaultFasterWhisperModel = 'base';
     const fasterWhisperModelChoice = createDropdownChoice({
@@ -285,6 +290,7 @@ export const createSettingsView = ({
                 els.settingsView.querySelector('#settingsContent').scrollTop = 0;
                 onCategoryChange();
                 if (event.detail.panel.id === 'settingsDiagnosticsPanel') {
+                    void codexDiagnostics.refresh();
                     requestAnimationFrame(() => {
                         els.logBody.scrollTop = els.logBody.scrollHeight;
                     });
@@ -300,6 +306,7 @@ export const createSettingsView = ({
             { once: true }
         );
         browserAuthentication.bindEvents();
+        codexDiagnostics.bindEvents();
         els.magicImportEnabled.addEventListener('change', () => {
             void saveSettings({ magic_import_enabled: els.magicImportEnabled.checked });
         });

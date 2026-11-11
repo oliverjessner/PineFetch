@@ -1,3 +1,8 @@
+# 3.1.0
+
+- Added optional Codex video summaries and independently saved transcript chat in Video Details.
+- Added Codex CLI installation, compatibility and authentication diagnostics in Settings.
+
 # 3.0.2
 
 - Added readable upload dates and history creation times to CLI history.

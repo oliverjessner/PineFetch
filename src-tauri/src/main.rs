@@ -13,6 +13,7 @@ mod browser_import;
 mod cli;
 mod cli_terminal;
 mod cli_transcription_choice;
+mod codex;
 mod commands;
 mod completion;
 mod completion_store;
@@ -87,6 +88,8 @@ mod test_support;
 mod tests;
 mod unicode_search;
 mod url_rules;
+mod video_ai;
+mod video_ai_store;
 mod video_urls;
 mod worker;
 mod youtube_playlist;
@@ -234,6 +237,11 @@ fn main() {
             commands::get_history_social_insights,
             commands::load_history_social_insights,
             commands::get_history_transcript,
+            commands::get_codex_diagnostics,
+            commands::get_video_ai,
+            commands::analyze_video,
+            commands::ask_video,
+            commands::cancel_video_ai,
             commands::get_history_caption,
             commands::get_history_subtitle,
             commands::start_history_ocr,
@@ -266,6 +274,7 @@ fn main() {
         if let tauri::RunEvent::ExitRequested { .. } = event {
             let state = app_handle.state::<AppState>();
             stop_active_download_on_exit(state.inner());
+            state.video_ai.stop();
             state.ocr.stop();
             stop_link_dump_server(state.inner());
             if let Some(server) = app_handle.try_state::<cli::CliServer>() {

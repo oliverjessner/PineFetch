@@ -6,6 +6,7 @@ import { createHistoryKeywordsView } from './history-keywords-view.js';
 import { createHistorySubtitlesView } from './history-subtitles-view.js';
 import { copyAllText, createTextReader } from './history-text-view.js';
 import { createHistoryMediaView } from './history-media-view.js';
+import { createHistoryAiView } from './history-ai-view.js';
 
 export const createHistoryDetailsView = ({
     els,
@@ -68,6 +69,7 @@ export const createHistoryDetailsView = ({
     const socialView = createHistorySocialInsightsView({ els, api, appendLog });
     subtitlesView = createHistorySubtitlesView({ els, api, appendLog, media: subtitleMedia });
     const keywordsView = createHistoryKeywordsView({ els, api, appendLog });
+    const aiView = createHistoryAiView({ root: els.historyAiPanel, api, appendLog });
 
     const formatDateTime = timestamp => {
         const date = new Date(Number(timestamp));
@@ -336,6 +338,7 @@ export const createHistoryDetailsView = ({
         ocrView.reset(entryId);
         socialView.reset(entryId);
         keywordsView.reset(entryId);
+        aiView.reset(entryId);
         navigateToDetails(entryId);
         els.historyDetailsTitle.textContent = 'Video Details';
         els.historyDetailsBreadcrumbCurrent.textContent = 'Video Details';
@@ -416,6 +419,7 @@ export const createHistoryDetailsView = ({
         ocrView.bindEvents();
         socialView.bindEvents();
         keywordsView.bindEvents();
+        aiView.bindEvents();
         subtitlesView.bindEvents();
         const cleanupTabs = initTabs(els.historyDetailsContent);
         window.addEventListener('pagehide', cleanupTabs, { once: true });
@@ -571,6 +575,7 @@ export const createHistoryDetailsView = ({
             if (event.detail.tab === els.historySocialTab) void socialView.load();
             if (event.detail.tab === els.historyKeywordsTab) void keywordsView.load();
             else keywordsView.deactivate();
+            if (event.detail.tab === els.historyAiTab) void aiView.load();
         });
         els.historyCaptionTrackSelect.addEventListener('change', () => void loadSelectedCaption());
         els.historyCaptionCopyBtn.addEventListener('click', () => {
@@ -616,6 +621,7 @@ export const createHistoryDetailsView = ({
             ocrView.deactivate();
             socialView.reset(null);
             keywordsView.reset(null);
+            aiView.deactivate();
         },
     });
 };

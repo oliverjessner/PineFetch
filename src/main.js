@@ -154,6 +154,8 @@ const els = Object.seal({
     historyOpenOcrBtn: document.getElementById('historyOpenOcrBtn'),
     historyOcrTab: document.getElementById('historyOcrTab'),
     historySocialTab: document.getElementById('historySocialTab'),
+    historyAiTab: document.getElementById('historyAiTab'),
+    historyAiPanel: document.getElementById('historyAiPanel'),
     historyKeywordsTab: document.getElementById('historyKeywordsTab'),
     historyKeywordsRefreshBtn: document.getElementById('historyKeywordsRefreshBtn'),
     historyKeywordsSearch: document.getElementById('historyKeywordsSearch'),

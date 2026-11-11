@@ -916,6 +916,48 @@
                                             <p id="ytDlpLatestVersion">Latest: -</p>
                                         </div>
                                         <section
+                                            class="oj-panel oj-panel-compact pinefetch-codex-diagnostics"
+                                            data-codex-diagnostics
+                                            aria-labelledby="codexDiagnosticsTitle"
+                                        >
+                                            <i class="fa-brands fa-openai" aria-hidden="true"></i>
+                                            <div class="oj-cluster pinefetch-codex-copy">
+                                                <h3 id="codexDiagnosticsTitle" class="oj-heading-3">Codex CLI</h3>
+                                                <p
+                                                    class="oj-status"
+                                                    role="status"
+                                                    aria-live="polite"
+                                                    aria-atomic="true"
+                                                    data-codex-status-group
+                                                >
+                                                    <span
+                                                        class="oj-status-dot"
+                                                        aria-hidden="true"
+                                                        data-codex-indicator
+                                                    ></span>
+                                                    <span data-codex-status>Not checked</span>
+                                                    <span data-codex-version hidden></span>
+                                                </p>
+                                                <a
+                                                    class="oj-link oj-caption"
+                                                    href="https://developers.openai.com/codex/cli/"
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    aria-label="Codex installation and login instructions"
+                                                    >Installation &amp; login</a
+                                                >
+                                            </div>
+                                            <button
+                                                class="oj-icon-button oj-button-ghost oj-button-compact"
+                                                type="button"
+                                                aria-label="Check Again"
+                                                data-oj-tooltip="Check Again"
+                                                data-codex-check
+                                            >
+                                                <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+                                            </button>
+                                        </section>
+                                        <section
                                             class="oj-panel oj-panel-compact pinefetch-terminal pinefetch-log-panel"
                                             id="logPanel"
                                         >
@@ -1359,7 +1401,154 @@
                                 >
                                     Keywords
                                 </button>
+                                <button
+                                    id="historyAiTab"
+                                    class="oj-tab"
+                                    type="button"
+                                    role="tab"
+                                    aria-selected="false"
+                                    aria-controls="historyAiPanel"
+                                >
+                                    AI Video Summary
+                                </button>
                             </div>
+
+                            <section
+                                id="historyAiPanel"
+                                class="oj-tab-panel pinefetch-history-details-panel"
+                                role="tabpanel"
+                                aria-labelledby="historyAiTab"
+                                hidden
+                            >
+                                <div class="pinefetch-ai-workspace oj-scroll-area">
+                                    <div class="pinefetch-ai-intro">
+                                        <h3 class="oj-heading-3">AI Video Summary</h3>
+                                        <p class="oj-helper" data-ai-source-notice hidden></p>
+                                        <div class="oj-toolbar" data-ai-setup-section hidden>
+                                            <p
+                                                class="oj-status oj-grow"
+                                                role="status"
+                                                aria-live="polite"
+                                                data-ai-setup
+                                            ></p>
+                                            <button class="oj-button oj-button-ghost" type="button" data-ai-check>
+                                                Check Again
+                                            </button>
+                                        </div>
+                                        <p class="oj-status" role="status" aria-live="polite" data-ai-load-status></p>
+                                        <button
+                                            class="oj-button oj-button-secondary"
+                                            type="button"
+                                            data-ai-reload
+                                            hidden
+                                        >
+                                            Retry Loading
+                                        </button>
+                                    </div>
+                                    <section
+                                        class="pinefetch-ai-summary-section"
+                                        aria-labelledby="historyAiSummaryHeading"
+                                    >
+                                        <div class="oj-toolbar">
+                                            <h3 id="historyAiSummaryHeading" class="oj-heading-3 oj-grow">
+                                                Optional analysis
+                                            </h3>
+                                            <button
+                                                class="oj-button oj-button-secondary"
+                                                type="button"
+                                                data-ai-analyze
+                                                disabled
+                                            >
+                                                Analyze Video
+                                            </button>
+                                            <button
+                                                class="oj-button oj-button-ghost"
+                                                type="button"
+                                                data-ai-cancel-summary
+                                                hidden
+                                            >
+                                                Cancel Analysis
+                                            </button>
+                                            <button
+                                                class="oj-button oj-button-ghost"
+                                                type="button"
+                                                data-ai-copy
+                                                disabled
+                                            >
+                                                Copy Summary
+                                            </button>
+                                        </div>
+                                        <div class="pinefetch-ai-summary" data-ai-summary hidden>
+                                            <h4 class="oj-label">Quick Summary</h4>
+                                            <p class="pinefetch-ai-prose" data-ai-summary-text></p>
+                                            <h4 class="oj-label">Key Takeaways</h4>
+                                            <ul class="oj-bullet-list" data-ai-takeaways></ul>
+                                        </div>
+                                        <p
+                                            class="oj-status"
+                                            role="status"
+                                            aria-live="polite"
+                                            data-ai-summary-status
+                                        ></p>
+                                    </section>
+                                    <section
+                                        class="pinefetch-ai-chat"
+                                        data-ai-chat
+                                        aria-labelledby="historyAiChatHeading"
+                                    >
+                                        <h3 id="historyAiChatHeading" class="oj-heading-3">Ask this Video</h3>
+                                        <p class="oj-helper" data-ai-empty-chat>
+                                            Ask a question about the saved transcript. You do not need to generate a
+                                            summary.
+                                        </p>
+                                        <ol
+                                            class="pinefetch-ai-messages oj-scroll-area"
+                                            data-ai-messages
+                                            role="log"
+                                            aria-label="Conversation with this video"
+                                            aria-live="polite"
+                                            aria-relevant="additions text"
+                                        ></ol>
+                                        <form class="pinefetch-ai-question-form" data-ai-form>
+                                            <label class="oj-field" for="historyAiQuestion">
+                                                <span class="oj-label">Your question</span>
+                                                <textarea
+                                                    id="historyAiQuestion"
+                                                    class="oj-input"
+                                                    data-ai-question
+                                                    rows="3"
+                                                    maxlength="4000"
+                                                    aria-describedby="historyAiQuestionHelp"
+                                                    placeholder="What does the speaker say about…?"
+                                                    disabled
+                                                ></textarea>
+                                            </label>
+                                            <div class="oj-toolbar">
+                                                <p id="historyAiQuestionHelp" class="oj-helper oj-grow">
+                                                    Ctrl/⌘ + Enter to send. Answers are grounded in the transcript.
+                                                </p>
+                                                <button
+                                                    class="oj-button oj-button-ghost"
+                                                    type="button"
+                                                    data-ai-cancel-chat
+                                                    hidden
+                                                >
+                                                    Cancel Answer
+                                                </button>
+                                                <button
+                                                    class="oj-button oj-button-primary"
+                                                    type="submit"
+                                                    data-ai-send
+                                                    disabled
+                                                >
+                                                    Send
+                                                </button>
+                                            </div>
+                                        </form>
+                                        <p class="oj-status" role="status" aria-live="polite" data-ai-chat-status></p>
+                                    </section>
+                                </div>
+                            </section>
 
                             <section
                                 id="historySocialPanel"

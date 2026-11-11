@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::time::Instant;
 use uuid::Uuid;
 
-pub(super) const SCHEMA_VERSION: i64 = 16;
+pub(super) const SCHEMA_VERSION: i64 = 17;
 
 // Retain schema 16 compatibility for profiles that ran the history preset build.
 // History no longer records or reads this optional column.
@@ -96,8 +96,17 @@ pub(crate) fn restore_schema14_tags_fixture(conn: &Connection) {
 
 #[cfg(test)]
 pub(crate) fn restore_schema15_history_preset_fixture(conn: &Connection) {
+    restore_schema16_video_ai_fixture(conn);
     conn.execute_batch(
         "ALTER TABLE history_entries DROP COLUMN preset_key; PRAGMA user_version=15;",
+    )
+    .unwrap();
+}
+
+#[cfg(test)]
+pub(crate) fn restore_schema16_video_ai_fixture(conn: &Connection) {
+    conn.execute_batch(
+        "DROP TABLE history_ai_chat; DROP TABLE history_ai_summaries; PRAGMA user_version=16;",
     )
     .unwrap();
 }
@@ -323,6 +332,7 @@ pub(super) enum MigrationPoint {
     CreatorIdentities,
     Tags,
     HistoryPreset,
+    VideoAi,
 }
 
 pub(super) fn initialize_with_hook(
@@ -497,6 +507,13 @@ pub(super) fn initialize_with_hook(
         tx.pragma_update(None, "user_version", 16)
             .map_err(|e| e.to_string())?;
         hook(MigrationPoint::HistoryPreset)?;
+    }
+    if version < 17 {
+        tx.execute_batch(crate::video_ai_store::SCHEMA_SQL)
+            .map_err(|e| format!("SQLite migration 17 failed: {e}"))?;
+        tx.pragma_update(None, "user_version", 17)
+            .map_err(|e| e.to_string())?;
+        hook(MigrationPoint::VideoAi)?;
     }
     if check_version(&tx)? != SCHEMA_VERSION {
         return Err(
@@ -769,6 +786,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             .execute_batch(HISTORY_PRESET_SQL)
             .map_err(|e| e.to_string())?;
     }
+    if version >= 17 {
+        reference
+            .execute_batch(crate::video_ai_store::SCHEMA_SQL)
+            .map_err(|e| e.to_string())?;
+    }
     reference
         .execute_batch("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
         .map_err(|e| e.to_string())?;
@@ -786,6 +808,11 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|e| e.to_string())?;
     let tables: HashSet<&str> = objects.iter().map(|(name, _, _)| name.as_str()).collect();
+    if version >= 17
+        && (!tables.contains("history_ai_summaries") || !tables.contains("history_ai_chat"))
+    {
+        return Err("Inconsistent schema 17: missing video AI tables; database preserved".into());
+    }
     if version >= 15 && (!tables.contains("tags") || !tables.contains("history_entry_tags")) {
         return Err("Inconsistent schema 15: missing tag tables; database preserved".into());
     }
@@ -998,6 +1025,32 @@ fn validate_layout(conn: &Connection, version: i64) -> Result<(), String> {
             || !canonical.contains("check(length(payload_json)<=262144)"))
         {
             return Err(format!("{} (Social Insights constraints)", fail()));
+        }
+        if matches!(table.as_str(), "history_ai_summaries" | "history_ai_chat") {
+            let mut constraints = vec![
+                "check(length(transcript_hash)=64)",
+                "check(length(metadata_json)<=16384andjson_valid(metadata_json)andjson_type(metadata_json)='object')",
+                "check(created_at>=0)",
+            ];
+            if table == "history_ai_summaries" {
+                constraints.extend([
+                    "check(length(quick_summary)>0andlength(quick_summary)<=32768)",
+                    "check(length(key_takeaways_json)<=65536andjson_valid(key_takeaways_json)andjson_type(key_takeaways_json)='array')",
+                    "check(updated_at>=created_at)",
+                ]);
+            } else {
+                constraints.extend([
+                    "check(sequence>0)",
+                    "check(length(question)>0andlength(question)<=16000)",
+                    "check(length(answer)>0andlength(answer)<=65536)",
+                ]);
+            }
+            if constraints
+                .iter()
+                .any(|constraint| !canonical.contains(*constraint))
+            {
+                return Err(format!("{} (video AI constraints)", fail()));
+            }
         }
         if version < SCHEMA_VERSION {
             // SQLite's historical TEXT PRIMARY KEY permits NULL. Refuse

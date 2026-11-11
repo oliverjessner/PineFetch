@@ -362,6 +362,15 @@ their infrastructure. Prefer explicit parameters and a module or callback over a
 new trait/container. Keep command names, serialized values and lock/transaction
 semantics stable when moving code.
 
+`codex` owns CLI discovery, authentication diagnostics, restricted process
+execution, transcript chunking and structured result validation. `video_ai`
+coordinates independent summary/chat request lifetimes using existing
+`ProcessState` controls. `video_ai_store` owns schema 17 and guarded revision-aware
+storage. Each table references History directly; chat never depends on a summary.
+`history-ai-view.js` keeps separate request/error states and ignores responses
+after video navigation. `codex-diagnostics.js` shares setup rendering between
+Settings and the detail tab. See [AI_VIDEO_SUMMARY.md](AI_VIDEO_SUMMARY.md).
+
 Run `npm run check`, `npm test` and `npm run build:check`; their details and build
 limitations are in [DEVELOPMENT.md](DEVELOPMENT.md). Existing regression tests are
 retained. `architecture_tests.rs` adds isolated job/argument/parser/queue/state/error

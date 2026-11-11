@@ -185,6 +185,13 @@ pub(super) fn get_history_transcript_from_db(
     id: &str,
 ) -> Result<Option<HistoryTranscriptContent>, String> {
     let conn = state.lock().map_err(|_| "SQLite lock poisoned")?;
+    get_history_transcript_in_conn(&conn, id)
+}
+
+pub(crate) fn get_history_transcript_in_conn(
+    conn: &Connection,
+    id: &str,
+) -> Result<Option<HistoryTranscriptContent>, String> {
     conn.query_row(
         "SELECT transcription.text, transcription.\"type\", transcription.language, history.output_path
          FROM transcriptions AS transcription

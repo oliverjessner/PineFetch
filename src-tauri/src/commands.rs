@@ -55,6 +55,99 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
+pub(crate) async fn get_codex_diagnostics(
+    app: AppHandle,
+) -> Result<crate::codex::CodexDiagnostics, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::codex::diagnostics(&app.state::<AppState>().processes)
+    })
+    .await
+    .map_err(|_| "Codex diagnostics task failed.".to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn get_video_ai(
+    state: State<'_, AppState>,
+    history_id: String,
+) -> Result<crate::video_ai_store::VideoAiSnapshot, String> {
+    let db = std::sync::Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || crate::video_ai_store::snapshot(&db, &history_id))
+        .await
+        .map_err(|_| "Saved AI content could not be loaded.".to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn analyze_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    history_id: String,
+    request_id: String,
+    transcript_hash: String,
+) -> Result<crate::video_ai_store::Summary, String> {
+    if state
+        .processes
+        .shutting_down
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err("Application is shutting down.".into());
+    }
+    let request = state.video_ai.begin(
+        &history_id,
+        &request_id,
+        crate::video_ai::Lane::Summary,
+        &transcript_hash,
+    )?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        crate::video_ai::analyze(&state.db, &state.processes, &request)
+    })
+    .await
+    .map_err(|_| "Summary generation task failed.".to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn ask_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    history_id: String,
+    request_id: String,
+    transcript_hash: String,
+    question: String,
+) -> Result<crate::video_ai::ChatReply, String> {
+    if state
+        .processes
+        .shutting_down
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err("Application is shutting down.".into());
+    }
+    let request = state.video_ai.begin(
+        &history_id,
+        &request_id,
+        crate::video_ai::Lane::Chat,
+        &transcript_hash,
+    )?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        crate::video_ai::ask(&state.db, &state.processes, &request, &question)
+    })
+    .await
+    .map_err(|_| "Video question task failed.".to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn cancel_video_ai(
+    state: State<'_, AppState>,
+    history_id: String,
+    request_id: String,
+) -> Result<bool, String> {
+    let operations = std::sync::Arc::clone(&state.video_ai);
+    tauri::async_runtime::spawn_blocking(move || operations.cancel(&history_id, &request_id))
+        .await
+        .map_err(|_| "AI cancellation task failed.".to_string())?
+}
+
+#[tauri::command]
 pub(crate) fn get_download_presets() -> Vec<DownloadPreset> {
     DOWNLOAD_PRESETS.to_vec()
 }

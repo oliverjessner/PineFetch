@@ -1621,7 +1621,8 @@ body {
         .pinefetch-text-viewport,
         .pinefetch-overview-workspace,
         #historySocialResults,
-        #historyKeywordsResults
+        #historyKeywordsResults,
+        .pinefetch-ai-workspace
     ) {
     flex-shrink: 0;
 }
@@ -1854,6 +1855,84 @@ body {
     flex: 1;
     min-height: 0;
     overflow: auto;
+}
+.pinefetch-ai-workspace {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--oj-space-6);
+}
+.pinefetch-ai-intro,
+.pinefetch-ai-summary-section,
+.pinefetch-ai-summary,
+.pinefetch-ai-chat,
+.pinefetch-ai-question-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--oj-space-3);
+    min-width: 0;
+}
+.pinefetch-ai-workspace p,
+.pinefetch-ai-workspace h4,
+.pinefetch-codex-diagnostics p {
+    margin: 0;
+}
+.pinefetch-ai-workspace .oj-toolbar {
+    flex-wrap: wrap;
+}
+.pinefetch-ai-summary-section,
+.pinefetch-ai-chat {
+    border-top: 1px solid var(--oj-border-subtle);
+    padding-top: var(--oj-space-4);
+}
+.pinefetch-ai-prose {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: var(--oj-leading-relaxed);
+    user-select: text;
+}
+.pinefetch-ai-messages {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--oj-space-3);
+    max-height: 40vh;
+    overflow: auto;
+}
+.pinefetch-ai-message {
+    display: flex;
+    flex-direction: column;
+    gap: var(--oj-space-2);
+}
+.pinefetch-ai-question-form textarea {
+    resize: vertical;
+    min-height: calc(var(--oj-space-8) * 2);
+}
+.pinefetch-ai-workspace .oj-status:empty,
+.pinefetch-codex-diagnostics p:empty {
+    display: none;
+}
+.pinefetch-codex-diagnostics {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--oj-space-3);
+    margin-bottom: var(--oj-space-4);
+}
+.pinefetch-codex-copy {
+    row-gap: var(--oj-space-1);
+    overflow-wrap: anywhere;
+}
+.pinefetch-codex-copy .oj-heading-3 {
+    margin: 0;
+}
+.pinefetch-codex-copy .oj-status {
+    flex-wrap: wrap;
+    row-gap: var(--oj-space-1);
 }
 #historySocialPanel .pinefetch-social-metric {
     border: 0;

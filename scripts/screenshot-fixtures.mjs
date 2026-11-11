@@ -1,6 +1,14 @@
 // This bridge exists only in the isolated screenshot browser, never in the app.
 // Titles and thumbnails are cached YouTube oEmbed data; all other values are demos.
-export const installScreenshotBridge = ({ videos, version, ocr = null, social = null, keywords = null, tags = [] }) => {
+export const installScreenshotBridge = ({
+    videos,
+    version,
+    ocr = null,
+    social = null,
+    keywords = null,
+    tags = [],
+    ai = null,
+}) => {
     const listeners = new Map();
     const queue = [];
     let ready = false;
@@ -318,6 +326,39 @@ export const installScreenshotBridge = ({ videos, version, ocr = null, social = 
                         });
                     case 'get_history_ocr_progress':
                         return null;
+                    case 'get_codex_diagnostics':
+                        return { status: 'chatgpt', ready: true, version: '0.164.0' };
+                    case 'get_video_ai': {
+                        const available = Boolean(
+                            ai && history.find(entry => entry.id === args.historyId)?.url === ai.url
+                        );
+                        return structuredClone({
+                            transcript_available: available,
+                            transcript_hash: available ? ai.transcript_hash : null,
+                            summary: available ? ai.summary : null,
+                            messages: available ? ai.messages : [],
+                        });
+                    }
+                    case 'get_history_transcription_status':
+                        return {
+                            history_id: args.id,
+                            transcript_available: true,
+                            can_transcribe: false,
+                            unavailable_reason: 'A transcript is already saved for this video.',
+                            progress: null,
+                        };
+                    case 'get_history_transcript': {
+                        const entry = history.find(entry => entry.id === args.id);
+                        const text = entry?.url === ai?.url ? ai?.transcript : null;
+                        return text
+                            ? {
+                                  text,
+                                  language: 'de',
+                                  transcription_type: 'text',
+                                  file_available: true,
+                              }
+                            : null;
+                    }
                     case 'get_history_ocr_frame':
                         if (
                             !ocrContent ||

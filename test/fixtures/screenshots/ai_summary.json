@@ -1,0 +1,32 @@
+{
+    "url": "https://www.youtube.com/watch?v=4mwxAcGQjnI",
+    "description": "Synthetic cached AI summary and conversation for offline screenshots. Every answer uses only the matching keywords fixture transcript; no live AI request is made.",
+    "transcript": "Nintendo DSi: Pokémon SoulSilver auf dem Handheld. Nintendo DSi mit Touchscreen, Display und Akku. Pokémon SoulSilver: Spiel und Konsole. Nintendo DSi.",
+    "transcript_hash": "88eb9f9aeea8b77c81c2c59d1bd06651cfa2c4c1d17eb894068cc277597f9219",
+    "summary": {
+        "quick_summary": "Im Mittelpunkt steht der Nintendo DSi als Handheld. Als Hardware werden Touchscreen, Display und Akku genannt. Pokémon SoulSilver ist das erwähnte Spiel. Das kurze Transkript verbindet damit die Konsole und das Pokémon-Spiel.",
+        "key_takeaways": [
+            "Der Nintendo DSi ist der besprochene Handheld.",
+            "Touchscreen, Display und Akku sind die genannten Hardware-Komponenten.",
+            "Pokémon SoulSilver ist das konkret erwähnte Spiel."
+        ]
+    },
+    "messages": [
+        {
+            "role": "user",
+            "content": "Welche Hardware wird erwähnt?"
+        },
+        {
+            "role": "assistant",
+            "content": "Das Transkript nennt den **Nintendo DSi** als Handheld und drei Hardware-Komponenten:\n\n- Touchscreen\n- Display\n- Akku\n\nKonkrete technische Daten werden im gespeicherten Transkript nicht genannt."
+        },
+        {
+            "role": "user",
+            "content": "Und welches Spiel steht im Mittelpunkt?"
+        },
+        {
+            "role": "assistant",
+            "content": "Genannt wird **Pokémon SoulSilver** im Zusammenhang mit dem Nintendo DSi. Details zu Spielmechanik oder Leistung enthält das gespeicherte Transkript nicht."
+        }
+    ]
+}

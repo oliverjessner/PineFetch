@@ -1,5 +1,6 @@
 # 3.1.0
 
+- Added reproducible screenshots for the AI workspace and every Settings category, including continuation images for long categories.
 - Added optional Codex video summaries and independently saved transcript chat in Video Details.
 - Added Codex CLI installation, compatibility and authentication diagnostics in Settings.
 - Added local transcription of previously downloaded videos from History, with cancellation, retry and automatic AI chat availability after saving.

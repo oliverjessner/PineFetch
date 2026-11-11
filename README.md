@@ -90,6 +90,10 @@ If a saved video has no transcript yet, open **Transcript → Transcribe Video**
 
 ![PineFetch History details with source metadata, saved file information and text tabs](src/images/mockups/more_data.webp)
 
+Open **AI Video Summary** to chat with a saved transcript or optionally generate a Quick Summary and Key Takeaways. See the [AI guide](docs/AI_VIDEO_SUMMARY.md) for Codex setup and storage details.
+
+![PineFetch AI workspace with transcript chat and an independent summary panel](src/images/mockups/ai_summary.webp)
+
 ## Find text inside video frames
 
 Run local OCR on a saved video to search recognized text and preview the frame where it appears. Copy all detected text, remove repeated results or delete individual frame text; [OCR details](docs/OCR.md) explain video requirements and controls.

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, readdir, readFile, realpath, unlink } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, realpath, unlink } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -51,9 +52,18 @@ ocr.frame = `data:image/jpeg;base64,${(await readFile(join(fixtureDirectory, ocr
 
 const social = JSON.parse(await readFile(join(fixtureDirectory, 'social_insights.json'), 'utf8'));
 const keywords = JSON.parse(await readFile(join(fixtureDirectory, 'keywords.json'), 'utf8'));
+const ai = JSON.parse(await readFile(join(fixtureDirectory, 'ai_summary.json'), 'utf8'));
 const tags = JSON.parse(await readFile(join(fixtureDirectory, 'tags.json'), 'utf8'));
 assert.equal(social.url, ocr.url);
 assert.equal(keywords.url, ocr.url);
+assert.equal(ai.url, ocr.url);
+assert.equal(ai.transcript, keywords.transcript);
+assert.match(ai.transcript_hash, /^[a-f\d]{64}$/);
+assert.equal(ai.transcript_hash, createHash('sha256').update(ai.transcript).digest('hex'));
+assert(ai.summary.quick_summary && ai.summary.key_takeaways.length >= 3 && ai.summary.key_takeaways.length <= 8);
+assert(
+    ai.messages.some(message => message.role === 'user') && ai.messages.some(message => message.role === 'assistant')
+);
 assert.deepEqual(
     keywords.ocr,
     ocr.frames.map(frame => frame.full_text)
@@ -115,7 +125,7 @@ try {
         }
         return route.abort('blockedbyclient');
     });
-    await context.addInitScript(installScreenshotBridge, { videos, version, ocr, social, keywords, tags });
+    await context.addInitScript(installScreenshotBridge, { videos, version, ocr, social, keywords, ai, tags });
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -126,7 +136,7 @@ try {
     await page.goto(origin);
     await page.waitForFunction(() => globalThis.__pinefetchScreenshot?.ready);
 
-    const capture = async filename => {
+    const capture = async (filename, aliases = []) => {
         // CSS backgrounds are not covered by document.images: decode both kinds.
         await page.evaluate(async () => {
             await globalThis.document.fonts.ready;
@@ -162,6 +172,10 @@ try {
         );
         await sharp(png).webp({ quality: 90, effort: 6 }).toFile(join(outputDirectory, filename));
         console.log(`[screenshots] ${filename}`);
+        for (const alias of aliases) {
+            await copyFile(join(outputDirectory, filename), join(outputDirectory, alias));
+            console.log(`[screenshots] ${alias}`);
+        }
     };
 
     for (const [index, url] of links.entries()) {
@@ -239,6 +253,18 @@ try {
         keywords.result.terms.map(term => term.term)
     );
     await capture('keywords.webp');
+
+    await page.locator('#historyAiTab').click();
+    await page.locator('[data-ai-summary]').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => !globalThis.document.querySelector('[data-ai-question]').disabled);
+    assert.equal(await page.locator('[data-ai-summary-text]').textContent(), ai.summary.quick_summary);
+    assert.deepEqual(await page.locator('[data-ai-takeaways] > li').allTextContents(), ai.summary.key_takeaways);
+    assert.equal(await page.locator('[data-ai-messages] > li').count(), ai.messages.length);
+    assert.equal(await page.locator('[data-ai-summary-panel]').isVisible(), true);
+    assert.equal(await page.locator('[data-ai-chat]').isVisible(), true);
+    assert.equal(await page.locator('[data-ai-load-status]').textContent(), '');
+    await capture('ai_summary.webp');
+
     await page.locator('#historyDetailsAccountBreadcrumbBtn').click();
     await page.waitForFunction(
         () => globalThis.document.querySelector('#historyAccountSocialMetrics').childElementCount === 1
@@ -307,19 +333,69 @@ try {
     await capture('tag_accounts.webp');
 
     await page.locator('#viewSettingsBtn').click();
-    await page.locator('#settingsImportTab').click();
-    await page.waitForFunction(
-        () => globalThis.document.querySelector('#linkDumpServerStatusBadge').textContent === 'Running'
+    const settingsCaptures = [
+        { category: 'Downloads', title: 'Downloads', filename: 'settings_downloads', aliases: ['settings.webp'] },
+        { category: 'Files', title: 'Files & Metadata', filename: 'settings_files_metadata' },
+        { category: 'Browser', title: 'Browser', filename: 'settings_browser' },
+        {
+            category: 'Import',
+            title: 'Browser Import',
+            filename: 'settings_browser_import',
+            aliases: ['browser_import.webp'],
+        },
+        { category: 'Diagnostics', title: 'Diagnostics', filename: 'settings_diagnostics' },
+    ];
+    assert.deepEqual(
+        await page.locator('#settingsCategories [role="tab"]').evaluateAll(tabs => tabs.map(tab => tab.id)),
+        settingsCaptures.map(({ category }) => `settings${category}Tab`),
+        'Every Settings category needs a screenshot.'
     );
-    await page.locator('.pinefetch-link-dump-secret-item').waitFor({ state: 'visible' });
-    await capture('browser_import.webp');
-
-    await page.locator('#viewSettingsBtn').click();
-    await page.locator('#settingsDownloadsTab').click();
-    await page.waitForFunction(
-        () => globalThis.document.querySelector('#ytDlpLatestVersion').textContent === 'Latest: 2026.09.19'
-    );
-    await capture('settings.webp');
+    const settingsScroll = page.locator('#settingsContent');
+    for (const { category, title, filename, aliases } of settingsCaptures) {
+        const tab = page.locator(`#settings${category}Tab`);
+        const panel = page.locator(`#settings${category}Panel`);
+        await tab.click();
+        await panel.waitFor({ state: 'visible' });
+        assert.equal(await tab.getAttribute('aria-selected'), 'true');
+        assert.equal(await page.locator('.pinefetch-settings-category:visible').count(), 1);
+        assert.equal(await panel.locator('.pinefetch-settings-category-header h3').textContent(), title);
+        if (category === 'Import') {
+            await page.waitForFunction(
+                () => globalThis.document.querySelector('#linkDumpServerStatusBadge').textContent === 'Running'
+            );
+            await page.locator('.pinefetch-link-dump-secret-item').waitFor({ state: 'visible' });
+        }
+        if (category === 'Diagnostics') {
+            await page.waitForFunction(() =>
+                ['[data-ytdlp-diagnostics]', '[data-codex-diagnostics]'].every(
+                    selector => globalThis.document.querySelector(selector).getAttribute('aria-busy') === 'false'
+                )
+            );
+            assert.equal(await page.locator('#ytDlpInstalledVersion').textContent(), 'Installed · v2026.09.19');
+            assert.equal(await page.locator('[data-ytdlp-release]').textContent(), 'Latest release: v2026.09.19');
+            assert.equal(await page.locator('[data-codex-status]').textContent(), 'Connected');
+            assert.equal(await page.locator('[data-codex-version]').textContent(), '· v0.164.0');
+        }
+        await settingsScroll.evaluate(element => {
+            element.scrollTop = 0;
+        });
+        await capture(`${filename}.webp`, aliases);
+        // Include the rest of long categories at the normal app window size.
+        let pageNumber = 1;
+        while (
+            await settingsScroll.evaluate(
+                element => element.scrollTop + element.clientHeight < element.scrollHeight - 1
+            )
+        ) {
+            const moved = await settingsScroll.evaluate(element => {
+                const previous = element.scrollTop;
+                element.scrollTop += Math.max(1, element.clientHeight * 0.8);
+                return element.scrollTop > previous;
+            });
+            assert(moved, `${title} must scroll to its remaining settings.`);
+            await capture(`${filename}_${++pageNumber}.webp`);
+        }
+    }
     await context.close();
 } finally {
     try {

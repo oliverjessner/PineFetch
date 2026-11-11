@@ -21,6 +21,35 @@ import { basename, join } from 'node:path';
 import test from 'node:test';
 import { prepareWhisperRuntime } from '../scripts/prepare-whisper-runtime.mjs';
 
+test('the repository contains the complete notices for the pinned standalone Python release', () => {
+    const licenses = new URL('../docs/licenses/python-standalone/', import.meta.url);
+    assert(
+        existsSync(licenses),
+        'Restore docs/licenses/python-standalone; Whisper builds require its upstream notices.'
+    );
+    const manifest = JSON.parse(readFileSync(new URL('../scripts/whisper-python.json', import.meta.url), 'utf8'));
+    const provenance = JSON.parse(readFileSync(new URL('provenance.json', licenses), 'utf8'));
+    assert.equal(provenance.python_version, manifest.version);
+    assert.equal(provenance.python_build_standalone_release, manifest.release);
+    assert.equal(provenance.notices.length, 21);
+    const names = provenance.notices.map(notice => notice.file);
+    assert.equal(new Set(names).size, names.length, 'Upstream notice filenames must be unique.');
+    assert.deepEqual(readdirSync(licenses).sort(), [...names, 'README.md', 'provenance.json'].sort());
+    assert(readFileSync(new URL('README.md', licenses), 'utf8').trim());
+    for (const notice of provenance.notices) {
+        assert.match(notice.file, /^LICENSE\.[A-Za-z0-9-]+\.txt$/);
+        assert.match(notice.sha256, /^[a-f0-9]{64}$/);
+        const bytes = readFileSync(new URL(notice.file, licenses));
+        assert(bytes.length, `${notice.file} must retain its upstream text.`);
+        assert.equal(createHash('sha256').update(bytes).digest('hex'), notice.sha256, notice.file);
+    }
+    for (const target of provenance.inspected_targets) {
+        assert.equal(target.python_version, manifest.version);
+        for (const name of target.referenced_notices)
+            assert(names.includes(name), `${target.target} references a missing upstream notice: ${name}`);
+    }
+});
+
 // Real archive hashing/extraction, filesystem publication and process execution;
 // only the downloaded Python/package behavior is a controlled executable fixture.
 const fixture = t => {

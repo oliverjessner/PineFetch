@@ -1,5 +1,6 @@
 # 3.1.0
 
+- Restored the Python license notices required for Whisper runtime packaging and added a repository input check to catch missing or changed notices before builds.
 - Added reproducible screenshots for the AI workspace and every Settings category, including continuation images for long categories.
 - Added optional Codex video summaries and independently saved transcript chat in Video Details.
 - Added Codex CLI installation, compatibility and authentication diagnostics in Settings.

@@ -254,6 +254,28 @@ try {
             await snapshot('settings-files');
             await page.keyboard.press('End');
             assert.equal(await section('Diagnostics').getAttribute('aria-selected'), 'true');
+            const ytDlpCard = page.locator('[data-ytdlp-diagnostics]');
+            const ytDlpAdvanced = page.locator('[data-ytdlp-advanced]');
+            const ytDlpCheck = ytDlpCard.getByRole('button', { name: 'Check Again', exact: true });
+            assert.equal(await ytDlpAdvanced.evaluate(node => node.open), false);
+            assert.equal(await page.locator('#ytDlpPath').isHidden(), true);
+            await page.waitForFunction(
+                () => globalThis.document.getElementById('ytDlpInstalledVersion').textContent === 'Installed · v2026.09.19'
+            );
+            assert.equal(await page.locator('#ytDlpLatestVersion').textContent(), 'Update available: v2026.10.29');
+            assert.equal(await ytDlpCheck.getAttribute('data-oj-tooltip'), 'Check Again');
+            const previousChecks = await page.evaluate(
+                () => globalThis.__settingsUi.calls.filter(call => call.command === 'get_yt_dlp_installed_version').length
+            );
+            await ytDlpCheck.click();
+            await page.waitForFunction(
+                count =>
+                    globalThis.__settingsUi.calls.filter(call => call.command === 'get_yt_dlp_installed_version').length >
+                        count &&
+                    globalThis.document.querySelector('[data-ytdlp-diagnostics]').getAttribute('aria-busy') === 'false',
+                previousChecks
+            );
+            await ytDlpAdvanced.locator('summary').click();
             await page.locator('#ytDlpPath').fill('/fixture/custom-yt-dlp');
             await page.locator('#ytDlpPath').press('Tab');
             await page.waitForFunction(
@@ -458,6 +480,7 @@ try {
             assert.equal(await page.locator('#saveCreatorSubtitles').isChecked(), false);
             assert.equal(await page.locator('#saveThumbnails').isChecked(), true);
             await section('Diagnostics').click();
+            assert.equal(await page.locator('[data-ytdlp-advanced]').evaluate(node => node.open), false);
             assert.equal(await page.locator('#ytDlpPath').inputValue(), '/fixture/custom-yt-dlp');
             await section('Browser').click();
             assert.equal(await page.locator('#browserAuthBrowser').inputValue(), 'chrome');

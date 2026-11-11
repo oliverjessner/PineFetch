@@ -17,6 +17,11 @@ export const createSettingsView = ({
         root: els.settingsView.querySelector('[data-codex-diagnostics]'),
         api,
     });
+    const ytDlpDiagnostics = els.settingsView.querySelector('[data-ytdlp-diagnostics]');
+    const ytDlpStatus = ytDlpDiagnostics.querySelector('[data-ytdlp-status]');
+    const ytDlpIndicator = ytDlpDiagnostics.querySelector('[data-ytdlp-indicator]');
+    const ytDlpCheck = ytDlpDiagnostics.querySelector('[data-ytdlp-check]');
+    const ytDlpRelease = ytDlpDiagnostics.querySelector('[data-ytdlp-release]');
     const ytDlpLatestReleaseUrl = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest';
     const defaultFasterWhisperModel = 'base';
     const fasterWhisperModelChoice = createDropdownChoice({
@@ -97,6 +102,42 @@ export const createSettingsView = ({
         return value.startsWith('v') ? value.slice(1) : value;
     };
 
+    const versionLabel = value => (/^v?\d/i.test(value) ? `v${value.replace(/^v/i, '')}` : value);
+    const numericVersion = value => {
+        const normalized = value.trim().replace(/^v/i, '');
+        if (!/^\d+(?:\.\d+)*$/.test(normalized)) return null;
+        const parts = normalized.split('.').map(Number);
+        return parts.every(Number.isSafeInteger) ? parts : null;
+    };
+    const isNewerYtDlpVersion = (latest, installed) => {
+        const next = numericVersion(latest);
+        const current = numericVersion(installed);
+        // Custom/nightly labels cannot safely be ordered against stable releases.
+        // Keep the detected latest release available under Advanced in that case.
+        if (!next || !current) return false;
+        for (let index = 0; index < Math.max(next.length, current.length); index += 1) {
+            const difference = (next[index] || 0) - (current[index] || 0);
+            if (difference) return difference > 0;
+        }
+        return false;
+    };
+
+    const setYtDlpChecking = checking => {
+        ytDlpDiagnostics.setAttribute('aria-busy', String(checking));
+        ytDlpCheck.disabled = checking;
+        ytDlpCheck.setAttribute('aria-busy', String(checking));
+        ytDlpCheck.classList.toggle('oj-button-loading', checking);
+        ytDlpIndicator.className = checking ? 'oj-spinner' : 'oj-status-dot';
+        if (checking) {
+            ytDlpStatus.classList.remove('oj-status-success', 'oj-status-error', 'oj-status-warning');
+            els.ytDlpInstalledVersion.textContent = 'Checking…';
+            els.ytDlpInstalledVersion.removeAttribute('title');
+            els.ytDlpLatestVersion.textContent = '';
+            els.ytDlpLatestVersion.hidden = true;
+            ytDlpRelease.textContent = 'Checking latest release…';
+        }
+    };
+
     const fetchLatestYtDlpVersion = async () => {
         const response = await fetch(ytDlpLatestReleaseUrl, {
             headers: {
@@ -114,43 +155,58 @@ export const createSettingsView = ({
         return latest;
     };
 
-    const performYtDlpVersionCheck = async () => {
-        if (!api.available) return;
-        const requestId = ++ytDlpVersionRequestId;
+    const performYtDlpVersionCheck = async requestId => {
+        if (requestId !== ytDlpVersionRequestId) return;
         const path = els.ytDlpPath.value.trim() || null;
-        els.ytDlpInstalledVersion.textContent = 'Installed: checking...';
-        els.ytDlpInstalledVersion.removeAttribute('title');
-        els.ytDlpLatestVersion.textContent = 'Latest: checking...';
 
         const [installedResult, latestResult] = await Promise.allSettled([
-            api.getYtDlpInstalledVersion({ path }),
+            Promise.resolve().then(() => api.getYtDlpInstalledVersion({ path })),
             fetchLatestYtDlpVersion(),
         ]);
         if (requestId !== ytDlpVersionRequestId) return;
 
         if (installedResult.status === 'fulfilled') {
             const installed = installedResult.value;
-            els.ytDlpInstalledVersion.textContent = `Installed: ${installed.version}`;
+            els.ytDlpInstalledVersion.textContent = `Installed · ${versionLabel(installed.version)}`;
             els.ytDlpInstalledVersion.title = installed.path;
         } else {
-            els.ytDlpInstalledVersion.textContent = 'Installed: unavailable';
+            els.ytDlpInstalledVersion.textContent = 'Unavailable — check installation or Advanced';
             const reason = `${installedResult.reason || ''}`.trim();
             if (reason) els.ytDlpInstalledVersion.title = reason;
         }
+        ytDlpStatus.classList.toggle('oj-status-success', installedResult.status === 'fulfilled');
+        ytDlpStatus.classList.toggle('oj-status-error', installedResult.status === 'rejected');
 
         if (latestResult.status === 'fulfilled') {
-            els.ytDlpLatestVersion.textContent = `Latest: ${latestResult.value}`;
+            const latest = latestResult.value;
+            ytDlpRelease.textContent = `Latest release: ${versionLabel(latest)}`;
+            const updateAvailable =
+                installedResult.status === 'fulfilled' && isNewerYtDlpVersion(latest, installedResult.value.version);
+            els.ytDlpLatestVersion.textContent = updateAvailable ? `Update available: ${versionLabel(latest)}` : '';
+            els.ytDlpLatestVersion.hidden = !updateAvailable;
         } else {
-            els.ytDlpLatestVersion.textContent = 'Latest: unavailable';
+            ytDlpRelease.textContent = 'Latest release unavailable. Check Again to retry.';
+            els.ytDlpLatestVersion.textContent = 'Update check unavailable';
+            els.ytDlpLatestVersion.hidden = false;
         }
     };
 
     const refreshYtDlpVersions = () => {
-        if (!api.available) return Promise.resolve();
+        if (!api.available) {
+            els.ytDlpInstalledVersion.textContent = 'Open PineFetch desktop';
+            return Promise.resolve();
+        }
         ytDlpVersionsChecked = true;
-        const pending = performYtDlpVersionCheck().finally(() => {
-            if (ytDlpVersionsPromise === pending) ytDlpVersionsPromise = null;
-        });
+        const requestId = ++ytDlpVersionRequestId;
+        setYtDlpChecking(true);
+        // Clearing an override must probe the saved PATH configuration, even
+        // when Check Again is clicked before a queued settings save finishes.
+        const pending = configSaveQueue
+            .then(() => performYtDlpVersionCheck(requestId))
+            .finally(() => {
+                if (requestId === ytDlpVersionRequestId) setYtDlpChecking(false);
+                if (ytDlpVersionsPromise === pending) ytDlpVersionsPromise = null;
+            });
         ytDlpVersionsPromise = pending;
         return pending;
     };
@@ -290,6 +346,7 @@ export const createSettingsView = ({
                 els.settingsView.querySelector('#settingsContent').scrollTop = 0;
                 onCategoryChange();
                 if (event.detail.panel.id === 'settingsDiagnosticsPanel') {
+                    void refreshYtDlpVersionsOnce();
                     void codexDiagnostics.refresh();
                     requestAnimationFrame(() => {
                         els.logBody.scrollTop = els.logBody.scrollHeight;
@@ -307,6 +364,7 @@ export const createSettingsView = ({
         );
         browserAuthentication.bindEvents();
         codexDiagnostics.bindEvents();
+        ytDlpCheck.addEventListener('click', () => void refreshYtDlpVersions());
         els.magicImportEnabled.addEventListener('change', () => {
             void saveSettings({ magic_import_enabled: els.magicImportEnabled.checked });
         });

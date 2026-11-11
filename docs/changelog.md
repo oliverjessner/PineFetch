@@ -2,6 +2,7 @@
 
 - Added optional Codex video summaries and independently saved transcript chat in Video Details.
 - Added Codex CLI installation, compatibility and authentication diagnostics in Settings.
+- Overhauling some UI layouts
 
 # 3.0.2
 

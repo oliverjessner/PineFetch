@@ -170,11 +170,11 @@
                     <div id="historyView" class="pinefetch-panel-view oj-stack" hidden>
                         <div class="pinefetch-history-search-controls">
                             <label class="oj-field pinefetch-history-search-query" for="historySearchInput">
-                                <span class="oj-label">Search history</span>
                                 <input
                                     id="historySearchInput"
                                     class="oj-input"
                                     type="search"
+                                    aria-label="Search history"
                                     placeholder="Search titles"
                                     autocomplete="off"
                                 />
@@ -869,7 +869,7 @@
                                                 </header>
                                                 <a
                                                     id="linkDumpExtensionRepoLink"
-                                                    class="oj-button oj-button-ghost pinefetch-link-dump-repo-link"
+                                                    class="oj-button oj-button-primary pinefetch-link-dump-repo-link"
                                                     href="https://github.com/oliverjessner/PineFetch-Link-Dump"
                                                     target="_blank"
                                                     rel="noopener noreferrer"
@@ -892,36 +892,80 @@
                                                 Check download tools and review the application log.
                                             </p>
                                         </header>
-                                        <div
-                                            class="pinefetch-setting-row pinefetch-setting-field pinefetch-setting-path"
+                                        <section
+                                            class="oj-panel oj-panel-compact pinefetch-tool-diagnostics"
+                                            data-ytdlp-diagnostics
+                                            aria-labelledby="ytDlpDiagnosticsTitle"
                                         >
-                                            <div class="pinefetch-switch-copy">
-                                                <label class="pinefetch-switch-title" for="ytDlpPath"
-                                                    >yt-dlp path</label
+                                            <i class="fa-solid fa-download fa-fw" aria-hidden="true"></i>
+                                            <div class="oj-cluster pinefetch-tool-copy">
+                                                <h3 id="ytDlpDiagnosticsTitle" class="oj-heading-3">yt-dlp</h3>
+                                                <p
+                                                    class="oj-status"
+                                                    role="status"
+                                                    aria-live="polite"
+                                                    aria-atomic="true"
+                                                    data-ytdlp-status
                                                 >
-                                                <span id="ytDlpPathHelp" class="oj-helper"
-                                                    >Leave empty to auto-detect the download tool from PATH.</span
+                                                    <span
+                                                        class="oj-status-dot"
+                                                        aria-hidden="true"
+                                                        data-ytdlp-indicator
+                                                    ></span>
+                                                    <span id="ytDlpInstalledVersion">Not checked</span>
+                                                </p>
+                                                <span
+                                                    id="ytDlpLatestVersion"
+                                                    class="oj-caption"
+                                                    role="status"
+                                                    aria-live="polite"
+                                                    hidden
+                                                ></span>
+                                                <a
+                                                    class="oj-link oj-caption"
+                                                    href="https://github.com/yt-dlp/yt-dlp#installation"
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    aria-label="yt-dlp installation and update instructions"
+                                                    >Installation &amp; updates</a
                                                 >
                                             </div>
-                                            <input
-                                                id="ytDlpPath"
-                                                class="oj-input"
-                                                type="text"
-                                                placeholder="Auto-detect from PATH"
-                                                aria-describedby="ytDlpPathHelp"
-                                            />
-                                        </div>
-                                        <div class="pinefetch-version-info" aria-label="yt-dlp versions">
-                                            <p id="ytDlpInstalledVersion">Installed: -</p>
-                                            <p id="ytDlpLatestVersion">Latest: -</p>
-                                        </div>
+                                            <button
+                                                class="oj-icon-button oj-button-ghost oj-button-compact"
+                                                type="button"
+                                                aria-label="Check Again"
+                                                data-oj-tooltip="Check Again"
+                                                data-ytdlp-check
+                                            >
+                                                <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+                                            </button>
+                                            <details class="oj-accordion pinefetch-tool-advanced" data-ytdlp-advanced>
+                                                <summary>Advanced</summary>
+                                                <div class="oj-accordion-body oj-stack">
+                                                    <label class="oj-field" for="ytDlpPath">
+                                                        <span class="oj-label">Executable path</span>
+                                                        <input
+                                                            id="ytDlpPath"
+                                                            class="oj-input"
+                                                            type="text"
+                                                            placeholder="Auto-detect from PATH"
+                                                            aria-describedby="ytDlpPathHelp"
+                                                        />
+                                                        <span id="ytDlpPathHelp" class="oj-helper"
+                                                            >Leave empty to auto-detect the download tool from PATH.</span
+                                                        >
+                                                    </label>
+                                                    <p class="oj-caption" data-ytdlp-release></p>
+                                                </div>
+                                            </details>
+                                        </section>
                                         <section
-                                            class="oj-panel oj-panel-compact pinefetch-codex-diagnostics"
+                                            class="oj-panel oj-panel-compact pinefetch-tool-diagnostics"
                                             data-codex-diagnostics
                                             aria-labelledby="codexDiagnosticsTitle"
                                         >
-                                            <i class="fa-brands fa-openai" aria-hidden="true"></i>
-                                            <div class="oj-cluster pinefetch-codex-copy">
+                                            <i class="fa-brands fa-openai fa-fw" aria-hidden="true"></i>
+                                            <div class="oj-cluster pinefetch-tool-copy">
                                                 <h3 id="codexDiagnosticsTitle" class="oj-heading-3">Codex CLI</h3>
                                                 <p
                                                     class="oj-status"

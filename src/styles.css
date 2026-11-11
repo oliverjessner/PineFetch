@@ -389,6 +389,17 @@ body {
     outline-offset: -2px;
 }
 
+#settingsView #settingsDiagnosticsPanel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+#settingsDiagnosticsPanel > :not(.pinefetch-log-panel) {
+    flex-shrink: 0;
+}
+
 .pinefetch-settings-category-header {
     display: grid;
     gap: var(--oj-space-2);
@@ -500,10 +511,6 @@ body {
     overflow-wrap: anywhere;
 }
 
-#settingsView .pinefetch-version-info {
-    padding: var(--oj-space-3) 0 var(--oj-space-5);
-}
-
 @media (max-width: 980px) {
     #settingsView,
     .pinefetch-settings-content {
@@ -598,21 +605,6 @@ body {
     gap: var(--oj-space-3);
 }
 
-.pinefetch-version-info {
-    display: grid;
-    gap: var(--oj-space-1);
-}
-
-.pinefetch-version-info p {
-    margin: 0;
-    color: var(--oj-text-muted);
-    font-size: var(--oj-text-xs);
-}
-
-#ytDlpLatestVersion {
-    color: var(--oj-accent-text);
-}
-
 #settingsImportPanel .pinefetch-link-dump-section {
     padding-block: var(--oj-space-4);
     border-bottom: 1px solid var(--oj-border);
@@ -649,13 +641,19 @@ body {
 }
 
 .pinefetch-link-dump-generate-row {
-    display: grid;
-    justify-items: start;
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: nowrap;
     gap: var(--oj-space-3);
+}
+
+.pinefetch-link-dump-generate-row .oj-field {
+    min-width: 0;
 }
 
 .pinefetch-link-dump-generate-row .oj-button {
     flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 .pinefetch-link-dump-repo-link {
@@ -1067,12 +1065,8 @@ body {
 }
 
 #settingsView .pinefetch-log-panel {
-    --pinefetch-terminal-height: 334px;
-
-    flex: 0 0 var(--pinefetch-terminal-height);
-    height: var(--pinefetch-terminal-height);
-    min-height: var(--pinefetch-terminal-height);
-    max-height: var(--pinefetch-terminal-height);
+    flex: 1;
+    min-height: calc(var(--oj-space-8) * 4);
 }
 
 @media (max-width: 980px) {
@@ -1119,14 +1113,12 @@ body {
         grid-template-columns: minmax(0, 1fr);
     }
 
-    .pinefetch-link-dump-generate-row,
     .pinefetch-link-dump-secret-item {
         align-items: stretch;
         display: grid;
         grid-template-columns: minmax(0, 1fr);
     }
 
-    .pinefetch-link-dump-generate-row .oj-button,
     .pinefetch-link-dump-secret-actions {
         width: 100%;
     }
@@ -1143,10 +1135,6 @@ body {
     #historySummaryView,
     #settingsView {
         overflow-y: visible;
-    }
-
-    #settingsView .pinefetch-log-panel {
-        --pinefetch-terminal-height: 220px;
     }
 
     .pinefetch-queue-main {
@@ -1167,6 +1155,35 @@ body {
     .pinefetch-shell:has(.pinefetch-history-details-active) {
         height: 100dvh;
         overflow: hidden;
+    }
+
+    html:has(.pinefetch-settings-active #settingsDiagnosticsPanel:not([hidden])),
+    body:has(.pinefetch-settings-active #settingsDiagnosticsPanel:not([hidden])) {
+        height: 100%;
+        overflow: hidden;
+    }
+
+    .pinefetch-shell:has(.pinefetch-settings-active #settingsDiagnosticsPanel:not([hidden])) {
+        height: 100dvh;
+        overflow: hidden;
+    }
+
+    .pinefetch-settings-active:has(#settingsDiagnosticsPanel:not([hidden])) .pinefetch-panel-left {
+        min-height: 0;
+    }
+
+    #settingsView:has(#settingsDiagnosticsPanel:not([hidden])) {
+        overflow: hidden;
+    }
+
+    #settingsView:has(#settingsDiagnosticsPanel:not([hidden])) .pinefetch-settings-content {
+        overflow: auto;
+    }
+}
+
+@media (max-width: 680px) {
+    #settingsView:has(#settingsDiagnosticsPanel:not([hidden])) .pinefetch-settings-layout {
+        grid-template-rows: auto minmax(0, 1fr);
     }
 }
 
@@ -1876,7 +1893,7 @@ body {
 }
 .pinefetch-ai-workspace p,
 .pinefetch-ai-workspace h4,
-.pinefetch-codex-diagnostics p {
+.pinefetch-tool-diagnostics p {
     margin: 0;
 }
 .pinefetch-ai-workspace .oj-toolbar {
@@ -1913,26 +1930,30 @@ body {
     min-height: calc(var(--oj-space-8) * 2);
 }
 .pinefetch-ai-workspace .oj-status:empty,
-.pinefetch-codex-diagnostics p:empty {
+.pinefetch-tool-diagnostics p:empty {
     display: none;
 }
-.pinefetch-codex-diagnostics {
+.pinefetch-tool-diagnostics {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--oj-space-3);
     margin-bottom: var(--oj-space-4);
 }
-.pinefetch-codex-copy {
+.pinefetch-tool-copy {
     row-gap: var(--oj-space-1);
     overflow-wrap: anywhere;
 }
-.pinefetch-codex-copy .oj-heading-3 {
+.pinefetch-tool-copy .oj-heading-3 {
     margin: 0;
 }
-.pinefetch-codex-copy .oj-status {
+.pinefetch-tool-copy .oj-status {
     flex-wrap: wrap;
     row-gap: var(--oj-space-1);
+}
+.pinefetch-tool-advanced {
+    grid-column: 1 / -1;
+    min-width: 0;
 }
 #historySocialPanel .pinefetch-social-metric {
     border: 0;

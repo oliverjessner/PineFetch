@@ -22,7 +22,7 @@ regex = "1"
 icu_normalizer = { version = "2.1", default-features = false, features = ["compiled_data"] }
 base64 = "0.22"
 getrandom = "0.4"
-rusqlite = { version = "0.40", features = ["bundled", "backup", "functions", "fallible_uint"] }
+rusqlite = { version = "0.42", features = ["bundled", "backup", "functions", "fallible_uint"] }
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"

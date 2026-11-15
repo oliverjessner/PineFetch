@@ -83,6 +83,6 @@
         "@puppeteer/browsers": "3.2.6",
         "fetchary": "2.1.1",
         "oj-designsystem": "0.3.0",
-        "puppeteer-core": "25.16.0"
+        "puppeteer-core": "25.17.0"
     }
 }

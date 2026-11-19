@@ -52,10 +52,10 @@
     },
     "devDependencies": {
         "@eslint/js": "10.0.1",
-        "@tauri-apps/cli": "^2.12.4",
-        "eslint": "10.14.0",
+        "@tauri-apps/cli": "^2.12.6",
+        "eslint": "10.15.0",
         "globals": "17.14.0",
-        "playwright": "1.65.0",
+        "playwright": "1.65.1",
         "prettier": "3.10.1",
         "sharp": "0.35.5"
     },
@@ -81,8 +81,8 @@
     "homepage": "https://oliverjessner.at/pinefetch",
     "dependencies": {
         "@puppeteer/browsers": "3.2.7",
-        "fetchary": "2.1.1",
+        "fetchary": "2.2.0",
         "oj-designsystem": "0.3.0",
-        "puppeteer-core": "25.17.0"
+        "puppeteer-core": "25.18.1"
     }
 }

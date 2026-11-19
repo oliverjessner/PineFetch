@@ -35,7 +35,7 @@ libc = "0.2"
 mac-notification-sys = "0.6.12"
 # Keep the Dock menu on Tauri's muda version so menu events share one dispatcher.
 muda = { version = "=0.20.0", default-features = false }
-objc2 = "=0.6.4"
+objc2 = "=0.6.5"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

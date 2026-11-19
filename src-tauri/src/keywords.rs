@@ -152,7 +152,7 @@ impl TextSource {
             .as_bytes(),
         );
         hash.update(self.text.as_bytes());
-        format!("{:x}", hash.finalize())
+        crate::hashing::bytes_to_hex(&hash.finalize())
     }
 }
 pub(crate) struct TextSnapshot {

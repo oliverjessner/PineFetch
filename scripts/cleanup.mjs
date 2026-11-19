@@ -132,7 +132,7 @@ function acquireCleanupLock(directory) {
         mkdirSync(lock);
     } catch (error) {
         if (error.code === 'EEXIST')
-            throw new Error('Another publish or cleanup has just acquired .pinefetch-publish.lock.');
+            throw new Error('Another publish or cleanup has just acquired .pinefetch-publish.lock.', { cause: error });
         throw error;
     }
     const owner = join(lock, `${process.pid}.pid`);

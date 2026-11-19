@@ -6,6 +6,27 @@ SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
 REPO_DIR=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd)
 cd "$REPO_DIR"
 
+# Publish and manual cleanup share one lock, including all preparation gates.
+PUBLISH_LOCK="$REPO_DIR/.pinefetch-publish.lock"
+if ! mkdir "$PUBLISH_LOCK"; then
+    echo "Another publish or cleanup holds $PUBLISH_LOCK. Finish it first; inspect stale locks manually." >&2
+    exit 1
+fi
+TMP_CHANGELOG=
+TMP_RELEASE_NOTES=
+
+cleanup() {
+    if [ -n "$TMP_CHANGELOG" ]; then rm -f "$TMP_CHANGELOG"; fi
+    if [ -n "$TMP_RELEASE_NOTES" ]; then rm -f "$TMP_RELEASE_NOTES"; fi
+    rm -f "$PUBLISH_LOCK/$$.pid"
+    rmdir "$PUBLISH_LOCK" || echo "Could not remove $PUBLISH_LOCK; inspect the remaining lock files." >&2
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+: > "$PUBLISH_LOCK/$$.pid"
+
 # Version preparation is explicit; the following gates are read-only.
 npm run sync:version
 npm run check
@@ -19,12 +40,6 @@ LOCAL_CHANGELOG="docs/changelog.md"
 HOMEBREW_TAP_DIR=${HOMEBREW_TAP_DIR:-"$REPO_DIR/../homebrew-tap"}
 TMP_CHANGELOG=$(mktemp)
 TMP_RELEASE_NOTES=$(mktemp)
-
-cleanup() {
-    rm -f "$TMP_CHANGELOG" "$TMP_RELEASE_NOTES"
-}
-
-trap cleanup EXIT
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -152,5 +167,13 @@ git -C "$HOMEBREW_TAP_DIR" push origin HEAD
 
 echo "Release and Homebrew cask published successfully."
 
+echo "Cleaning generated build files..."
+if ! node "$SCRIPT_DIR/cleanup.mjs" --after-publish; then
+    echo "Publishing succeeded, but local cleanup failed. Resolve the cleanup issue and run npm run cleanup; do not publish the release again." >&2
+    exit 1
+fi
+
 echo "Opening the PineFetch release page"
-open -a "Google Chrome" "https://github.com/$RELEASE_REPO/releases/tag/$TAG"
+if ! open -a "Google Chrome" "https://github.com/$RELEASE_REPO/releases/tag/$TAG"; then
+    echo "The release was published successfully, but its page could not be opened." >&2
+fi

@@ -18,6 +18,9 @@ dist/
 build/
 .next/
 coverage/
+src-tauri/vendor/glib/target/
+src-tauri/vendor/glib/Cargo.lock
+/.pinefetch-publish.lock/
 
 src-tauri/resources/whisper-runtime/*
 !src-tauri/resources/whisper-runtime/.keep

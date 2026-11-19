@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -54,10 +55,11 @@ exit 99
                 ? ['npm run sync:version', 'npm run check']
                 : ['npm run sync:version', 'npm run check', 'npm run build:check']
         );
+        assert.equal(existsSync(join(fixture, '.pinefetch-publish.lock')), false);
     });
 }
 
-const createPublishFixture = async (t, { currentCask = false, releaseStatus = 0 } = {}) => {
+const createPublishFixture = async (t, { currentCask = false, releaseStatus = 0, openStatus = 0 } = {}) => {
     const root = await mkdtemp(join(tmpdir(), 'pinefetch-publish-tap-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const repo = join(root, 'repo');
@@ -71,6 +73,7 @@ const createPublishFixture = async (t, { currentCask = false, releaseStatus = 0 
         HOMEBREW_TAP_DIR: tap,
         QA_PUBLISH_LOG: log,
         QA_RELEASE_STATUS: String(releaseStatus),
+        QA_OPEN_STATUS: String(openStatus),
         GIT_CONFIG_NOSYSTEM: '1',
         GIT_CONFIG_GLOBAL: '/dev/null',
         GIT_ALLOW_PROTOCOL: 'file',
@@ -89,6 +92,7 @@ const createPublishFixture = async (t, { currentCask = false, releaseStatus = 0 
     await Promise.all([
         mkdir(join(repo, 'scripts'), { recursive: true }),
         mkdir(join(repo, 'docs'), { recursive: true }),
+        mkdir(join(repo, 'src-tauri'), { recursive: true }),
         mkdir(join(tap, 'Casks'), { recursive: true }),
         mkdir(bin),
     ]);
@@ -101,12 +105,13 @@ const createPublishFixture = async (t, { currentCask = false, releaseStatus = 0 
         git(root, 'init', '--bare', '-b', 'main', `${directory}.git`);
         git(directory, 'remote', 'add', 'origin', `${directory}.git`);
     }
-    for (const file of ['publish.sh', 'update-homebrew-tap.mjs']) {
+    for (const file of ['publish.sh', 'update-homebrew-tap.mjs', 'cleanup.mjs']) {
         await writeFile(join(repo, 'scripts', file), await readFile(new URL(`../scripts/${file}`, import.meta.url)));
     }
     await Promise.all([
-        writeFile(join(repo, 'package.json'), JSON.stringify({ version: '2.5.0' })),
-        writeFile(join(repo, '.gitignore'), 'src-tauri/target/\n'),
+        writeFile(join(repo, 'package.json'), JSON.stringify({ name: 'pinefetch', version: '2.5.0' })),
+        writeFile(join(repo, 'src-tauri/Cargo.toml'), '[package]\nname = "pinefetch"\nversion = "2.5.0"\n'),
+        writeFile(join(repo, '.gitignore'), 'src-tauri/target/\n.pinefetch-publish.lock/\n'),
         writeFile(join(repo, 'docs/changelog.md'), '# 2.5.0\n\nFixture release.\n'),
         writeFile(join(tap, 'Casks/pinefetch.rb'), 'cask "pinefetch" do\n  version "2.4.0"\nend\n'),
         writeFile(join(tap, 'Casks/other.rb'), '# Other application\n'),
@@ -154,7 +159,7 @@ const createPublishFixture = async (t, { currentCask = false, releaseStatus = 0 
         stub('shasum', `printf '%s\\n' '${sha256}  fixture.dmg'`),
         stub('curl', 'exit 99'),
         stub('brew', 'exit 0'),
-        stub('open', 'exit 0'),
+        stub('open', 'exit "$QA_OPEN_STATUS"'),
     ]);
     const publish = () => {
         const result = spawnSync('sh', [join(repo, 'scripts/publish.sh')], {
@@ -172,7 +177,7 @@ const createPublishFixture = async (t, { currentCask = false, releaseStatus = 0 
 for (const currentCask of [false, true]) {
     test(`publishing commits only PineFetch tap edits and pushes them when cask is ${currentCask ? 'current' : 'outdated'}`, async t => {
         const fixture = await createPublishFixture(t, { currentCask });
-        const { tap, git, base } = fixture;
+        const { repo, tap, git, base } = fixture;
         const readme = `${await readFile(join(tap, 'README.md'), 'utf8')}\nPineFetch local release note.\n`;
         await writeFile(join(tap, 'README.md'), readme);
         if (!currentCask) await writeFile(join(tap, 'Casks/pinefetch.rb'), '# Locally prepared PineFetch cask\n');
@@ -182,6 +187,9 @@ for (const currentCask of [false, true]) {
 
         const result = fixture.publish();
         assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+        assert.equal(existsSync(join(repo, 'src-tauri/target')), false);
+        assert.equal(existsSync(join(repo, '.pinefetch-publish.lock')), false);
+        assert.match(result.stdout, /Removed .*generated paths/);
         const commits = git(tap, 'rev-list', '--reverse', `${base}..HEAD`).split('\n');
         assert.equal(commits.length, currentCask ? 1 : 2);
         assert.equal(git(tap, 'show', '-s', '--format=%s', commits[0]), 'Prepare PineFetch release v2.5.0');
@@ -217,8 +225,8 @@ test('publishing rejects unpushed tap commits even if their tree matches origin'
     assert.doesNotMatch(await readFile(log, 'utf8'), /gh release create|npm run build --/);
 });
 
-test('a failed release keeps the prepared tap commit local and leaves unrelated staging intact', async t => {
-    const { tap, base, git, publish } = await createPublishFixture(t, { releaseStatus: 42 });
+test('a failed release keeps build artifacts and the prepared tap commit local', async t => {
+    const { repo, tap, base, git, publish } = await createPublishFixture(t, { releaseStatus: 42 });
     await writeFile(join(tap, 'Casks/pinefetch.rb'), '# Pending PineFetch update\n');
     await writeFile(join(tap, 'Casks/other.rb'), '# Unrelated staged change\n');
     git(tap, 'add', 'Casks/other.rb');
@@ -228,4 +236,53 @@ test('a failed release keeps the prepared tap commit local and leaves unrelated 
     assert.equal(git(`${tap}.git`, 'rev-parse', 'main'), base);
     assert.equal(git(tap, 'diff', '--cached', '--name-only'), 'Casks/other.rb');
     assert.equal(git(tap, 'show', 'HEAD:Casks/pinefetch.rb'), '# Pending PineFetch update');
+    assert.equal(existsSync(join(repo, 'src-tauri/target/release/bundle/dmg/PineFetch_2.5.0_aarch64_adhoc.dmg')), true);
+    assert.equal(existsSync(join(repo, '.pinefetch-publish.lock')), false);
+});
+
+test('a failed tap push keeps the published release build available for diagnosis', async t => {
+    const { repo, tap, publish, log } = await createPublishFixture(t);
+    await writeFile(join(`${tap}.git`, 'hooks/pre-receive'), '#!/bin/sh\nexit 42\n', { mode: 0o755 });
+    const result = publish();
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(await readFile(log, 'utf8'), /gh release create/);
+    assert.equal(existsSync(join(repo, 'src-tauri/target/release/bundle/dmg/PineFetch_2.5.0_aarch64_adhoc.dmg')), true);
+    assert.equal(existsSync(join(repo, '.pinefetch-publish.lock')), false);
+    assert.doesNotMatch(result.stdout, /Removed .*generated paths/);
+});
+
+test('a browser launch failure does not turn a completed publish and cleanup into a failed release', async t => {
+    const { repo, publish } = await createPublishFixture(t, { openStatus: 42 });
+    const result = publish();
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /release was published successfully, but its page could not be opened/);
+    assert.equal(existsSync(join(repo, 'src-tauri/target')), false);
+    assert.equal(existsSync(join(repo, '.pinefetch-publish.lock')), false);
+});
+
+test('a cleanup failure after publishing is reported separately and preserves all cleanup candidates', async t => {
+    const { repo, tap, publish, git } = await createPublishFixture(t);
+    await mkdir(join(repo, 'coverage'));
+    await writeFile(join(repo, 'coverage/source-owned.txt'), 'Tracked source must survive.\n');
+    git(repo, 'add', 'coverage/source-owned.txt');
+    git(repo, 'commit', '-m', 'Protect a tracked cleanup candidate');
+    const result = publish();
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /Publishing succeeded, but local cleanup failed/);
+    assert.equal(git(`${tap}.git`, 'rev-parse', 'main'), git(tap, 'rev-parse', 'HEAD'));
+    assert.equal(await readFile(join(repo, 'coverage/source-owned.txt'), 'utf8'), 'Tracked source must survive.\n');
+    assert.equal(existsSync(join(repo, 'src-tauri/target/release/bundle/dmg/PineFetch_2.5.0_aarch64_adhoc.dmg')), true);
+    assert.equal(existsSync(join(repo, '.pinefetch-publish.lock')), false);
+});
+
+test('publishing refuses an existing cleanup lock before running preparation or release commands', async t => {
+    const { repo, publish, log } = await createPublishFixture(t);
+    const lock = join(repo, '.pinefetch-publish.lock');
+    await mkdir(lock);
+    await writeFile(join(lock, '12345.pid'), 'Existing owner\n');
+    const result = publish();
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Another publish or cleanup/);
+    assert.equal(await readFile(join(lock, '12345.pid'), 'utf8'), 'Existing owner\n');
+    assert.equal(existsSync(log), false);
 });

@@ -78,7 +78,7 @@ try {
     const extracted = join(stage, `node-v${nodeVersion}-${target}-${arch}`);
     await cp(join(extracted, platform === 'win32' ? nodeName : `bin/${nodeName}`), join(stage, nodeName));
     await cp(join(extracted, 'LICENSE'), join(stage, 'NODE-LICENSE'));
-    await rm(extracted, { recursive: true });
+    await rm(extracted, { recursive: true, maxRetries: 5, retryDelay: 100 });
     await rm(archivePath);
     await writeFile(join(stage, 'package.json'), inputs[0]);
     await writeFile(join(stage, 'package-lock.json'), inputs[1]);
@@ -118,7 +118,7 @@ try {
         }
     } catch {
         /* No compatible prior browser. Download the locked revision. */
-        await rm(join(stage, 'browser'), { recursive: true, force: true });
+        await rm(join(stage, 'browser'), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
     if (!executable) {
         console.log(`[social-runtime] Downloading Chromium headless shell ${buildId}.`);
@@ -142,18 +142,18 @@ try {
     await writeFile(join(stage, '.inputs'), key);
     // Preserve the previous valid runtime until every preparation step succeeds.
     const previous = `${runtime}.previous`;
-    await rm(previous, { recursive: true, force: true });
+    await rm(previous, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     await rename(runtime, previous);
     try {
         await rename(stage, runtime);
         process.stdout.write(verify(runtime));
     } catch (error) {
-        await rm(runtime, { recursive: true, force: true });
+        await rm(runtime, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
         await rename(previous, runtime);
         throw error;
     }
-    await rm(previous, { recursive: true, force: true });
+    await rm(previous, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     console.log(`[social-runtime] Bundled Node ${nodeVersion}, Fetchary and Chromium ${buildId}.`);
 } finally {
-    await rm(stage, { recursive: true, force: true });
+    await rm(stage, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

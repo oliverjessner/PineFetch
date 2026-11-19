@@ -184,7 +184,7 @@ export function cleanupBuildArtifacts({ directory = root, dryRun = false } = {})
     if (!dryRun) {
         for (const entry of plan.entries) {
             const filename = safeTarget(plan.root, entry.path);
-            if (filename) rmSync(filename, { recursive: true, force: true });
+            if (filename) rmSync(filename, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
         }
     }
     return { ...plan, dryRun };

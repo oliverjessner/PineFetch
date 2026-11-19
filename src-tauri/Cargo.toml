@@ -20,9 +20,9 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-notification = "2"
 regex = "1"
 icu_normalizer = { version = "2.1", default-features = false, features = ["compiled_data"] }
-base64 = "0.22"
+base64 = "0.23"
 getrandom = "0.4"
-rusqlite = { version = "0.40", features = ["bundled", "backup", "functions", "fallible_uint"] }
+rusqlite = { version = "0.42", features = ["bundled", "backup", "functions", "fallible_uint"] }
 sha2 = "0.11"
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
@@ -35,7 +35,7 @@ libc = "0.2"
 mac-notification-sys = "0.6.12"
 # Keep the Dock menu on Tauri's muda version so menu events share one dispatcher.
 muda = { version = "=0.20.0", default-features = false }
-objc2 = "=0.6.4"
+objc2 = "=0.6.5"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
